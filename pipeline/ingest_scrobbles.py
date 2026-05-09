@@ -1,59 +1,61 @@
-"""Phase 1: Read Last.fm scrobble JSON export → write scrobbles.jsonl.
+"""Phase 1 — Scrobble ingest.
 
-Input  : `inputs/lastfm_export.json` from lastfmstats.com — a list of pages
-         (each page a list of scrobble dicts in Last.fm `recenttracks` shape).
-Output : `scrobbles.jsonl` — one row per play, schema per CLAUDE.md.
+Reads the Last.fm JSON export (owner-provided, placed in inputs/) and writes
+scrobbles.jsonl — one row per play event in the canonical schema.
 
-Currently-playing scrobbles (no `date.uts`) are dropped with a WARN log,
-since they have no canonical timestamp to anchor analytics against.
+Usage:
+    python -m pipeline.ingest_scrobbles
 """
 
 from __future__ import annotations
 
 import json
-import time
-from collections.abc import Iterable, Iterator
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
-from pipeline import config
+from pipeline.config import (
+    INPUT_LASTFM_EXPORT,
+    SCROBBLES_PATH,
+    SEASON_BY_MONTH,
+    configure_logging,
+    get_logger,
+)
 from pipeline.normalize import normalize_artist, normalize_track
 
-logger = config.get_logger(__name__)
+log = get_logger(__name__)
 
 
-def _iter_scrobbles(raw: list[Any]) -> Iterator[dict[str, Any]]:
-    """Flatten a paginated lastfmstats.com export into individual scrobbles."""
-    for page in raw:
-        if not isinstance(page, list):
-            logger.warning("non-list page encountered, skipping: %s", type(page).__name__)
-            continue
-        yield from page
+def parse_raw_scrobble(record: dict) -> dict | None:
+    """Convert one raw Last.fm API record into a scrobbles.jsonl row.
 
+    Returns None for:
+    - "now playing" stubs that lack a real timestamp
+    - Records missing artist or track name
+    - Records with an unparseable timestamp
 
-def _transform_scrobble(s: dict[str, Any]) -> dict[str, Any] | None:
-    """Map a Last.fm scrobble record → scrobbles.jsonl row (or None if unusable)."""
-    track = (s.get("name") or "").strip()
-    if not track:
+    Last.fm export format uses nested ``{"#text": ..., "mbid": ...}`` blocks
+    for artist and album fields, and a ``date.uts`` Unix timestamp.
+    """
+    date_block = record.get("date")
+    if not date_block or not date_block.get("uts"):
         return None
 
-    date_obj = s.get("date") or {}
-    uts_raw = date_obj.get("uts") if isinstance(date_obj, dict) else None
-    if not uts_raw:
-        return None  # currently-playing — no timestamp
+    artist: str = ((record.get("artist") or {}).get("#text") or "").strip()
+    track: str = (record.get("name") or "").strip()
+    album: str = ((record.get("album") or {}).get("#text") or "").strip()
+
+    if not artist or not track:
+        log.debug("Skipping record with missing artist/track: %r", record)
+        return None
 
     try:
-        uts = int(uts_raw)
-    except (TypeError, ValueError):
+        uts = int(date_block["uts"])
+    except (ValueError, TypeError):
+        log.debug("Skipping record with invalid uts: %r", date_block)
         return None
 
-    artist_obj = s.get("artist") or {}
-    artist = (artist_obj.get("#text") or "").strip() if isinstance(artist_obj, dict) else ""
-    album_obj = s.get("album") or {}
-    album = (album_obj.get("#text") or "").strip() if isinstance(album_obj, dict) else ""
-
     dt = datetime.fromtimestamp(uts, tz=timezone.utc)
+
     return {
         "artist": artist,
         "track": track,
@@ -63,69 +65,62 @@ def _transform_scrobble(s: dict[str, Any]) -> dict[str, Any] | None:
         "scrobbled_at": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "year": dt.year,
         "month": dt.month,
-        "day_of_week": dt.weekday(),  # Mon=0 … Sun=6 per spec
+        "day_of_week": dt.weekday(),   # 0=Monday … 6=Sunday
         "hour": dt.hour,
-        "season": config.SEASON_BY_MONTH[dt.month],
+        "season": SEASON_BY_MONTH[dt.month],
     }
 
 
-def transform(raw: list[Any]) -> list[dict[str, Any]]:
-    """Transform raw export → list of normalized scrobble rows.
+def ingest(
+    export_path: Path = INPUT_LASTFM_EXPORT,
+    output_path: Path = SCROBBLES_PATH,
+    run_log_path: Path | None = None,
+) -> int:
+    """Read Last.fm JSON export → write scrobbles.jsonl.
 
-    Drops malformed/incomplete records, logging counts.
+    The export is a list-of-lists (one inner list per API page).
+    Returns count of rows written.
     """
-    out: list[dict[str, Any]] = []
+    run_log_path = configure_logging(run_log_path)
+    log.info("=== Phase 1: scrobble ingest ===")
+    log.info("Input : %s", export_path)
+    log.info("Output: %s", output_path)
+
+    if not export_path.exists():
+        log.error("Export file not found: %s", export_path)
+        raise FileNotFoundError(export_path)
+
+    with open(export_path, "r", encoding="utf-8") as fh:
+        raw_pages: list[list[dict]] = json.load(fh)
+
+    # Flatten paginated export (list of pages → flat list)
+    raw_records = [rec for page in raw_pages for rec in page]
+    log.info("Raw records across %d pages: %d", len(raw_pages), len(raw_records))
+
+    parsed: list[dict] = []
     skipped = 0
-    for s in _iter_scrobbles(raw):
-        row = _transform_scrobble(s)
+    for record in raw_records:
+        row = parse_raw_scrobble(record)
         if row is None:
             skipped += 1
         else:
-            out.append(row)
-    if skipped:
-        logger.warning("dropped %d unusable scrobbles (no timestamp / no track)", skipped)
-    return out
+            parsed.append(row)
 
+    log.info("Parsed: %d  |  Skipped (nowplaying/malformed): %d", len(parsed), skipped)
 
-def write_jsonl(rows: Iterable[dict[str, Any]], path: Path) -> int:
-    """Write rows as JSONL. Returns count written."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    n = 0
-    with path.open("w", encoding="utf-8") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False))
-            f.write("\n")
-            n += 1
-    return n
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+        for row in parsed:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-
-def run(
-    input_path: Path = config.INPUT_LASTFM_EXPORT,
-    output_path: Path = config.SCROBBLES_PATH,
-) -> int:
-    """Phase 1 entrypoint. Returns number of scrobbles written."""
-    logger.info("Phase 1: ingest scrobbles from %s", input_path)
-    start = time.time()
-
-    if not input_path.exists():
-        raise FileNotFoundError(f"Last.fm export not found: {input_path}")
-
-    with input_path.open("r", encoding="utf-8") as f:
-        raw = json.load(f)
-
-    if not isinstance(raw, list):
-        raise ValueError(f"expected top-level list, got {type(raw).__name__}")
-
-    rows = transform(raw)
-    n = write_jsonl(rows, output_path)
-
-    logger.info(
-        "Phase 1 done: %d scrobbles -> %s (%.2fs)",
-        n, output_path, time.time() - start,
-    )
-    return n
+    log.info("Wrote %d rows → %s", len(parsed), output_path)
+    log.info("Run log: %s", run_log_path)
+    return len(parsed)
 
 
 if __name__ == "__main__":
-    config.configure_logging()
-    run()
+    import sys
+
+    n = ingest()
+    print(f"Phase 1 done: {n} scrobbles written.")
+    sys.exit(0 if n > 0 else 1)
