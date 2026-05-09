@@ -12,6 +12,10 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-09 phase 4: RUNNING (background, ~17 min) — Last.fm track.getInfo for 2,730 tracks
+- 2026-05-09 phase 5: BUILT (not yet run) — Apple Music availability via iTunes Search
+- 2026-05-09 iTunes XML enrichment: DONE — 122/2,730 matched (4.5% — expected, iTunes lib only has 278 tracks)
+- 2026-05-09 phase 3a: DONE — 2,730 tracks → inputs/tunemymusic_upload.csv
 - 2026-05-08 phase 0: STARTED — scaffolding (config, normalize, tests, .gitignore, requirements)
 - 2026-05-08 python 3.13.13 installed via winget; `py -3.13` is now default
 - 2026-05-08 venv created at `.venv/`, deps installed (pandas 3.0.2, requests 2.33.1, pytest 9.0.3, etc.)
@@ -44,6 +48,21 @@ or as a sub-step. The `Persistent ID` is a local ID only — do not confuse with
 Note: spec said `apple_music_library.csv` but actual export is XML. Config path
 updated to `apple_music_library.xml`.
 
+## Overnight observations
+
+- **Last.fm `track.getInfo` returns BOTH tags AND MBIDs in one call** — saves
+  doubling API rate. So Phase 4 covers what the spec lists as separate
+  Last.fm + MusicBrainz lookups. MusicBrainz API not used directly.
+- **Discogs deferred** — spec said only-if-clear-match anyway. Will add as
+  optional pass later if there's appetite. `discogs_styles: []` for now.
+- **iTunes match rate of 4.5%** is intentional: your iTunes library only has
+  278 tracks (mostly local files / purchases) while Last.fm has 2,730 unique
+  scrobbles (everything streamed). The 122 overlapping tracks now have full
+  iTunes metadata (duration_ms, release_year, explicit, itunes_genre,
+  itunes_play_count, itunes_skip_count, itunes_date_added, itunes_kind).
+- **Phase 5 ETA at 0.33 req/s = ~140 min for 2,730 tracks** — start after
+  Phase 4 completes; cache means re-running is cheap.
+
 ## Open notes / deviations
 
 - **Python:** 3.13.13 (installed 2026-05-08). Older 3.8/3.9/3.10 kept side-by-side
@@ -73,11 +92,12 @@ updated to `apple_music_library.xml`.
 - [x] **0** scaffolding (committed)
 - [x] **1** scrobble ingest → `scrobbles.jsonl` (13,669 rows)
 - [x] **2** dedupe → `tracks_skeleton.jsonl` (2,730 unique tracks)
-- [ ] **3a** TuneMyMusic CSV export script
-- [ ] **3b** owner runs TuneMyMusic + Exportify (manual)
+- [x] **A** iTunes XML enrichment → `tracks_with_apple.jsonl` (122/2,730 matched — see notes below)
+- [x] **3a** TuneMyMusic CSV export script (output: `inputs/tunemymusic_upload.csv`)
+- [ ] **3b** owner runs TuneMyMusic + Exportify (manual — pending owner)
 - [ ] **3c** Exportify CSV merge → `tracks_with_audio.jsonl`
-- [ ] **4** metadata enrichment → `tracks_with_metadata.jsonl`
-- [ ] **5** Apple Music availability → `tracks_with_availability.jsonl`
+- [~] **4** metadata enrichment → `tracks_with_metadata.jsonl` (RUNNING in background)
+- [ ] **5** Apple Music availability → `tracks_with_availability.jsonl` (built, ready to run)
 - [ ] **6** mood classification (centroid + Claude batch) → `tracks_with_moods.jsonl`
 - [ ] **7** saturation/curation state from `taste_profile.md`
 - [ ] **8** final merge → `tracks.jsonl`

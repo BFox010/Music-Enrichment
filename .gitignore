@@ -232,6 +232,7 @@ inputs/
 
 # Intermediate per-phase JSONL outputs — only `tracks.jsonl` is canonical
 tracks_skeleton.jsonl
+tracks_with_apple.jsonl
 tracks_with_audio.jsonl
 tracks_with_metadata.jsonl
 tracks_with_availability.jsonl
