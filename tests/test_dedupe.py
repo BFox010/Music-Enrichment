@@ -77,9 +77,8 @@ class TestDedupe:
         with tempfile.TemporaryDirectory() as tmp:
             inp = Path(tmp) / "scrobbles.jsonl"
             out = Path(tmp) / "skeleton.jsonl"
-            log_p = Path(tmp) / "run.log"
             _write_scrobbles(inp, [_make_scrobble()])
-            n = dedupe(inp, out, log_p)
+            n = dedupe(inp, out)
             assert n == 1
             rows = _read_skeleton(out)
             assert rows[0]["artist"] == "Portishead"
@@ -91,13 +90,12 @@ class TestDedupe:
         with tempfile.TemporaryDirectory() as tmp:
             inp = Path(tmp) / "scrobbles.jsonl"
             out = Path(tmp) / "skeleton.jsonl"
-            log_p = Path(tmp) / "run.log"
             _write_scrobbles(inp, [
                 _make_scrobble(year=2022, scrobbled_at="2022-01-01T00:00:00Z"),
                 _make_scrobble(year=2023, scrobbled_at="2023-06-15T12:00:00Z"),
                 _make_scrobble(year=2023, scrobbled_at="2023-11-03T03:54:00Z"),
             ])
-            n = dedupe(inp, out, log_p)
+            n = dedupe(inp, out)
             assert n == 1
             row = _read_skeleton(out)[0]
             assert row["play_count"] == 3
@@ -109,14 +107,13 @@ class TestDedupe:
         with tempfile.TemporaryDirectory() as tmp:
             inp = Path(tmp) / "scrobbles.jsonl"
             out = Path(tmp) / "skeleton.jsonl"
-            log_p = Path(tmp) / "run.log"
             _write_scrobbles(inp, [
                 _make_scrobble("Portishead", "Roads"),
                 _make_scrobble("Portishead", "Glory Box"),
                 _make_scrobble("Radiohead", "Karma Police"),
-                _make_scrobble("Portishead", "Roads"),   # duplicate
+                _make_scrobble("Portishead", "Roads"),
             ])
-            n = dedupe(inp, out, log_p)
+            n = dedupe(inp, out)
             assert n == 3
             rows = _read_skeleton(out)
             keys = [(r["artist_normalized"], r["track_normalized"]) for r in rows]
@@ -126,13 +123,12 @@ class TestDedupe:
         with tempfile.TemporaryDirectory() as tmp:
             inp = Path(tmp) / "scrobbles.jsonl"
             out = Path(tmp) / "skeleton.jsonl"
-            log_p = Path(tmp) / "run.log"
             _write_scrobbles(inp, [
                 _make_scrobble("Radiohead", "Karma Police"),
                 _make_scrobble("Portishead", "Roads"),
                 _make_scrobble("Arcade Fire", "Rebellion"),
             ])
-            dedupe(inp, out, log_p)
+            dedupe(inp, out)
             rows = _read_skeleton(out)
             artists = [r["artist_normalized"] for r in rows]
             assert artists == sorted(artists)
@@ -142,13 +138,12 @@ class TestDedupe:
         with tempfile.TemporaryDirectory() as tmp:
             inp = Path(tmp) / "scrobbles.jsonl"
             out = Path(tmp) / "skeleton.jsonl"
-            log_p = Path(tmp) / "run.log"
             _write_scrobbles(inp, [
                 _make_scrobble("portishead", "roads"),
                 _make_scrobble("Portishead", "Roads"),
                 _make_scrobble("Portishead", "Roads"),
             ])
-            dedupe(inp, out, log_p)
+            dedupe(inp, out)
             row = _read_skeleton(out)[0]
             assert row["artist"] == "Portishead"
             assert row["track"] == "Roads"
@@ -157,7 +152,6 @@ class TestDedupe:
         with tempfile.TemporaryDirectory() as tmp:
             inp = Path(tmp) / "scrobbles.jsonl"
             out = Path(tmp) / "skeleton.jsonl"
-            log_p = Path(tmp) / "run.log"
             _write_scrobbles(inp, [
                 _make_scrobble("Portishead", "Roads"),
                 _make_scrobble("Portishead", "Roads"),
@@ -165,7 +159,7 @@ class TestDedupe:
                 _make_scrobble("Radiohead", "Karma Police"),
                 _make_scrobble("Radiohead", "Karma Police"),
             ])
-            dedupe(inp, out, log_p)
+            dedupe(inp, out)
             rows = {r["artist_normalized"]: r for r in _read_skeleton(out)}
             assert rows["portishead"]["play_count"] == 3
             assert rows["radiohead"]["play_count"] == 2

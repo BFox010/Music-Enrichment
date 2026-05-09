@@ -16,6 +16,9 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 - 2026-05-08 python 3.13.13 installed via winget; `py -3.13` is now default
 - 2026-05-08 venv created at `.venv/`, deps installed (pandas 3.0.2, requests 2.33.1, pytest 9.0.3, etc.)
 - 2026-05-08 phase 0: DONE — 21/21 tests pass; `from pipeline import normalize, config` works
+- 2026-05-08 phase 1: DONE — 13,669 scrobbles ingested (0 skipped), scrobbles.jsonl written
+- 2026-05-08 phase 2: DONE — 2,730 unique tracks, tracks_skeleton.jsonl written
+- 2026-05-08 GitHub push blocked — auth token not configured; needs `gh auth login` or PAT in credential manager
 
 ## Open notes / deviations
 
@@ -44,8 +47,8 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 ## Phase checklist (mirror of CLAUDE.md, for quick scanning)
 
 - [x] **0** scaffolding (committed)
-- [ ] **1** scrobble ingest → `scrobbles.jsonl`
-- [ ] **2** dedupe → `tracks_skeleton.jsonl`
+- [x] **1** scrobble ingest → `scrobbles.jsonl` (13,669 rows)
+- [x] **2** dedupe → `tracks_skeleton.jsonl` (2,730 unique tracks)
 - [ ] **3a** TuneMyMusic CSV export script
 - [ ] **3b** owner runs TuneMyMusic + Exportify (manual)
 - [ ] **3c** Exportify CSV merge → `tracks_with_audio.jsonl`

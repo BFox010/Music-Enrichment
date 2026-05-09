@@ -97,12 +97,20 @@ def configure_logging(
 ) -> Path:
     """Configure root logger to write a timestamped run log + console.
 
-    Returns the path of the log file actually used.
+    Closes any existing FileHandlers first so repeated calls (e.g. in tests)
+    don't leak open handles on Windows.  Returns the path of the log file used.
     """
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     if run_log_path is None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
         run_log_path = RUNS_DIR / f"{ts}.log"
+
+    # Close existing file handlers before reconfiguring to avoid handle leaks
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            root.removeHandler(handler)
 
     logging.config.dictConfig(
         {
