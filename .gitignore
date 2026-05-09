@@ -216,3 +216,27 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ──────────────────────────────────────────────────────────────────────
+# Project-specific (per CLAUDE.md)
+# ──────────────────────────────────────────────────────────────────────
+
+# Generated Excel views — utility output, JSONL is source of truth
+views/
+
+# Owner-provided inputs (Last.fm export, Apple Music library, audit CSV, etc.)
+inputs/
+
+# API response caches
+.cache/
+
+# Intermediate per-phase JSONL outputs — only `tracks.jsonl` is canonical
+tracks_skeleton.jsonl
+tracks_with_audio.jsonl
+tracks_with_metadata.jsonl
+tracks_with_availability.jsonl
+tracks_with_moods.jsonl
+
+# Local env snapshots
+.env.local
+
