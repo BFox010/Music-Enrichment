@@ -34,7 +34,7 @@ INPUTS_DIR: Path = REPO_ROOT / "inputs"      # gitignored
 
 # ── Owner-provided inputs (not committed) ────────────────────────────────
 INPUT_LASTFM_EXPORT: Path = INPUTS_DIR / "lastfm_export.json"
-INPUT_APPLE_MUSIC_LIBRARY: Path = INPUTS_DIR / "apple_music_library.csv"
+INPUT_APPLE_MUSIC_LIBRARY: Path = INPUTS_DIR / "apple_music_library.xml"  # iTunes XML export
 INPUT_EXISTING_AUDIT: Path = INPUTS_DIR / "existing_audit.csv"
 INPUT_EXPORTIFY_CSV: Path = INPUTS_DIR / "exportify.csv"
 INPUT_CLAUDE_MOOD_RESULTS: Path = INPUTS_DIR / "claude_mood_results.jsonl"

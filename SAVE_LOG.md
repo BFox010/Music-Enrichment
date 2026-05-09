@@ -19,6 +19,30 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 - 2026-05-08 phase 1: DONE — 13,669 scrobbles ingested (0 skipped), scrobbles.jsonl written
 - 2026-05-08 phase 2: DONE — 2,730 unique tracks, tracks_skeleton.jsonl written
 - 2026-05-08 GitHub push blocked — auth token not configured; needs `gh auth login` or PAT in credential manager
+- 2026-05-08 Apple Music library XML inspected and copied to inputs/apple_music_library.xml
+- 2026-05-08 .env created (blank values, user to fill); .env.example committed as template
+
+## Apple Music XML — useful fields confirmed
+
+The iTunes XML export (`inputs/apple_music_library.xml`) contains per-track:
+- `Total Time` (ms) → `duration_ms`
+- `Year` / `Release Date` → `release_year`
+- `Explicit` (boolean, present when true) → `explicit`
+- `Genre` → iTunes genre tag (supplement to Last.fm tags)
+- `Persistent ID` → local iTunes library UUID (NOT Apple Music streaming ID)
+- `Play Count`, `Skip Count` → secondary cross-reference (Last.fm is source of truth)
+- `Date Added` → when added to iTunes library
+- `Kind` → "Apple Music AAC audio file" = streaming; "Purchased AAC audio file" = bought;
+  "MPEG audio file" = local rip; etc.
+- Playlists section at end of XML (to be parsed for `playlists/` CSVs in Phase 7)
+
+Plan: add `pipeline/ingest_apple_library.py` to enrich tracks_skeleton with
+duration_ms, release_year, explicit, itunes_genre from the XML during Phase 4
+or as a sub-step. The `Persistent ID` is a local ID only — do not confuse with
+`apple_music_id` from iTunes Search API (Phase 5).
+
+Note: spec said `apple_music_library.csv` but actual export is XML. Config path
+updated to `apple_music_library.xml`.
 
 ## Open notes / deviations
 
