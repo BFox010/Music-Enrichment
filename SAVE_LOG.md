@@ -12,8 +12,11 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
-- 2026-05-09 phase 4: RUNNING (background, ~17 min) — Last.fm track.getInfo for 2,730 tracks
-- 2026-05-09 phase 5: BUILT (not yet run) — Apple Music availability via iTunes Search
+- 2026-05-09 phase 9: BUILT — `python -m pipeline.run_full_pipeline` orchestrator
+- 2026-05-09 phase 3c: BUILT — Exportify CSV merge (waits on owner's Exportify run)
+- 2026-05-09 phase 8: DONE (initial) — 2,730 rows in tracks.jsonl with iTunes + Last.fm + MusicBrainz
+- 2026-05-09 phase 5: RUNNING — Apple Music availability (~9% done at 13 min, ETA ~2.4h)
+- 2026-05-09 phase 4: DONE — 2,165/2,730 matched (79.3%), 565 no-match, 0 errors
 - 2026-05-09 iTunes XML enrichment: DONE — 122/2,730 matched (4.5% — expected, iTunes lib only has 278 tracks)
 - 2026-05-09 phase 3a: DONE — 2,730 tracks → inputs/tunemymusic_upload.csv
 - 2026-05-08 phase 0: STARTED — scaffolding (config, normalize, tests, .gitignore, requirements)
@@ -47,6 +50,26 @@ or as a sub-step. The `Persistent ID` is a local ID only — do not confuse with
 
 Note: spec said `apple_music_library.csv` but actual export is XML. Config path
 updated to `apple_music_library.xml`.
+
+## music-meta data is NOT centroid-ready
+
+Investigated `C:/Users/Branden/OneDrive/Documents/Claude Code/Music/music-meta/data/`
+to see if Phase 6 mood centroid training data could be reused.
+
+- `library.csv` has 1,838 rows with audio features. **Energy bug confirmed**:
+  Kendrick Lamar A.D.H.D shows energy=0.049, Grandaddy A.M. 180 shows 0.094.
+  These are 10× too low (real Spotify scale ~0.4–0.5). Per CLAUDE.md spec,
+  these values are unusable as centroid training input.
+- `mood_classifiers` field uses Essentia format (`mood_aggressive`, `mood_relaxed`,
+  `prob_happy`, `prob_sad`, etc.) — NOT the spec's 14-category set
+  (Fast/Moody/Slow/Heavy Bass/Dance/Sad/Groove/Heartbreak/Dark/Love/Hype/
+  Uplifting/Happy/Sunny). So even with corrected energy, the moods don't
+  map directly.
+- `taste_profile.json` is JSON not Markdown — different format from the
+  Phase 7 spec. Has top_genres with counts but not playlist/saturation.
+- **Conclusion**: Phase 6 needs (a) corrected audio features from Exportify
+  AND (b) the 14-category audit CSV when available, OR a Claude-classified
+  bootstrap subset to compute the first centroids.
 
 ## Overnight observations
 
@@ -95,9 +118,13 @@ updated to `apple_music_library.xml`.
 - [x] **A** iTunes XML enrichment → `tracks_with_apple.jsonl` (122/2,730 matched — see notes below)
 - [x] **3a** TuneMyMusic CSV export script (output: `inputs/tunemymusic_upload.csv`)
 - [ ] **3b** owner runs TuneMyMusic + Exportify (manual — pending owner)
-- [ ] **3c** Exportify CSV merge → `tracks_with_audio.jsonl`
-- [~] **4** metadata enrichment → `tracks_with_metadata.jsonl` (RUNNING in background)
-- [ ] **5** Apple Music availability → `tracks_with_availability.jsonl` (built, ready to run)
+- [x] **3c** Exportify CSV merge — code written, waits on Exportify CSV
+- [x] **4** metadata enrichment → `tracks_with_metadata.jsonl` (2,165 matched, 79.3%)
+- [~] **5** Apple Music availability → `tracks_with_availability.jsonl` (RUNNING ~9%)
+- [ ] **6** mood classification — BLOCKED: needs (a) Exportify audio features, (b) existing_audit.csv with 14-category mood labels
+- [ ] **7** saturation/curation from `taste_profile.md` — BLOCKED: needs taste_profile.md
+- [x] **8** final merge to tracks.jsonl (initial run done; will re-run after Phase 5)
+- [x] **9** orchestrator (`python -m pipeline.run_full_pipeline`)
 - [ ] **6** mood classification (centroid + Claude batch) → `tracks_with_moods.jsonl`
 - [ ] **7** saturation/curation state from `taste_profile.md`
 - [ ] **8** final merge → `tracks.jsonl`
