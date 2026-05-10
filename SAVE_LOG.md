@@ -12,6 +12,7 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-10 phase 7: BUILT — taste_profile.md parser + applier + 19 tests; template at `taste_profile_template.md`
 - 2026-05-10 phase 8: RE-RUN with availability — tracks.jsonl finalized with all overnight data
 - 2026-05-10 phase 5: DONE — 1,916/2,730 available on Apple Music (70.2%), 813 unavail, 1 error
 - 2026-05-09 phase 6: BUILT — mood centroid algorithm + Claude batch I/O (waits on existing_audit.csv)
@@ -126,7 +127,7 @@ to see if Phase 6 mood centroid training data could be reused.
 - [x] **4** metadata enrichment → `tracks_with_metadata.jsonl` (2,165 matched, 79.3%)
 - [x] **5** Apple Music availability → `tracks_with_availability.jsonl` (1,916/2,730 = 70.2%)
 - [~] **6** mood classification — code complete, waits on (a) Exportify audio features, (b) existing_audit.csv with 14-category mood labels
-- [ ] **7** saturation/curation from `taste_profile.md` — needs taste_profile.md
+- [~] **7** saturation/curation from `taste_profile.md` — code complete, needs owner to fill in `taste_profile.md` (template provided)
 - [x] **8** final merge → tracks.jsonl (re-run with availability — current state below)
 - [x] **9** orchestrator (`python -m pipeline.run_full_pipeline`)
 
