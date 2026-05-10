@@ -315,12 +315,16 @@ def classify(
     configure_logging(run_log_path)
     log.info("=== Phase 6: mood classification ===")
 
-    # Resolve input — tracks_with_audio preferred (has features); else fall back.
-    chosen_input = tracks_path if tracks_path.exists() else (
-        REPO_ROOT / "tracks_with_metadata.jsonl"
-        if (REPO_ROOT / "tracks_with_metadata.jsonl").exists()
-        else None
-    )
+    # Resolve input — pick deepest intermediate so we don't lose Phase 5 availability data
+    chosen_input = None
+    for candidate in (
+        tracks_path,
+        REPO_ROOT / "tracks_with_availability.jsonl",
+        REPO_ROOT / "tracks_with_metadata.jsonl",
+    ):
+        if candidate.exists():
+            chosen_input = candidate
+            break
     if chosen_input is None:
         log.error("No tracks file found — run earlier phases first.")
         raise FileNotFoundError("tracks_with_audio.jsonl or tracks_with_metadata.jsonl")

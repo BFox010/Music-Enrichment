@@ -105,16 +105,32 @@ def _enrichment_sources(row: dict) -> list[str]:
 def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     """Merge a freshly enriched row with the existing tracks.jsonl row.
 
-    - human-edited fields: existing wins (if present)
-    - mood_tags: existing wins if its mood_source is claude_batch/manual
-    - everything else: new wins
+    Rules in priority order:
+    1. Human-edited fields: existing always wins if set
+    2. Higher-confidence mood data: existing wins (claude_batch/manual)
+    3. Locked/approved playlist memberships: existing wins
+    4. Any other field: NEW value wins UNLESS new is None/empty,
+       in which case existing wins. This preserves enrichment from
+       earlier intermediate files when a later phase didn't carry
+       those fields forward (e.g. mood phase reading from a file
+       that lacked Apple Music availability).
     """
     if existing is None:
         return new
 
-    merged: dict = dict(new)
+    # Start with existing as base, layer new on top — but only fill from new
+    # when new actually has a non-empty value.
+    merged: dict = dict(existing)
+    for key, new_value in new.items():
+        if new_value is None:
+            continue
+        if isinstance(new_value, (list, dict)) and len(new_value) == 0:
+            # Empty list/dict from new → keep existing if existing has content
+            if merged.get(key):
+                continue
+        merged[key] = new_value
 
-    # Preserve human-edited fields
+    # Preserve human-edited fields (override anything new has)
     for field in HUMAN_EDITED_FIELDS:
         if existing.get(field) is not None:
             merged[field] = existing[field]
@@ -127,10 +143,12 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         merged["mood_source"] = existing_source
         merged["mood_confidence"] = existing.get("mood_confidence")
 
-    # Preserve playlists if user has hand-edited them (heuristic: existing list non-empty
-    # and curation_state is locked/approved)
+    # Playlist semantics: preserve when user has locked/approved them,
+    # but explicitly clear when curation_state is None (don't keep stale memberships).
     if existing.get("curation_state") in ("locked", "approved") and existing.get("playlists"):
         merged["playlists"] = existing["playlists"]
+    elif existing.get("curation_state") is None:
+        merged["playlists"] = list(new.get("playlists") or [])
 
     return merged
 

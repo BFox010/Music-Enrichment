@@ -115,6 +115,27 @@ class TestParseExportifyRow:
         assert block is not None
         assert block["artist_normalized"] == "drake"
 
+    def test_semicolon_artist_separator_exportify_convention(self) -> None:
+        # Real Exportify CSVs use ';' between artists per v1 spec
+        row = {
+            "Track Name": "Jumpman",
+            "Artist Name(s)": "Drake;Future",
+            "Energy": "0.5",
+        }
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["artist_normalized"] == "drake"
+
+    def test_semicolon_with_spaces(self) -> None:
+        row = {
+            "Track Name": "Jumpman",
+            "Artist Name(s)": "Drake; Future; Migos",
+            "Energy": "0.5",
+        }
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["artist_normalized"] == "drake"
+
     def test_missing_track_returns_none(self) -> None:
         assert parse_exportify_row({"Artist Name(s)": "x"}) is None
 
@@ -127,17 +148,43 @@ class TestParseExportifyRow:
         assert block is not None
         assert block["artist_normalized"] == "portishead"
 
-    def test_empty_audio_features_become_none(self) -> None:
+    def test_no_audio_features_present_is_none(self) -> None:
         row = {
             "Track Name": "x", "Artist Name(s)": "y",
             "Energy": "", "Danceability": "", "Tempo": "",
         }
         block = parse_exportify_row(row)
         assert block is not None
-        assert block["audio_features"]["energy"] is None
+        # No features present at all → audio_features is None (don't pollute schema)
+        assert block["audio_features"] is None
+
+    def test_partial_audio_features_keeps_block(self) -> None:
+        row = {"Track Name": "x", "Artist Name(s)": "y", "Energy": "0.5"}
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["audio_features"] is not None
+        assert block["audio_features"]["energy"] == 0.5
         assert block["audio_features"]["danceability"] is None
-        # source still set even with no features
         assert block["audio_features"]["source"] == "exportify"
+
+    def test_tunemymusic_column_names(self) -> None:
+        # Spotify Library export from TuneMyMusic uses "Track name" / "Artist name" / "Spotify - id"
+        row = {
+            "Track name": "Roads",
+            "Artist name": "Portishead",
+            "Album": "Dummy",
+            "Playlist name": "Scrobbles 2026",
+            "Type": "Playlist",
+            "ISRC": "GBABC9412345",
+            "Spotify - id": "5i5fCpsnqDJ9AfeObgd0gW",
+        }
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["artist_normalized"] == "portishead"
+        assert block["track_normalized"] == "roads"
+        assert block["spotify_id"] == "5i5fCpsnqDJ9AfeObgd0gW"
+        assert block["isrc"] == "GBABC9412345"
+        assert block["audio_features"] is None  # no features in this format
 
 
 class TestEnergyBug:

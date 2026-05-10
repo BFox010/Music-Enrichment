@@ -54,7 +54,10 @@ _AUDIO_FEATURE_COLUMNS: dict[str, str] = {
     "time_signature": "Time Signature",
 }
 
+# Read from the DEEPEST existing intermediate so we don't lose downstream data
+# (e.g. apple_music availability set by Phase 5).
 _INPUT_PRIORITY = [
+    REPO_ROOT / "tracks_with_availability.jsonl",
     TRACKS_WITH_METADATA_PATH,
     TRACKS_WITH_APPLE_PATH,
     REPO_ROOT / "tracks_skeleton.jsonl",
@@ -104,6 +107,18 @@ def _year_from_date(value: Any) -> int | None:
     return None
 
 
+def _ci_get(row: dict, *candidates: str) -> str:
+    """Case-insensitive lookup across candidate column names. Returns '' if absent."""
+    if not row:
+        return ""
+    lookup = {k.lower().strip(): v for k, v in row.items() if k}
+    for cand in candidates:
+        v = lookup.get(cand.lower().strip())
+        if v is not None and v != "":
+            return str(v)
+    return ""
+
+
 def _spotify_id_from_uri(uri: str) -> str | None:
     """``spotify:track:xxxxx`` → ``xxxxx``; return None if not a valid track URI."""
     if not uri:
@@ -120,45 +135,53 @@ def _spotify_id_from_uri(uri: str) -> str | None:
 def parse_exportify_row(row: dict[str, Any]) -> dict[str, Any] | None:
     """Convert one Exportify CSV row to a merge-block.
 
-    Returns None on bad rows (no track name or artist).
+    Tolerant of column-name variations (case + alternate forms used by
+    TuneMyMusic exports vs. real Exportify). Returns None on bad rows.
     """
-    track_name = (row.get("Track Name") or row.get("Name") or "").strip()
-    artists_raw = (
-        row.get("Artist Name(s)")
-        or row.get("Artist Name")
-        or row.get("Artist")
-        or ""
+    track_name = _ci_get(row, "Track Name", "Track name", "Name").strip()
+    artists_raw = _ci_get(
+        row, "Artist Name(s)", "Artist Name", "Artist name", "Artist"
     ).strip()
     if not track_name or not artists_raw:
         return None
 
-    # Use the first artist for normalized matching (Spotify primary artist)
-    first_artist = artists_raw.split(",")[0].strip()
+    # Real Exportify uses ';' for multi-artist; TuneMyMusic exports use ',' or single artist.
+    # Try ';' first (Exportify convention), fall back to ',' if no semicolon present.
+    if ";" in artists_raw:
+        first_artist = artists_raw.split(";")[0].strip()
+    else:
+        first_artist = artists_raw.split(",")[0].strip()
 
-    # Audio features block
+    # Audio features block — populate only if at least one feature has a value
     audio_features: dict[str, Any] = {"source": "exportify"}
+    has_any_feature = False
     for our_key, csv_col in _AUDIO_FEATURE_COLUMNS.items():
-        raw = row.get(csv_col)
+        raw = _ci_get(row, csv_col)
         if our_key in ("key", "mode", "time_signature"):
-            audio_features[our_key] = _i(raw)
+            value = _i(raw)
         else:
-            audio_features[our_key] = _f(raw)
+            value = _f(raw)
+        audio_features[our_key] = value
+        if value is not None:
+            has_any_feature = True
 
     return {
         "artist_normalized": normalize_artist(first_artist),
         "track_normalized": normalize_track(track_name),
         "exportify_artist": first_artist,
         "exportify_track": track_name,
-        "spotify_id": _spotify_id_from_uri(row.get("Track URI") or row.get("Spotify ID") or ""),
-        "duration_ms": _i(
-            row.get("Track Duration (ms)")
-            or row.get("Duration (ms)")
-            or row.get("Duration")
+        "spotify_id": _spotify_id_from_uri(
+            _ci_get(row, "Track URI", "Spotify ID", "Spotify - id", "Spotify Id")
         ),
-        "explicit": _b(row.get("Explicit")),
-        "isrc": (row.get("ISRC") or "").strip() or None,
-        "release_year": _year_from_date(row.get("Album Release Date") or row.get("Release Date")),
-        "audio_features": audio_features,
+        "duration_ms": _i(_ci_get(
+            row, "Track Duration (ms)", "Duration (ms)", "Duration",
+        )),
+        "explicit": _b(_ci_get(row, "Explicit")),
+        "isrc": _ci_get(row, "ISRC").strip() or None,
+        "release_year": _year_from_date(
+            _ci_get(row, "Album Release Date", "Release Date")
+        ),
+        "audio_features": audio_features if has_any_feature else None,
     }
 
 
@@ -167,7 +190,8 @@ def _check_energy_bug(rows: list[dict]) -> float | None:
 
     The prior pipeline iteration recorded median energies around 0.04, two
     orders of magnitude below the real Spotify scale of ~0.4–0.5. This check
-    catches the same bug if it ever recurs.
+    catches the same bug if it ever recurs. Returns None when no energies
+    are present (which is normal for a Spotify-IDs-only CSV).
     """
     energies = [
         r["audio_features"]["energy"]
@@ -221,9 +245,9 @@ def merge(
     log.info("Input  : %s", chosen_input)
     log.info("Output : %s", output_path)
 
-    # Parse CSV
+    # Parse CSV (utf-8-sig strips a BOM if Excel/TuneMyMusic emits one)
     csv_blocks: list[dict] = []
-    with open(csv_path, "r", encoding="utf-8", newline="") as fh:
+    with open(csv_path, "r", encoding="utf-8-sig", newline="") as fh:
         reader = csv.DictReader(fh)
         for row in reader:
             block = parse_exportify_row(row)
@@ -261,7 +285,9 @@ def merge(
             unmatched.append((track["artist"], track["track"]))
             continue
         matched += 1
-        track["audio_features"] = block["audio_features"]
+        # Only set audio_features if Exportify actually provided them
+        if block.get("audio_features") is not None:
+            track["audio_features"] = block["audio_features"]
         if block.get("spotify_id"):
             track["spotify_id"] = block["spotify_id"]
         if block.get("isrc"):
