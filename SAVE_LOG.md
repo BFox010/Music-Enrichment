@@ -12,10 +12,14 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-10 phase 8: RE-RUN with availability — tracks.jsonl finalized with all overnight data
+- 2026-05-10 phase 5: DONE — 1,916/2,730 available on Apple Music (70.2%), 813 unavail, 1 error
+- 2026-05-09 phase 6: BUILT — mood centroid algorithm + Claude batch I/O (waits on existing_audit.csv)
+- 2026-05-09 scripts/make_view.py — XLSX/CSV view generator with filters
+- 2026-05-09 scripts/library_stats.py — ASCII analytics summary
 - 2026-05-09 phase 9: BUILT — `python -m pipeline.run_full_pipeline` orchestrator
 - 2026-05-09 phase 3c: BUILT — Exportify CSV merge (waits on owner's Exportify run)
 - 2026-05-09 phase 8: DONE (initial) — 2,730 rows in tracks.jsonl with iTunes + Last.fm + MusicBrainz
-- 2026-05-09 phase 5: RUNNING — Apple Music availability (~9% done at 13 min, ETA ~2.4h)
 - 2026-05-09 phase 4: DONE — 2,165/2,730 matched (79.3%), 565 no-match, 0 errors
 - 2026-05-09 iTunes XML enrichment: DONE — 122/2,730 matched (4.5% — expected, iTunes lib only has 278 tracks)
 - 2026-05-09 phase 3a: DONE — 2,730 tracks → inputs/tunemymusic_upload.csv
@@ -120,11 +124,25 @@ to see if Phase 6 mood centroid training data could be reused.
 - [ ] **3b** owner runs TuneMyMusic + Exportify (manual — pending owner)
 - [x] **3c** Exportify CSV merge — code written, waits on Exportify CSV
 - [x] **4** metadata enrichment → `tracks_with_metadata.jsonl` (2,165 matched, 79.3%)
-- [~] **5** Apple Music availability → `tracks_with_availability.jsonl` (RUNNING ~9%)
-- [ ] **6** mood classification — BLOCKED: needs (a) Exportify audio features, (b) existing_audit.csv with 14-category mood labels
-- [ ] **7** saturation/curation from `taste_profile.md` — BLOCKED: needs taste_profile.md
-- [x] **8** final merge to tracks.jsonl (initial run done; will re-run after Phase 5)
+- [x] **5** Apple Music availability → `tracks_with_availability.jsonl` (1,916/2,730 = 70.2%)
+- [~] **6** mood classification — code complete, waits on (a) Exportify audio features, (b) existing_audit.csv with 14-category mood labels
+- [ ] **7** saturation/curation from `taste_profile.md` — needs taste_profile.md
+- [x] **8** final merge → tracks.jsonl (re-run with availability — current state below)
 - [x] **9** orchestrator (`python -m pipeline.run_full_pipeline`)
+
+## Final coverage in tracks.jsonl
+
+| Field                  | Coverage | Note                                      |
+|------------------------|----------|-------------------------------------------|
+| Apple Music checked    | 100%     | iTunes Search API hit on every track      |
+| Apple Music available  | 70.2%    | Probable, not confirmed                   |
+| MusicBrainz ID         | 76.8%    | From Last.fm track.getInfo                |
+| Last.fm tags           | 30.9%    | Community-tagged subset                   |
+| iTunes XML metadata    | 4.5%     | Local library only has 278 tracks         |
+| Spotify ID             | 0%       | Phase 3c — waits on Exportify CSV         |
+| Audio features         | 0%       | Phase 3c — waits on Exportify CSV         |
+| Mood tags              | 0%       | Phase 6 — waits on Exportify + audit      |
+| Saturation tier        | 0%       | Phase 7 — waits on taste_profile.md       |
 - [ ] **6** mood classification (centroid + Claude batch) → `tracks_with_moods.jsonl`
 - [ ] **7** saturation/curation state from `taste_profile.md`
 - [ ] **8** final merge → `tracks.jsonl`
