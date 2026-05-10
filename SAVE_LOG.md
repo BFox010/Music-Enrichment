@@ -12,6 +12,8 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-10 full-pipeline orchestrator end-to-end VERIFIED — all phases chain cleanly
+- 2026-05-10 views/library_overnight.xlsx + library_stats_overnight.txt generated for AM review
 - 2026-05-10 phase 7: BUILT — taste_profile.md parser + applier + 19 tests; template at `taste_profile_template.md`
 - 2026-05-10 phase 8: RE-RUN with availability — tracks.jsonl finalized with all overnight data
 - 2026-05-10 phase 5: DONE — 1,916/2,730 available on Apple Music (70.2%), 813 unavail, 1 error
