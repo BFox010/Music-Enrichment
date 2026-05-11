@@ -93,10 +93,249 @@ def _split_track_artist(item: str) -> tuple[str | None, str]:
     return None, s
 
 
+# ── rich parser (v4 taste profile format) ───────────────────────────────
+
+
+_QUOTED_TRACK_RE = re.compile(r'([^"]+?)"([^"]+)"')
+_PLAYLIST_HEADER_BOLD_RE = re.compile(r'\*\*([^*:]+?):\*\*')
+
+_PLAYLIST_SLUG_MAP: dict[str, str] = {
+    "summer": "summer",
+    "night drive": "night_drive",
+    "heavy weather": "heavy_weather",
+    "heavy weather (sulk)": "heavy_weather",
+    "workout": "workout",
+    "workout (lift)": "workout",
+    "love": "love",
+    "love (💕)": "love",
+}
+
+_LABELED_SEGMENT_STATES: list[tuple[str, str]] = [
+    ("Locked:", "locked"),
+    ("Spine:", "locked"),
+    ("Known:", "locked"),
+    ("Discovery picks accepted:", "approved"),
+    ("Rejected:", "rejected"),
+]
+
+
+def _is_rich_format(markdown: str) -> bool:
+    """Detect the v4 format by TIER 1/2/3 markers AND presence of a markdown table."""
+    return (
+        "TIER 1" in markdown
+        and "TIER 2" in markdown
+        and "TIER 3" in markdown
+        and "|---" in markdown
+    )
+
+
+def _slice_section(text: str, start_marker: str, end_marker: str | None) -> str:
+    """Slice text from after start_marker to before end_marker (or end)."""
+    i = text.find(start_marker)
+    if i == -1:
+        return ""
+    rest = text[i + len(start_marker):]
+    if end_marker:
+        j = rest.find(end_marker)
+        if j != -1:
+            return rest[:j]
+    return rest
+
+
+def _table_first_column(text: str) -> list[str]:
+    """Extract first column from a markdown table, skipping header/separator rows."""
+    out: list[str] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if not cells:
+            continue
+        first = cells[0]
+        if not first or first.lower() == "artist" or set(first) <= set("-: "):
+            continue
+        out.append(first)
+    return out
+
+
+def _inline_dot_list(text: str) -> list[str]:
+    """Parse '·'-separated artist list, stripping (count) parentheticals.
+
+    Multi-line segments (which happen for the first/last segment when the
+    surrounding section header is included in the slice) are reduced to the
+    first non-header line. 'Tyler, The Creator' is preserved as one entry —
+    the comma is internal, not a separator.
+    """
+    out: list[str] = []
+    for segment in text.split("·"):
+        # Take only non-blank lines that aren't a bold/markdown header artifact
+        lines = [
+            line.strip()
+            for line in segment.splitlines()
+            if line.strip()
+            and not line.strip().startswith("**")
+            and not line.strip().startswith("|")  # table-row leftover
+            and not line.strip().startswith("---")
+            and not line.strip().lower().startswith("tier")
+        ]
+        if not lines:
+            continue
+        # The artist is on the first surviving line; downstream lines are
+        # next section's header that bled into the slice.
+        cleaned = lines[0]
+        # Strip trailing parenthetical: "(220)" or "(37 but deep emotional impact)"
+        cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", cleaned).strip()
+        # Strip stray markdown bold markers at edges
+        cleaned = cleaned.strip("*").strip()
+        if cleaned:
+            out.append(cleaned)
+    return out
+
+
+def _blacklist_table_entries(text: str) -> list[tuple[str, str]]:
+    """Parse '| Plays | Track |' table. Track cells use 'Artist – \"Track\"' (en-dash)."""
+    out: list[tuple[str, str]] = []
+    for line in text.splitlines():
+        line = line.strip()
+        if not line.startswith("|"):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < 2:
+            continue
+        track_cell = cells[-1]
+        if track_cell.lower() == "track" or set(track_cell) <= set("-: "):
+            continue
+        # Multi-track rows: 'Artist – "T1" / Artist2 – "T2" / Artist3 – "T3"'
+        for entry in track_cell.split(" / "):
+            entry = entry.strip()
+            for sep in (" – ", " — ", " - "):
+                if sep in entry:
+                    artist, _, rest = entry.partition(sep)
+                    # Strip surrounding quotes (straight + curly variants)
+                    track = rest.strip().strip('"“”„‘’')
+                    if artist and track:
+                        out.append((artist.strip(), track))
+                    break
+    return out
+
+
+def _playlist_prose_entries(text: str) -> dict[tuple[str, str], dict]:
+    """Parse playlist sections from rich prose format.
+
+    Looks for ``**Name:**`` headers, then ``Locked:`` / ``Spine:`` / ``Known:`` /
+    ``Discovery picks accepted:`` / ``Rejected:`` segments inside each section.
+    Tracks are ``Artist "Track Name"`` pairs.
+    """
+    out: dict[tuple[str, str], dict] = {}
+    matches = list(_PLAYLIST_HEADER_BOLD_RE.finditer(text))
+
+    for i, m in enumerate(matches):
+        name_raw = m.group(1).strip()
+        name_lower = name_raw.lower()
+        slug = _PLAYLIST_SLUG_MAP.get(name_lower)
+        if slug is None:
+            # Try without parenthetical
+            cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", name_raw).strip().lower()
+            slug = _PLAYLIST_SLUG_MAP.get(cleaned)
+        if slug is None:
+            continue
+
+        # Content runs to next bold header or end
+        content_start = m.end()
+        content_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        content = text[content_start:content_end]
+
+        # Find each segment label's position
+        label_positions: list[tuple[int, str, str]] = []
+        for label, state in _LABELED_SEGMENT_STATES:
+            idx = content.find(label)
+            if idx != -1:
+                label_positions.append((idx, label, state))
+        label_positions.sort()
+
+        for j, (idx, label, state) in enumerate(label_positions):
+            seg_start = idx + len(label)
+            seg_end = label_positions[j + 1][0] if j + 1 < len(label_positions) else len(content)
+            segment = content[seg_start:seg_end]
+
+            for tm in _QUOTED_TRACK_RE.finditer(segment):
+                raw_artist = tm.group(1).strip()
+                # Strip leading punctuation/separators
+                cleaned_artist = re.sub(r"^[,.\s·]+", "", raw_artist).strip()
+                # Strip leading parenthetical from a previous item
+                cleaned_artist = re.sub(r"^\([^)]*\)\s*", "", cleaned_artist).strip()
+                track = tm.group(2).strip()
+                if not cleaned_artist or not track:
+                    continue
+                key = (normalize_artist(cleaned_artist), normalize_track(track))
+                entry = out.setdefault(key, {"playlists": [], "curation_state": None})
+                if slug not in entry["playlists"]:
+                    entry["playlists"].append(slug)
+                order = {"locked": 3, "rejected": 2, "approved": 1}
+                if (
+                    entry["curation_state"] is None
+                    or order.get(state, 0) > order.get(entry["curation_state"], 0)
+                ):
+                    entry["curation_state"] = state
+    return out
+
+
+def parse_rich_taste_profile(markdown: str) -> dict:
+    """Parse the v4 rich taste-profile format (tables, inline dot-lists, prose)."""
+    tier_by_artist: dict[str, int] = {}
+    blacklist_artists: set[str] = set()
+    blacklist_tracks: set[tuple[str, str]] = set()
+
+    # Saturation tiers — end at next H2 section, not the next `---` (which can
+    # match `|---|` inside a markdown table separator row).
+    sat_section = _slice_section(markdown, "## SATURATION TIERS", "\n## ")
+
+    tier1_section = _slice_section(sat_section, "TIER 1", "TIER 2")
+    for artist in _table_first_column(tier1_section):
+        tier_by_artist[normalize_artist(artist)] = 1
+
+    tier2_section = _slice_section(sat_section, "TIER 2", "TIER 3")
+    for artist in _inline_dot_list(tier2_section):
+        norm = normalize_artist(artist)
+        if norm not in tier_by_artist:  # Tier 1 wins over Tier 2
+            tier_by_artist[norm] = 2
+
+    # Tier 3 runs to the end of sat_section (no explicit end marker)
+    tier3_section = _slice_section(sat_section, "TIER 3", None)
+    for artist in _inline_dot_list(tier3_section):
+        norm = normalize_artist(artist)
+        if norm not in tier_by_artist:
+            tier_by_artist[norm] = 3
+
+    # Blacklist — same trick, end at next H2 section
+    bl_section = _slice_section(markdown, "## TRACK BLACKLIST", "\n## ")
+    for artist, track in _blacklist_table_entries(bl_section):
+        blacklist_tracks.add((normalize_artist(artist), normalize_track(track)))
+
+    # Existing playlists (prose with `**Name:**` headers and Locked/Rejected segments)
+    pl_section = _slice_section(markdown, "## EXISTING PLAYLIST DNA", "\n## ")
+    playlists = _playlist_prose_entries(pl_section)
+
+    return {
+        "tier_by_artist": tier_by_artist,
+        "blacklist_artists": blacklist_artists,
+        "blacklist_tracks": blacklist_tracks,
+        "playlists": playlists,
+    }
+
+
 # ── parser ──────────────────────────────────────────────────────────────
 
 
 def parse_taste_profile(markdown: str) -> dict:
+    """Public entry: auto-detect rich vs simple format and dispatch."""
+    if _is_rich_format(markdown):
+        return parse_rich_taste_profile(markdown)
+    return parse_simple_taste_profile(markdown)
+
+
+def parse_simple_taste_profile(markdown: str) -> dict:
     """Parse markdown → manifest dict.
 
     Returns:

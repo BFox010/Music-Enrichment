@@ -31,6 +31,7 @@ from pipeline.config import (
     configure_logging,
     get_logger,
 )
+from pipeline.apply_taste_profile import OUTPUT_PATH as TRACKS_WITH_TASTE_PATH
 from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
 from pipeline.schema import (
     HUMAN_EDITED_FIELDS,
@@ -43,6 +44,7 @@ log = get_logger(__name__)
 # Preferred input order — deepest in the chain first.
 # update_tracks picks the first one that exists.
 _INPUT_PRIORITY: list[Path] = [
+    TRACKS_WITH_TASTE_PATH,
     TRACKS_WITH_MOODS_PATH,
     TRACKS_WITH_AVAILABILITY_PATH,
     TRACKS_WITH_METADATA_PATH,
