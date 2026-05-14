@@ -1,0 +1,172 @@
+# Pipeline manifest — single source of truth for phase execution order.
+#
+# run_full_pipeline.py derives its execution order from this file.
+# Adding a phase: add an entry here AND implement the module. Never add a
+# phase to the orchestrator without a manifest entry — the anti-drift test
+# will catch it.
+#
+# Fields per phase:
+#   id          Unique string identifier (used by --start-from)
+#   name        Human-readable label for logs
+#   module      Python module path (null for manual phases)
+#   callable    Function name within the module (null for manual phases)
+#   inputs      List of file paths relative to repo root (documentation + tests)
+#   outputs     List of file paths relative to repo root
+#   depends_on  List of phase IDs that must succeed before this phase runs
+#   schema_version  Expected _schema_version on output records
+#   resumable   Whether the phase can safely be re-run from scratch
+#   manual      true = operator action required; orchestrator pauses here
+#   requires_file   Skip (not abort) if this path is missing at runtime
+#   optional    true = skip gracefully on ImportError (module not yet built)
+#   instructions    Shown to operator when manual=true and output is missing
+
+schema_version: 5
+
+phases:
+
+  - id: "1"
+    name: scrobble ingest
+    module: pipeline.ingest_scrobbles
+    callable: ingest
+    inputs:
+      - inputs/lastfm_export.json
+    outputs:
+      - scrobbles.jsonl
+    depends_on: []
+    schema_version: 5
+    resumable: true
+
+  - id: "2"
+    name: dedupe
+    module: pipeline.dedupe
+    callable: dedupe
+    inputs:
+      - scrobbles.jsonl
+    outputs:
+      - tracks_skeleton.jsonl
+    depends_on: ["1"]
+    schema_version: 5
+    resumable: true
+
+  - id: "A"
+    name: iTunes XML enrichment
+    module: pipeline.enrich_apple_library
+    callable: enrich
+    inputs:
+      - tracks_skeleton.jsonl
+      - inputs/apple_music_library.xml
+    outputs:
+      - tracks_with_apple.jsonl
+    depends_on: ["2"]
+    schema_version: 5
+    resumable: true
+
+  - id: "3a"
+    name: TuneMyMusic export
+    module: pipeline.export_tunemymusic
+    callable: export
+    inputs:
+      - tracks_with_apple.jsonl
+    outputs:
+      - inputs/tunemymusic_upload.csv
+    depends_on: ["A"]
+    schema_version: 5
+    resumable: true
+
+  - id: "3b"
+    name: "TuneMyMusic + Exportify (manual)"
+    module: ~
+    callable: ~
+    inputs:
+      - inputs/tunemymusic_upload.csv
+    outputs:
+      - inputs/exportify.csv
+    depends_on: ["3a"]
+    schema_version: ~
+    resumable: false
+    manual: true
+    instructions: |
+      1. Upload inputs/tunemymusic_upload.csv to TuneMyMusic (https://tunemymusic.com)
+      2. Transfer the playlist to Spotify
+      3. Run Exportify (https://exportify.net) on that Spotify playlist
+      4. Save the CSV as inputs/exportify.csv
+      5. Re-run with --start-from 3c
+
+  - id: "3c"
+    name: Exportify merge
+    module: pipeline.merge_exportify
+    callable: merge
+    inputs:
+      - tracks_with_apple.jsonl
+      - inputs/exportify.csv
+    outputs:
+      - tracks_with_audio.jsonl
+    depends_on: ["3b"]
+    schema_version: 5
+    resumable: true
+    requires_file: inputs/exportify.csv
+
+  - id: "4"
+    name: Last.fm + MusicBrainz enrichment
+    module: pipeline.enrich_metadata
+    callable: enrich
+    inputs:
+      - tracks_with_audio.jsonl
+    outputs:
+      - tracks_with_metadata.jsonl
+    depends_on: ["A"]
+    schema_version: 5
+    resumable: true
+
+  - id: "5"
+    name: Apple Music availability
+    module: pipeline.check_apple_music
+    callable: check
+    inputs:
+      - tracks_with_metadata.jsonl
+    outputs:
+      - tracks_with_availability.jsonl
+    depends_on: ["4"]
+    schema_version: 5
+    resumable: true
+
+  - id: "6"
+    name: mood classification
+    module: pipeline.classify_moods
+    callable: classify
+    inputs:
+      - tracks_with_availability.jsonl
+      - inputs/existing_audit.csv
+    outputs:
+      - tracks_with_moods.jsonl
+    depends_on: ["5", "3c"]
+    schema_version: 5
+    resumable: true
+    optional: true
+
+  - id: "7"
+    name: saturation + curation
+    module: pipeline.apply_taste_profile
+    callable: apply
+    inputs:
+      - tracks_with_moods.jsonl
+      - taste_profile.md
+    outputs:
+      - tracks_with_taste.jsonl
+    depends_on: ["6"]
+    schema_version: 5
+    resumable: true
+    optional: true
+    requires_file: taste_profile.md
+
+  - id: "8"
+    name: final merge
+    module: pipeline.update_tracks
+    callable: update
+    inputs:
+      - tracks_with_taste.jsonl
+    outputs:
+      - tracks.jsonl
+    depends_on: ["7"]
+    schema_version: 5
+    resumable: true

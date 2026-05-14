@@ -46,7 +46,9 @@ MUSICBRAINZ_CACHE: Path = CACHE_DIR / "musicbrainz.json"
 DISCOGS_CACHE: Path = CACHE_DIR / "discogs.json"
 
 # ── Schema ───────────────────────────────────────────────────────────────
-SCHEMA_VERSION: str = "1.0.0"
+# Integer, monotonic. Bump only on breaking renames/removals.
+# See pipeline/schema.py for the registry. Mirrors manifest schema_version.
+SCHEMA_VERSION: int = 5
 
 MOOD_CATEGORIES: tuple[str, ...] = (
     "Fast", "Moody", "Slow", "Heavy Bass", "Dance", "Sad", "Groove",
