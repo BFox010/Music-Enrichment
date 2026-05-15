@@ -1,37 +1,50 @@
 """Phase 9 — full-pipeline orchestrator.
 
-Chains the entire pipeline end-to-end. Runs pytest first; aborts on failure.
-Each phase is invoked through its module, sharing one timestamped log file.
-Manual phases (3b: TuneMyMusic + Exportify) pause until their input is provided
-or skip if --skip-pause is set.
+Execution order is derived from pipeline_manifest.yaml — never hardcoded here.
+Adding a phase requires a manifest entry; the anti-drift test in
+tests/test_pipeline_manifest.py will catch any divergence.
 
 Usage:
     python -m pipeline.run_full_pipeline
     python -m pipeline.run_full_pipeline --skip-tests
     python -m pipeline.run_full_pipeline --skip-pause
     python -m pipeline.run_full_pipeline --start-from 4
+    python -m pipeline.run_full_pipeline --start-from 3c
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
 from pipeline.config import (
-    INPUT_EXPORTIFY_CSV,
     INPUT_LASTFM_EXPORT,
     REPO_ROOT,
     RUNS_DIR,
-    TASTE_PROFILE_PATH,
     TRACKS_PATH,
     configure_logging,
     get_logger,
 )
+from pipeline.manifest import (
+    find_phase_index,
+    get_phases,
+    load_manifest,
+)
 
 log = get_logger(__name__)
+
+# Loaded once at import time so tests can inspect it without re-parsing.
+_MANIFEST = load_manifest()
+_PHASES = get_phases(_MANIFEST)
+
+
+def get_execution_order() -> list[str]:
+    """Return phase IDs in manifest execution order. Used by anti-drift tests."""
+    return [str(p["id"]) for p in _PHASES]
 
 
 def _run_pytest() -> bool:
@@ -52,134 +65,136 @@ def _run_pytest() -> bool:
     return True
 
 
-def _phase(num: str, name: str, fn, *args, **kwargs) -> bool:
-    """Run a phase function; log success/failure. Returns True if it ran cleanly."""
+def _phase(phase_id: str, name: str, fn, *args, **kwargs) -> bool:
+    """Run a phase function; log success/failure. Returns True on success."""
     log.info("=" * 60)
-    log.info("Phase %s: %s", num, name)
+    log.info("Phase %s: %s", phase_id, name)
     log.info("=" * 60)
     try:
         result = fn(*args, **kwargs)
-        log.info("Phase %s OK: %s", num, result)
+        log.info("Phase %s OK: %s", phase_id, result)
         return True
     except FileNotFoundError as e:
-        log.warning("Phase %s SKIPPED — missing input: %s", num, e)
+        log.warning("Phase %s SKIPPED — missing input: %s", phase_id, e)
         return False
     except Exception as e:
-        log.error("Phase %s FAILED: %s", num, e, exc_info=True)
+        log.error("Phase %s FAILED: %s", phase_id, e, exc_info=True)
         return False
+
+
+def _resolve_start_index(start_from: str) -> int:
+    """Convert --start-from value to a 0-based manifest index.
+
+    Accepts a phase ID ("3c", "A", "4") or an integer string ("4").
+    Integer N maps directly to phase ID str(N) first; if not found,
+    falls back to positional index N-1 for backwards compat.
+    """
+    # Try as a direct phase ID first
+    for i, phase in enumerate(_PHASES):
+        if str(phase["id"]) == start_from:
+            return i
+    # Numeric fallback: --start-from 4 → 0-based index 3
+    try:
+        n = int(start_from)
+        idx = n - 1
+        if 0 <= idx < len(_PHASES):
+            log.warning(
+                "--start-from %d interpreted as positional index %d "
+                "(phase %r). Prefer using phase IDs directly.",
+                n, idx, _PHASES[idx]["id"],
+            )
+            return idx
+    except ValueError:
+        pass
+    valid = [str(p["id"]) for p in _PHASES]
+    raise SystemExit(
+        f"--start-from {start_from!r} is not a valid phase ID or index. "
+        f"Valid IDs: {valid}"
+    )
 
 
 def run(
     *,
     skip_tests: bool = False,
     skip_pause: bool = False,
-    start_from: int = 1,
+    start_from: str = "1",
     run_log_path: Path | None = None,
 ) -> dict[str, bool]:
-    """Run all pipeline phases in order; return dict of phase → success."""
+    """Run pipeline phases in manifest order; return dict of phase_id → success."""
     if run_log_path is None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
         run_log_path = RUNS_DIR / f"full_run_{ts}.log"
     configure_logging(run_log_path)
     log.info("Pipeline run started — log: %s", run_log_path)
+    log.info("Execution order: %s", get_execution_order())
 
-    if not skip_tests and start_from <= 1:
-        if not _run_pytest():
-            return {"pytest": False}
+    results: dict[str, bool] = {}
 
-    results: dict[str, bool] = {"pytest": True}
+    start_idx = _resolve_start_index(start_from)
 
-    # Phase 1 — scrobble ingest
-    if start_from <= 1:
-        from pipeline.ingest_scrobbles import ingest
-        results["1"] = _phase("1", "scrobble ingest", ingest)
+    if not skip_tests and start_idx == 0:
+        results["pytest"] = _run_pytest()
+        if not results["pytest"]:
+            return results
     else:
-        results["1"] = True
+        results["pytest"] = True
 
-    # Phase 2 — dedupe
-    if start_from <= 2:
-        from pipeline.dedupe import dedupe
-        results["2"] = _phase("2", "dedupe", dedupe)
-    else:
-        results["2"] = True
+    for i, phase_def in enumerate(_PHASES):
+        phase_id = str(phase_def["id"])
 
-    # Phase A — iTunes XML enrichment (between skeleton and audio)
-    if start_from <= 2:
-        from pipeline.enrich_apple_library import enrich as enrich_apple
-        results["A"] = _phase("A", "iTunes XML enrichment", enrich_apple)
-    else:
-        results["A"] = True
+        if i < start_idx:
+            results[phase_id] = True  # assumed done
+            continue
 
-    # Phase 3a — TuneMyMusic export
-    if start_from <= 3:
-        from pipeline.export_tunemymusic import export
-        results["3a"] = _phase("3a", "TuneMyMusic CSV export", export)
+        # ── Manual phase ────────────────────────────────────────────────
+        if phase_def.get("manual"):
+            outputs = phase_def.get("outputs", [])
+            output_exists = any((REPO_ROOT / f).exists() for f in outputs)
+            if not output_exists and not skip_pause:
+                log.info("PAUSE: Phase %s is manual.", phase_id)
+                instructions = phase_def.get("instructions", "").strip()
+                if instructions:
+                    for line in instructions.splitlines():
+                        log.info("  %s", line)
+                log.info("Stopping pipeline — re-run with --start-from %s once complete.", phase_id)
+                break
+            results[phase_id] = output_exists or skip_pause
+            continue
 
-    # Phase 3b — manual step (pause)
-    if not INPUT_EXPORTIFY_CSV.exists() and not skip_pause and start_from <= 3:
-        log.info(
-            "PAUSE: Phase 3b is manual.\n"
-            "  1. Upload inputs/tunemymusic_upload.csv to TuneMyMusic\n"
-            "  2. Create a Spotify playlist from it\n"
-            "  3. Run Exportify (https://exportify.net) on that playlist\n"
-            "  4. Save the result as inputs/exportify.csv\n"
-            "  5. Re-run with --start-from 3"
-        )
-        log.info("Skipping the rest of Phase 3 — Exportify CSV not present.")
+        # ── Conditional: required file gate ─────────────────────────────
+        req_file = phase_def.get("requires_file")
+        if req_file and not (REPO_ROOT / req_file).exists():
+            log.warning(
+                "Phase %s SKIPPED — required file missing: %s",
+                phase_id, req_file,
+            )
+            results[phase_id] = False
+            continue
 
-    # Phase 3c — Exportify merge
-    if start_from <= 3 and INPUT_EXPORTIFY_CSV.exists():
-        from pipeline.merge_exportify import merge as merge_exportify
-        results["3c"] = _phase("3c", "Exportify merge", merge_exportify)
-    elif start_from <= 3:
-        log.warning("Phase 3c skipped — no Exportify CSV at %s", INPUT_EXPORTIFY_CSV)
-        results["3c"] = False
+        # ── Dynamic import + execute ─────────────────────────────────────
+        module_path = phase_def.get("module")
+        callable_name = phase_def.get("callable")
+        optional = phase_def.get("optional", False)
 
-    # Phase 4 — Last.fm metadata
-    if start_from <= 4:
-        from pipeline.enrich_metadata import enrich as enrich_metadata
-        results["4"] = _phase("4", "Last.fm + MusicBrainz", enrich_metadata)
-
-    # Phase 5 — Apple Music availability
-    if start_from <= 5:
-        from pipeline.check_apple_music import check
-        results["5"] = _phase("5", "Apple Music availability", check)
-
-    # Phase 6 — mood classification (skipped if not implemented yet)
-    if start_from <= 6:
         try:
-            from pipeline.classify_moods import classify
-        except ImportError:
-            log.info("Phase 6 SKIPPED — classify_moods not yet implemented")
-            results["6"] = False
-        else:
-            results["6"] = _phase("6", "mood classification", classify)
-
-    # Phase 7 — saturation/curation from taste_profile.md
-    if start_from <= 7:
-        if not TASTE_PROFILE_PATH.exists():
-            log.info("Phase 7 SKIPPED — %s not present", TASTE_PROFILE_PATH)
-            results["7"] = False
-        else:
-            try:
-                from pipeline.apply_taste_profile import apply
-            except ImportError:
-                log.info("Phase 7 SKIPPED — apply_taste_profile not yet implemented")
-                results["7"] = False
+            mod = importlib.import_module(module_path)
+            fn = getattr(mod, callable_name)
+        except (ImportError, AttributeError) as e:
+            if optional:
+                log.info("Phase %s SKIPPED — not yet implemented: %s", phase_id, e)
+                results[phase_id] = False
             else:
-                results["7"] = _phase("7", "saturation + curation", apply)
+                log.error("Phase %s FAILED to import %s.%s: %s", phase_id, module_path, callable_name, e)
+                results[phase_id] = False
+            continue
 
-    # Phase 8 — final merge
-    if start_from <= 8:
-        from pipeline.update_tracks import update
-        results["8"] = _phase("8", "final merge → tracks.jsonl", update)
+        results[phase_id] = _phase(phase_id, phase_def["name"], fn)
 
-    # Summary
+    # ── Summary ──────────────────────────────────────────────────────────
     log.info("=" * 60)
     log.info("Pipeline summary:")
-    for phase, ok in results.items():
-        symbol = "OK " if ok else "-- "
-        log.info("  %s phase %s", symbol, phase)
+    for phase_id, ok in results.items():
+        log.info("  %s  phase %s", "OK " if ok else "-- ", phase_id)
     log.info("Output: %s", TRACKS_PATH)
     log.info("Log   : %s", run_log_path)
     log.info("=" * 60)
@@ -192,14 +207,14 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                    help="Skip pytest run before the pipeline.")
     p.add_argument("--skip-pause", action="store_true",
                    help="Don't pause when manual steps are pending.")
-    p.add_argument("--start-from", type=int, default=1,
-                   help="Phase number to start from (default: 1).")
+    p.add_argument("--start-from", default="1",
+                   help="Phase ID to start from (e.g. '1', '3c', 'A'). Default: 1.")
     return p.parse_args(argv)
 
 
 if __name__ == "__main__":
     args = _parse_args(sys.argv[1:])
-    if not INPUT_LASTFM_EXPORT.exists() and args.start_from <= 1:
+    if args.start_from in ("1", "1") and not INPUT_LASTFM_EXPORT.exists():
         log.error("Last.fm export not found at %s — cannot start from Phase 1.",
                   INPUT_LASTFM_EXPORT)
         sys.exit(1)
@@ -208,5 +223,4 @@ if __name__ == "__main__":
         skip_pause=args.skip_pause,
         start_from=args.start_from,
     )
-    failed = [p for p, ok in results.items() if not ok and p != "pytest"]
     sys.exit(1 if any(not ok for p, ok in results.items() if p == "pytest") else 0)

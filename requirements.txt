@@ -4,3 +4,4 @@ python-dotenv>=1.0
 tqdm>=4.66
 pytest>=8.0
 openpyxl>=3.1
+pyyaml>=6.0

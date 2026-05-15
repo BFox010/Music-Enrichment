@@ -48,6 +48,7 @@ DISCOGS_CACHE: Path = CACHE_DIR / "discogs.json"
 # ── Schema ───────────────────────────────────────────────────────────────
 # Integer, monotonic. Bump only on breaking renames/removals — additive fields
 # don't bump (readers ignore unknowns). See pipeline/schema.py for the registry.
+# Mirrors manifest schema_version.
 SCHEMA_VERSION: int = 5
 
 MOOD_CATEGORIES: tuple[str, ...] = (
