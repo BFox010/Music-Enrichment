@@ -56,15 +56,20 @@ class TestMergeWithExisting:
         merged = _merge_with_existing(new, existing)
         assert merged["mood_tags"] == ["Fast"]
 
-    def test_preserves_playlists_when_locked(self) -> None:
-        new = {"artist": "x", "track": "y", "playlists": [], "curation_state": None}
+    def test_playlists_always_track_phase7_output(self) -> None:
+        # Playlists are derived from taste_profile.md (Phase 7), not human-edited.
+        # Even when curation_state is locked, new Phase 7 output wins — otherwise
+        # tracks get stuck in playlist sections that no longer exist in markdown.
+        new = {"artist": "x", "track": "y", "playlists": ["sad"], "curation_state": "locked"}
         existing = {"artist": "x", "track": "y",
-                    "playlists": ["soak", "night_drive"],
+                    "playlists": ["heavy_weather", "night_drive"],
                     "curation_state": "locked"}
         merged = _merge_with_existing(new, existing)
-        assert merged["playlists"] == ["soak", "night_drive"]
+        assert merged["playlists"] == ["sad"]
 
-    def test_does_not_preserve_playlists_when_unreviewed(self) -> None:
+    def test_playlists_clear_when_track_removed_from_markdown(self) -> None:
+        # When Phase 7 emits no playlists for a track (removed from markdown),
+        # tracks.jsonl reflects that — no stale memberships preserved.
         new = {"artist": "x", "track": "y", "playlists": [], "curation_state": None}
         existing = {"artist": "x", "track": "y",
                     "playlists": ["stale_playlist"],
