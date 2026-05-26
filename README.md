@@ -71,8 +71,9 @@ New modules introduced by the plan (`pipeline/genre_harmonize.py`,
 | `models/`                           | Trained classifier artifacts, splits, calibration plots (Phase β) | mixed (artifacts yes; large blobs may be ignored) |
 | `reports/`                          | Evaluation reports (Phase β Step 9 onward)                | yes      |
 
-Required `.env` keys: `LASTFM_API_KEY`, `DISCOGS_TOKEN`, `MUSICBRAINZ_USER_AGENT`.
-See [.env.example](.env.example).
+Required `.env` key: `LASTFM_API_KEY`. `DISCOGS_TOKEN` and
+`MUSICBRAINZ_USER_AGENT` are reserved placeholders (not wired up; leave
+blank). See [.env.example](.env.example) for current status.
 
 ---
 
