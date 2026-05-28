@@ -66,6 +66,15 @@ ALL_KEYS: tuple[str, ...] = LINEAR_KEYS + SCALED_KEYS
 # Above this, the track is queued for Claude review.
 CENTROID_THRESHOLD: float = 1.6
 
+# Moods whose centroid predictions are suppressed from output. Per the
+# 2026-05-25 spot-check (Group B verdict in music_enrichment_todo.md),
+# the audio-feature centroid hallucinates these tags at high rates (0-2 of 5
+# centroid predictions matched the owner's mood judgement). Audit-source
+# and Claude-batch hits for these moods are still emitted — only the
+# centroid path is suppressed. Remove a mood from this set once it has
+# been re-curated with enough audit coverage to trust again.
+CENTROID_SUPPRESSED_MOODS: frozenset[str] = frozenset({"Dark", "Fast", "Heartbreak"})
+
 # Output for tracks that need Claude classification
 CLAUDE_BATCH_PATH: Path = INPUTS_DIR / "claude_mood_batch.jsonl"
 
@@ -158,11 +167,14 @@ def classify_track(
     *,
     threshold: float = CENTROID_THRESHOLD,
     max_assignments: int = 3,
+    suppressed_moods: frozenset[str] = CENTROID_SUPPRESSED_MOODS,
 ) -> tuple[list[str], float | None]:
     """Return (assigned_moods, distance_of_nearest).
 
     Picks up to ``max_assignments`` moods whose distance is within
-    ``threshold`` of the track's normalized vector.
+    ``threshold`` of the track's normalized vector. ``suppressed_moods``
+    are filtered out of the output even when their centroid is nearest —
+    see the module-level ``CENTROID_SUPPRESSED_MOODS`` docstring.
     """
     if not features or not centroids:
         return [], None
@@ -170,7 +182,8 @@ def classify_track(
     distances = [(mood, euclidean(vec, c)) for mood, c in centroids.items()]
     distances.sort(key=lambda x: x[1])
     nearest = distances[0][1] if distances else None
-    chosen = [m for m, d in distances if d <= threshold][:max_assignments]
+    chosen = [m for m, d in distances if d <= threshold and m not in suppressed_moods]
+    chosen = chosen[:max_assignments]
     return chosen, nearest
 
 
