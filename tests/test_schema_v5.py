@@ -13,6 +13,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from pipeline.config import SCHEMA_VERSION
 from pipeline.schema import (
     FIELD_DEFAULTS,
@@ -211,6 +213,18 @@ class TestLegacyRecordCompat:
         filled = fill_defaults(restored)
         assert filled["_schema_version"] == 5
         assert filled["canonical_track_id"].startswith("norm:portishead|roads")
+
+    def test_invalid_jsonl_reports_line_number(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.jsonl"
+        path.write_text('{"artist": "ok"}\n{not json}\n', encoding="utf-8")
+        with pytest.raises(ValueError, match=r"bad\.jsonl:2: invalid JSONL row"):
+            read_jsonl(path)
+
+    def test_non_object_jsonl_row_rejected(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.jsonl"
+        path.write_text('["not", "an", "object"]\n', encoding="utf-8")
+        with pytest.raises(ValueError, match="expected JSON object row"):
+            read_jsonl(path)
 
     def test_existing_schema_exports_still_present(self) -> None:
         """Regression: existing imports in update_tracks.py must still resolve."""

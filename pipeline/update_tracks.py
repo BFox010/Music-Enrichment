@@ -15,7 +15,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +35,9 @@ from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
 from pipeline.schema import (
     HUMAN_EDITED_FIELDS,
     fill_defaults,
+    read_jsonl,
     validate_dataset,
+    write_jsonl,
 )
 
 log = get_logger(__name__)
@@ -79,17 +80,27 @@ def _pick_input(explicit: Path | None) -> Path:
 
 
 def _load_jsonl(path: Path) -> list[dict]:
-    rows: list[dict] = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
+    return read_jsonl(path)
+
+
+def _track_key(row: dict, context: str) -> str:
+    artist = row.get("artist_normalized")
+    track = row.get("track_normalized")
+    if not artist or not track:
+        raise ValueError(
+            f"{context} missing artist_normalized or track_normalized"
+        )
+    return f"{artist}|{track}"
 
 
 def _index_by_key(rows: list[dict]) -> dict[str, dict]:
-    return {f"{r['artist_normalized']}|{r['track_normalized']}": r for r in rows}
+    index: dict[str, dict] = {}
+    for i, row in enumerate(rows, start=1):
+        key = _track_key(row, f"existing row {i}")
+        if key in index:
+            raise ValueError(f"duplicate existing track key {key!r}")
+        index[key] = row
+    return index
 
 
 def _enrichment_sources(row: dict) -> list[str]:
@@ -182,8 +193,12 @@ def update(
     new_count = 0
     updated_count = 0
 
-    for row in new_rows:
-        key = f"{row['artist_normalized']}|{row['track_normalized']}"
+    seen_new: set[str] = set()
+    for i, row in enumerate(new_rows, start=1):
+        key = _track_key(row, f"source row {i}")
+        if key in seen_new:
+            raise ValueError(f"duplicate source track key {key!r}")
+        seen_new.add(key)
         existing = existing_index.get(key)
         merged = _merge_with_existing(row, existing)
         merged = fill_defaults(merged)
@@ -208,10 +223,7 @@ def update(
             f"{validation['invalid_count']} invalid rows — refusing to write tracks.jsonl"
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
-        for row in merged_rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    write_jsonl(merged_rows, output_path)
 
     log.info(
         "Phase 8 done: %d total (%d new, %d updated) → %s",
