@@ -6,6 +6,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from pipeline.update_tracks import (
     _enrichment_sources,
     _merge_with_existing,
@@ -147,3 +149,27 @@ class TestUpdate:
             rows = self._load_jsonl(out)
             assert rows[0]["curation_state"] == "locked"
             assert rows[0]["rejected_reason"] == "kept for soak playlist"
+
+    def test_duplicate_source_key_aborts_before_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "A", "track": "T",
+                 "artist_normalized": "a", "track_normalized": "t"},
+                {"artist": "A", "track": "T",
+                 "artist_normalized": "a", "track_normalized": "t"},
+            ])
+            with pytest.raises(ValueError, match="duplicate source track key"):
+                update(input_path=inp, output_path=out)
+            assert not out.exists()
+
+    def test_missing_source_key_fails_with_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "A", "track": "T", "artist_normalized": "a"},
+            ])
+            with pytest.raises(ValueError, match="source row 1 missing"):
+                update(input_path=inp, output_path=out)

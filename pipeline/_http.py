@@ -46,6 +46,10 @@ class RateLimitedClient:
         user_agent: str = "MusicEnrichment/1.0",
         flush_every: int = 50,
     ) -> None:
+        if rate_per_second <= 0:
+            raise ValueError("rate_per_second must be greater than 0")
+        if flush_every <= 0:
+            raise ValueError("flush_every must be greater than 0")
         self.cache_path = cache_path
         self.min_interval = 1.0 / rate_per_second
         self.flush_every = flush_every
@@ -112,6 +116,8 @@ class RateLimitedClient:
                 if r.status_code == 429:
                     log.warning("429 rate-limited; backing off")
                 # 5xx, 429, etc. → backoff and retry
+                if attempt == HTTP_MAX_RETRIES - 1:
+                    continue
                 wait = min(HTTP_BACKOFF_BASE * (2 ** attempt) + random.random(),
                            HTTP_BACKOFF_MAX)
                 log.debug("HTTP %s on attempt %d/%d for %s — waiting %.1fs",
@@ -119,6 +125,8 @@ class RateLimitedClient:
                 time.sleep(wait)
             except requests.RequestException as e:
                 self._last_request = time.monotonic()
+                if attempt == HTTP_MAX_RETRIES - 1:
+                    continue
                 wait = min(HTTP_BACKOFF_BASE * (2 ** attempt), HTTP_BACKOFF_MAX)
                 log.debug("Network error %s on attempt %d/%d — waiting %.1fs",
                           e, attempt + 1, HTTP_MAX_RETRIES, wait)
