@@ -239,6 +239,9 @@ tracks_with_availability.jsonl
 tracks_with_moods.jsonl
 tracks_with_taste.jsonl
 
+# Pipeline run logs and unmatched-track reports
+runs/
+
 # Local env snapshots
 .env.local
 
