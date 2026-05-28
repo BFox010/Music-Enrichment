@@ -156,12 +156,12 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         merged["mood_source"] = existing_source
         merged["mood_confidence"] = existing.get("mood_confidence")
 
-    # Playlist semantics: preserve when user has locked/approved them,
-    # but explicitly clear when curation_state is None (don't keep stale memberships).
-    if existing.get("curation_state") in ("locked", "approved") and existing.get("playlists"):
-        merged["playlists"] = existing["playlists"]
-    elif existing.get("curation_state") is None:
-        merged["playlists"] = list(new.get("playlists") or [])
+    # Playlist semantics: playlists are derived from taste_profile.md (Phase 7),
+    # not human-edited directly. Always trust the latest Phase 7 output — otherwise
+    # tracks get stuck in playlist sections that no longer exist in the markdown.
+    # Only curation_state is in HUMAN_EDITED_FIELDS; preserving playlists here
+    # was double-counting that preservation. See δ-1 in TODO.
+    merged["playlists"] = list(new.get("playlists") or [])
 
     return merged
 
