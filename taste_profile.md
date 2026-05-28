@@ -1300,131 +1300,73 @@ The 14 mood-category playlists tracked by the pipeline. Each holds tracks explic
 - "A Little While" by Yellow Days
 
 ### love (locked)
-- "Fashion Killa" by A$AP Rocky
-- "Dissolve (Acoustic)" by Absofacto
-- "Water Under the Bridge" by Adele
-- "If Loving You is Wrong" by Against All Logic
-- "Every Other Freckle" by alt-J
-- "Something Good" by alt-J
-- "Dramatic Girl (feat. Che Ecru)" by Baby Keem
-- "durag activity" by Baby Keem & Travis Scott
-- "Highway 95 pt.2" by Baby Keem
-- "Girl (Remixed By Octet)" by Beck
-- "Love On the Run" by Broken Bells
-- "No Matter What You're Told" by Broken Bells
-- "The Changing Lights" by Broken Bells
-- "10,000 Emerald Pools" by BØRNS
-- "Electric Love (Oliver Remix)" by BØRNS
-- "Always Something" by Cage the Elephant
-- "Hey Ma (Remix) [feat. Cam'ron, Juelz Santana & Toya]" by The Diplomats
-- "HOT TO GO!" by Chappell Roan
-- "Red Wine Supernova" by Chappell Roan
-- "Fragile (feat. Scott Carlin)" by Conner O'Kane
-- "Instant Crush" by Daft Punk & Julian Casablancas
-- "Sweet Talk" by Dear and the Headlights
-- "My High" by Disclosure & slowthai
-- "3 Nights" by Dominic Fike
-- "Body" by Don Toliver
+- "Lover Girl" by Aaron Frazer
+- "Let's Stay Together" by Al Green
+- "Girl" by Beck
+- "Use Me" by Bill Withers
+- "Run Away from It All" by Blackberry Smoke
+- "Skinny Love" by Bon Iver
+- "Freakin' Out on the Interstate" by Briston Maroney
+- "Love on the Run" by Broken Bells
+- "Hey Ma (Feat. Juelz Santana, Freekey Zekey & Toya)" by Cam'ron
+- "Everytime We Touch" by Cascada
+- "4EVER" by Clairo
+- "Sofia" by Clairo
+- "Always Forever" by Cults
+- "Under Your Spell" by Desire
 - "I Love You Always Forever" by Donna Lewis
-- "A Little Less Conversation (JXL Radio Edit Remix)" by Elvis Presley & JXL
-- "Come Over (feat. Sean Paul) [Radio Version]" by Estelle
-- "This Heart Attack (Miami Horror Remix)" by Faker
-- "Dream in Colour" by Franc Moody
-- "Sierra Leone" by Frank Ocean
-- "Oh Darling (feat. Soudiere)" by Freddie Dredd
-- "Turn Your Heart Back On" by Gnarls Barkley
-- "Evian (feat. PinkPantheress, Rizloski & Rax)" by GoldLink
-- "Désolé (feat. Fatoumata Diawara)" by Gorillaz
+- "Find Your Love" by Drake
+- "Real Love Baby" by Father John Misty
+- "Miss You" by Foster the People
+- "Waste" by Foster the People
+- "Ivy" by Frank Ocean
+- "Thinkin Bout You" by Frank Ocean
+- "A New Kind of Love (feat. Imogen Heap & Guy Sigsworth) [Demo]" by Frou Frou
 - "On Melancholy Hill" by Gorillaz
-- "Rhinestone Eyes" by Gorillaz
-- "Simplicity (feat. Joan As Police Woman)" by Gorillaz
-- "Two Weeks" by Grizzly Bear
-- "girlfriend" by hemlocke springs
-- "De Selby (Part 2)" by Hozier
-- "Then We Kiss" by Icona Pop
-- "Bower" by Inner Wave
-- "Everyday (Remastered)" by Jamiroquai
-- "That's My Bitch" by JAŸ-Z & Kanye West
-- "Why I Love You (feat. Mr Hudson)" by JAŸ-Z & Kanye West
-- "One Night/All Night" by Justice & Tame Impala
-- "After The Storm (feat. Tyler, The Creator & Bootsy Collins)" by Kali Uchis
+- "Summertime In Paris (feat. Willow)" by Jaden
+- "Everyday" by Jamiroquai
+- "DAISIES" by Justin Bieber
 - "Call Me" by Kali Uchis
-- "telepatía (acoustic)" by Kali Uchis
-- "10% (feat. Kali Uchis)" by KAYTRANADA
-- "TOGETHER (feat. AlunaGeorge & GoldLink)" by KAYTRANADA
 - "LOVE. (feat. Zacari)" by Kendrick Lamar
-- "Now Or Never (feat. Mary J. Blige) [Bonus Track]" by Kendrick Lamar
-- "Poetic Justice (feat. Kendrick Lamar) [Live in New York]" by Terrace Martin
-- "Maria También" by Khruangbin
-- "Video Games (Remastered)" by Lana Del Rey
-- "How to Love" by Lil Wayne
-- "running out of time" by Lil Yachty
+- "bless the telephone" by Labi Siffre
+- "Blue Jeans" by Lana Del Rey
+- "Margaret (feat. Bleachers)" by Lana Del Rey
+- "drive ME crazy!" by Lil Yachty
+- "God Is Fair, Sexy Nasty (feat. Kendrick Lamar)" by Mac Miller
+- "Love Lost" by Mac Miller & The Temper Trap
 - "All You Do" by Magdalena Bay
-- "Death & Romance" by Magdalena Bay
-- "Love Is Everywhere" by Magdalena Bay
-- "Secrets (Your Fire)" by Magdalena Bay
+- "Vampire In The Corner" by Magdalena Bay
+- "She Will Be Loved" by Maroon 5
 - "Show Me How" by Men I Trust
-- "On Time (Instrumental)" by Metro Boomin
-- "The Look" by Metronomy
-- "Electric Feel" by MGMT
-- "P.Y.T. (Pretty Young Thing)" by Michael Jackson
-- "Waves (Tame Impala Remix)" by Miguel
-- "Mayonaka No Door ~Stay with Me" by Miki Matsubara
-- "Flashed Junk Mind" by Milky Chance
-- "Passion" by Milky Chance
-- "Stolen Dance (Acoustic Version)" by Milky Chance
 - "These Words" by Natasha Bedingfield
-- "Luv(sic.), Pt. 3 (Instrumentals)" by Nujabes
-- "Wraith Pinned to the Mist and Other Games" by of Montreal
-- "Slip Away" by Perfume Genius
-- "Fall In Love" by Phantogram
-- "Capable of love" by PinkPantheress
-- "Just for me" by PinkPantheress
-- "Summer of Luv (feat. Unknown Mortal Orchestra)" by Portugal. The Man
-- "One Wish (feat. Childish Gambino)" by Ravyn Lenae
+- "A Part of Me (feat. Laura Whiteside)" by Neck Deep
+- "Right Thru Me" by Nicki Minaj
+- "Invincible (feat. Daniel Caesar)" by Omar Apollo
+- "All I Wanted" by Paramore
+- "Mosquito" by PinkPantheress
+- "Always Ending in You" by Polyenso
+- "Overtime (feat. Kacey Musgraves)" by Rainbow Kitten Surprise
+- "Skin Tight (feat. Steve Lacy)" by Ravyn Lenae
+- "Hello Hello Hello" by Remi Wolf
 - "Loving Is Easy (feat. Benny Sings)" by Rex Orange County
-- "Television / so Far so Good" by Rex Orange County
 - "Love on the Brain" by Rihanna
-- "Loveeeeeee Song (feat. Future)" by Rihanna
-- "Espresso" by Sabrina Carpenter
-- "Anita" by Smino
+- "Sweet Talk" by Saint Motel
 - "I Love You" by Spacemen 3
-- "Goodie Bag" by Still Woozy
-- "Borderline (Blood Orange Remix)" by Tame Impala
-- "Breathe Deeper (Lil Yachty Remix)" by Tame Impala & Lil Yachty
-- "Disciples" by Tame Impala
-- "Instant Destiny" by Tame Impala
-- "Is It True (Four Tet Remix)" by Tame Impala
-- "Mind Mischief" by Tame Impala
-- "No Choice" by Tame Impala
-- "One More Year" by Tame Impala
-- "Back In Your Head" by Tegan and Sara
-- "Closer" by Tegan and Sara
+- "Is It True" by Tame Impala
+- "Music to Walk Home By" by Tame Impala
+- "Piece Of Heaven" by Tame Impala
 - "Need Your Love" by Tennis
-- "The Girl's Dark Powers" by ASMRmpits
-- "Everlasting Light" by The Black Keys
-- "Fever" by The Black Keys
-- "Tighten Up" by The Black Keys
 - "Beat Your Heart Out" by The Distillers
-- "Stubborn Love" by The Lumineers
-- "Cariño" by The Marías
-- "My Heart is Drowning" by Thee Sacred Souls
-- "I Think We're Alone Now" by Tiffany
-- "Be Good" by Tokyo Police Club
-- "Ordinary Pleasure" by Toro y Moi
-- "Got Me Started" by Troye Sivan
-- "We Don't Believe What's on TV" by twenty one pilots
-- "Sunshine (feat. Anthony Hamilton)" by Twista
+- "Nights in White Satin" by The Moody Blues
+- "Selfless" by The Strokes
+- "Fell in Love With a Girl" by The White Stripes
+- "Can I Call You Rose?" by Thee Sacred Souls
+- "Love Is A Long Road" by Tom Petty
+- "Screen" by Twenty One Pilots
+- "Smithereens" by Twenty One Pilots
 - "All Your'n" by Tyler Childers
-- "Come On, Let's Go" by Tyler, The Creator & Nigo
-- "Int'l Players Anthem (I Choose You) [feat. Outkast]" by UGK
-- "Hunnybee" by Unknown Mortal Orchestra
-- "Weekend Run" by Unknown Mortal Orchestra
-- "Golden Days" by Whitney
-- "The Thrill (feat. Empire Of The Sun)" by Wiz Khalifa
-- "Moonlight" by XXXTENTACION
-- "Fly-day Chinatown" by yasuha
-- "Gospel For a New Century" by Yves Tumor
+- "I THINK" by Tyler, The Creator
+- "Maps" by Yeah Yeah Yeahs
 
 ### hype (locked)
 - "Another Song About The Weekend" by A Day to Remember
@@ -2887,334 +2829,61 @@ The 14 mood-category playlists tracked by the pipeline. Each holds tracks explic
 - "If We Being Rëal" by Yeat
 
 ### dance (locked)
-- "Doja" by $NOT & A$AP Rocky
-- "1000 Blunts" by $uicideboy$
-- "2nd Hand" by $uicideboy$
-- "Aliens Are Ghosts" by $uicideboy$ & Travis Barker
-- "Kill Yourself (Part IV)" by $uicideboy$
-- "Matte Black" by $uicideboy$
-- "My Flaws Burn Through My Skin Like Demonic Flames from Hell" by $uicideboy$
-- "The Thin Grey Line" by $uicideboy$
-- "Comin’ Out Hard (Smoked & Chopped)" by 8ball & MJG
-- "Pimps (Smoked & Chopped)" by 8ball & MJG
-- "Can I Kick It?" by A Tribe Called Quest
-- "Scenario (LP Mix)" by A Tribe Called Quest
-- "Walk On Water (feat. A$AP Twelvyy, A$AP Ant, A$AP Nast, A$AP Ferg & Playboi Carti)" by A$AP Mob
-- "Angels" by A$AP Rocky
-- "Electric Body (feat. ScHoolboy Q)" by A$AP Rocky
-- "F**kin' Problems (feat. Drake, 2 Chainz & Kendrick Lamar)" by A$AP Rocky
-- "Fashion Killa" by A$AP Rocky
-- "F**k Sleep (feat. FKA twigs)" by A$AP Rocky
-- "Gunz N Butter (feat. Juicy J)" by A$AP Rocky
-- "M'$ (feat. Lil Wayne)" by A$AP Rocky
-- "OG Beeper" by A$AP Rocky
-- "Praise The Lord (Da Shine) [feat. Skepta]" by A$AP Rocky
-- "Trunks" by A$AP Rocky
-- "Wild for the Night (feat. Skrillex & Birdy Nam Nam)" by A$AP Rocky
-- "Get Out of the Car" by Aesop Rock
-- "Mystery Fish" by Aesop Rock
-- "Rabies" by Aesop Rock
-- "Rings" by Aesop Rock
-- "If Loving You is Wrong" by Against All Logic
-- "STREET FIGHTER (feat. Bexnil)" by Alu & Jesse James
 - "Come Down" by Anderson .Paak
-- "Hiei" by Anonymuz
-- "Alberto Balsalm (1994)" by Aphex Twin
-- "Hollow Moon (Bad Wolf)" by AWOLNATION
-- "Jailbreak" by AWOLNATION
-- "Sound Witness System" by AWOLNATION
-- "The Best" by AWOLNATION
-- "Baby Keem" by Baby Keem
-- "Dramatic Girl (feat. Che Ecru)" by Baby Keem
-- "durag activity" by Baby Keem & Travis Scott
-- "Gang Activities" by Baby Keem
-- "Highway 95 pt.2" by Baby Keem
-- "pink panties" by Baby Keem
-- "vent" by Baby Keem
-- "Cellphone's Dead" by Beck
-- "Go It Alone" by Beck
-- "Poison" by Bell Biv DeVoe
-- "Dangerous" by Big Data & Joywave
-- "Fun" by Big Moochie Grape & Young Dolph
-- "Usual Suspect" by Big Noyd
-- "bitches broken hearts" by Billie Eilish
-- "Foe Tha Love of $ (feat. Eazy-E)" by Bone Thugs-n-Harmony
-- "BANKROLL (feat. A$AP Rocky & A$AP Ferg)" by BROCKHAMPTON
-- "SEX" by BROCKHAMPTON
-- "Medicine" by Broken Bells
-- "The Ghost Inside" by Broken Bells
-- "Always Something" by Cage the Elephant
-- "New Money" by Calvin Harris & 21 Savage
-- "Hey Ma (Remix) [feat. Cam'ron, Juelz Santana & Toya]" by The Diplomats
-- "Bunny Is A Rider" by Caroline Polachek
-- "Juice" by Chance the Rapper
-- "Controller" by Channel Tres
-- "Pretty Girl" by Clairo
-- "Scatter Brain (feat. Ludacris & JID)" by Conway the Machine
-- "Birthday Suit" by Cosmo Sheldrake
-- "Hand On the Pump" by Cypress Hill
-- "Instant Crush" by Daft Punk & Julian Casablancas
-- "Inspire the Liars" by Dance Gavin Dance
-- "One in a Million" by Dance Gavin Dance
-- "Young Robot" by Dance Gavin Dance
-- "I Remember (Vocal Mix)" by deadmau5 & Kaskade
-- "I've Seen Footage" by Death Grips
-- "Stockton" by Death Grips
-- "Press Rewind" by Del the Funky Homosapien
-- "Positive Contact" by Deltron 3030
-- "SUMO l ZUMO" by Denzel Curry
-- "Troubles (Cold Blooded Soul Version)" by Denzel Curry
-- "Rebirth Of Slick (Cool Like Dat)" by Digable Planets
+- "Where’s Your Head At" by Basement Jaxx
+- "Conceited (What The F**k)" by BEAUMONT & Remy Ma
+- "WE ON GO" by Bia
+- "Feels (feat. Pharrell Williams, Katy Perry & Big Sean)" by Calvin Harris
+- "Slide (feat. Frank Ocean & Migos)" by Calvin Harris
+- "party 4 u" by Charli xcx
+- "Got To Be" by Childish Gambino
+- "The Days (NOTION Remix)" by CHRYSTAL & NOTION
+- "Holiday" by Confidence Man
+- "Titanium (feat. Sia)" by David Guetta
 - "My High" by Disclosure & slowthai
-- "Default" by Django Django
-- "Woman" by Doja Cat
-- "3 Nights" by Dominic Fike
-- "Body" by Don Toliver
-- "I Love You Always Forever" by Donna Lewis
-- "What's the Difference (feat. Eminem & Xzibit)" by Dr. Dre
-- "Calling My Name" by Drake
-- "Laugh Now Cry Later (feat. Lil Durk)" by Drake
-- "Nonstop" by Drake
-- "Passionfruit" by Drake
-- "Sticky" by Drake
-- "Texts Go Green" by Drake
-- "Which One" by Drake & Central Cee
-- "Broccoli (feat. Lil Yachty)" by DRAM
-- "Morning in America" by Durand Jones & The Indications
-- "Too Many Tears" by Durand Jones & The Indications
-- "Oh Devil" by Electric Guest
+- "No Broke Boys" by Disco Lines & Tinashe
+- "Massive" by Drake
 - "A Little Less Conversation (JXL Radio Edit Remix)" by Elvis Presley & JXL
-- "Love Game (feat. Kendrick Lamar)" by Eminem
-- "Shake That" by Eminem
-- "Walking On A Dream (Kaskade Remix)" by Empire Of The Sun
-- "Way to Go" by Empire Of The Sun
-- "Beef (feat. Playboi Carti)" by Ethereal
-- "Helena Beat" by Foster the People
-- "Dream in Colour" by Franc Moody
-- "Chanel" by Frank Ocean
-- "Close to You" by Frank Ocean
-- "Lost" by Frank Ocean
-- "novacane" by Frank Ocean
-- "In My Blood (feat. Genshin & Slim Guerilla)" by Freddie Dredd
-- "Limbo" by Freddie Dredd
-- "Life Is Good (feat. Drake)" by Future
-- "Like That" by Future, Metro Boomin & Kendrick Lamar
-- "Evian (feat. PinkPantheress, Rizloski & Rax)" by GoldLink
-- "Meditation (feat. Jazmine Sullivan & KAYTRANADA)" by GoldLink
-- "5/4" by Gorillaz
-- "Clint Eastwood (Ed Case / Sweetie Irie Refix)" by Gorillaz
-- "DARE (Radio Edit)" by Gorillaz
-- "Feel Good Inc" by Gorillaz
-- "Fire Coming out of the Monkey's Head" by Gorillaz
-- "Friday 13th (feat. Octavian)" by Gorillaz
-- "Glitter Freeze (feat. Mark E Smith)" by Gorillaz
-- "Kids with Guns" by Gorillaz & Neneh Cherry
-- "Last Living Souls" by Gorillaz
-- "On Melancholy Hill" by Gorillaz
-- "Pac-Man (feat. ScHoolboy Q)" by Gorillaz
-- "Re-Hash" by Gorillaz
-- "Rock the House" by Gorillaz
-- "Some Kind of Nature (feat. Lou Reed)" by Gorillaz
-- "Starshine" by Gorillaz
-- "Macy's Day Parade" by Green Day
-- "Whatsername" by Green Day
-- "Salam 1996 (feat. Memphis Cult & MC Spade)" by Groove Dealers
-- "fukumean" by Gunna
-- "Baki" by HAARPER
-- "Shiv" by HAARPER
-- "girlfriend" by hemlocke springs
-- "I Think I Left the Stove On" by Hotel Ugly
-- "OUT WEST (feat. Young Thug)" by JACKBOYS & Travis Scott
-- "Ni**as in Paris" by Kanye West & JAŸ-Z
-- "Otis (feat. Otis Redding)" by Kanye West & JAŸ-Z
-- "Smile (feat. Gloria Carter)" by JAY-Z
-- "That's My Bitch" by JAŸ-Z & Kanye West
-- "Bruuuh (Remix)" by JID & Denzel Curry
-- "Tongues (feat. Kopps)" by Joywave
-- "Let Me See (feat. Kevin Gates & Lil Skies)" by Juicy J
-- "If You Ain't From My Hood (feat. Juicy J & DJ Paul)" by Project Pat
-- "Build It Up (feat. MaxOne of Sackcloth Fashion)" by Kaboose
-- "30 Hours" by Kanye West
-- "All Mine" by Kanye West
-- "Black Skinhead" by Kanye West
-- "Facts (Charlie Heat Version)" by Kanye West
-- "Fade" by Kanye West
-- "Feedback" by Kanye West
-- "I Thought About Killing You" by Kanye West
-- "Junya" by Kanye West
-- "Real Friends" by Kanye West
-- "Siiiiiiiiilver Surffffeeeeer Intermission" by Kanye West
-- "10% (feat. Kali Uchis)" by KAYTRANADA
-- "TOGETHER (feat. AlunaGeorge & GoldLink)" by KAYTRANADA
-- "I'm Over You" by Keith Whitley
-- "Alright" by Kendrick Lamar
-- "Count Me Out" by Kendrick Lamar
-- "Die Hard" by Kendrick Lamar, Blxst & Amanda Reifer
-- "HUMBLE." by Kendrick Lamar
-- "King Kunta" by Kendrick Lamar
-- "LOVE. (feat. Zacari)" by Kendrick Lamar
-- "Mr. Morale" by Kendrick Lamar & Tanna Leone
-- "N95" by Kendrick Lamar
-- "Poetic Justice (feat. Kendrick Lamar) [Live in New York]" by Terrace Martin
-- "Rich Spirit" by Kendrick Lamar
-- "Silent Hill" by Kendrick Lamar & Kodak Black
-- "The Recipe (feat. Dr. Dre) [Bonus Track]" by Kendrick Lamar
-- "These Walls (feat. Bilal, Anna Wise & Thundercat)" by Kendrick Lamar
-- "tv off (feat. Lefty Gunplay)" by Kendrick Lamar
-- "JUMPIN IN" by Kenny Mason
-- "Ambition for Cash" by Key Glock
-- "Young Dumb & Broke" by Khalid
-- "Day 'n' Nite (Nightmare)" by Kid Cudi
-- "Make Her Say (feat. Kanye West & Common)" by Kid Cudi
-- "4th Dimension (feat. Louis Prima)" by KIDS SEE GHOSTS
-- "Kids See Ghosts (feat. Yasiin Bey)" by KIDS SEE GHOSTS
-- "No Flockin" by Kodak Black
-- "Eat Sleep (feat. Richard Walters)" by Kx5, deadmau5 & Kaskade
-- "Dark Paradise" by Lana Del Rey
-- "Lollipop (feat. Static Major)" by Lil Wayne
-- "Mona Lisa (feat. Kendrick Lamar)" by Lil Wayne
-- "Sorry 4 The Wait" by Lil Wayne
-- "Green Light (Chromeo Remix)" by Lorde
-- "Randomly" by LUCKI
-- "Super Urus" by LUCKI
-- "Complicated" by Mac Miller
-- "Conversation, Pt. 1" by Mac Miller
-- "Everybody" by Mac Miller
-- "Good News" by Mac Miller
-- "Jet Fuel" by Mac Miller
-- "Ladders" by Mac Miller
-- "Once a Day" by Mac Miller
-- "Programs" by Mac Miller
-- "Self Care" by Mac Miller
-- "Surf" by Mac Miller
-- "The Spins" by Mac Miller & Empire Of The Sun
-- "What's the Use?" by Mac Miller
-- "Woods" by Mac Miller
-- "#RICHAXXHAITIAN" by Mach-Hommy, KAYTRANADA & 03 Greedo
-- "Strawberry Swing" by MAG.
-- "Chaeri" by Magdalena Bay
-- "Hysterical Us" by Magdalena Bay
-- "Venice" by Magdalena Bay
-- "Cracc Era (feat. Tyler, The Creator)" by Maxo Kream
-- "Breathe In, Breathe Out" by Melody's Echo Chamber
-- "Numb" by Men I Trust
-- "Show Me How" by Men I Trust
-- "10 Freaky Girls (feat. 21 Savage)" by Metro Boomin
-- "Don't Come Out the House (feat. 21 Savage)" by Metro Boomin
-- "Trance (Instrumental)" by Metro Boomin
-- "Umbrella (Instrumental)" by Metro Boomin
-- "Doomsday (Remix)" by MF DOOM
-- "Electric Feel" by MGMT
-- "P.Y.T. (Pretty Young Thing)" by Michael Jackson
-- "Avalanche" by Migos
-- "HOME (Remix)" by Mike Dimes & JID
-- "Fado" by Milky Chance
-- "Flashed Junk Mind" by Milky Chance
-- "Passion" by Milky Chance
-- "Stolen Dance (Acoustic Version)" by Milky Chance
-- "Dopeman (Remix)" by N.W.A
-- "Good Day (feat. Nappy Roots)" by Greg Street Presents Nappy Roots
-- "Life Happens Quickly" by Nappy Roots & Grip
-- "Me (feat. Cait Martin)" by Nappy Roots
-- "No Static (feat. Greg Nice)" by Nappy Roots
-- "Music & Me" by Nate Dogg
-- "Arya (Peace Control Remix) [Mixed]" by A$AP Rocky & Nigo
-- "Digital Dope (feat. The Underachievers)" by NugLife
-- "Luv(sic.), Pt. 3 (Instrumentals)" by Nujabes
-- "Wraith Pinned to the Mist and Other Games" by of Montreal
-- "Bodies" by Offset & JID
-- "Alien Boy" by Oliver Tree
-- "Rosa Parks" by Outkast
-- "The Whole World (feat. Killer Mike)" by Outkast
-- "C’est Comme Ça" by Paramore
-- "Cash In Cash Out (feat. 21 Savage & Tyler, The Creator)" by Pharrell Williams
-- "Functional Addict" by Pharrell Williams, Gunna & Nigo
-- "Just for me" by PinkPantheress
-- "Pain" by PinkPantheress
-- "Violet" by Pretty Sick
-- "Keep It Thoro" by Prodigy
-- "Life We Live (feat. Namond Lumpkin & Edgar Fletcher)" by Project Pat
-- "Rinky Dink II/We're Gonna Rumble" by Project Pat
-- "Cocaine Jesus (Audiotree Live)" by Rainbow Kitten Surprise
-- "Fever Pitch" by Rainbow Kitten Surprise
-- "Loving Is Easy (feat. Benny Sings)" by Rex Orange County
-- "Consideration (feat. SZA)" by Rihanna
-- "Loveeeeeee Song (feat. Future)" by Rihanna
-- "Call Ticketron" by Run The Jewels
-- "Legend Has It" by Run The Jewels
-- "LIFE" by Saba
-- "LOGOUT" by Saba
-- "Photosynthesis (feat. Jean Deaux)" by Saba
-- "THat Part (Black Hippy Remix)" by ScHoolboy Q
-- "Astronaut" by Sir Sly
-- "Anita" by Smino
-- "How Else (feat. Rich The Kid & Ilovemakonnen)" by Steve Aoki
-- "Rawnald Gregory Erickson the Second" by STRFKR
-- "X-Ray" by Sub Focus
-- "2 Am" by SWAVAY
-- "One, Two Step" by SWAVAY
-- "Love/Paranoia" by Tame Impala
-- "Obsolete" by Tame Impala
-- "One More Year" by Tame Impala
-- "Back In Your Head" by Tegan and Sara
+- "Shake That (feat. Nate Dogg)" by Eminem
+- "High And Low" by Empire of the Sun
+- "Walking on a Dream" by Empire of the Sun
+- "Call on Me (Radio Mix)" by Eric Prydz
+- "Fast Life Yungstaz - Swag Surfin'" by F.L.Y.
+- "All Eyes On Me" by Fox Stevenson
+- "leavemealone" by Fred Again.. & Baby Keem
+- "Victory Lap" by Fred again.., Skepta & PlaqueBoyMax
+- "I Run" by HAVEN. & Kaitlin Aragon
+- "Dance To This" by Icona Pop
+- "Then We Kiss" by Icona Pop
+- "Neighbor (feat. Travis Scott)" by Juicy J
+- "One Night/All Night" by Justice & Tame Impala
+- "Peacock" by Katy Perry
+- "Sleazy" by Kesha
+- "Bulletproof" by La Roux
+- "In for the Kill" by La Roux
+- "Deceptacon" by Le Tigre
+- "Paper Planes" by M.I.A.
+- "15th and the 1st (feat. YG Hootie) / MKULTRA (Know Good Remix) /  Diamond (Mixed)" by M?STIC, Waka Flocka Flame, Gucci Mane & YDG
+- "Ghost" by Machine Girl
+- "Ghost Assassin" by Maduk & Veela
+- "Image" by Magdalena Bay
+- "Hello" by Martin Solveig & Dragonette
+- "Old Thing Back (feat. Ja Rule and Ralph Tresvant)" by Matoma & The Notorious B.I.G.
+- "Breathing Underwater" by Metric
+- "Help I'm Alive" by Metric
+- "Monster Hospital" by Metric
+- "...Ready for It?" by MUZZ & Skyelle
+- "Everyone Nose (All the Girls Standing In the Line for the Bathroom)" by N.E.R.D
+- "Starships" by Nicki Minaj
+- "Miss You (Bonus Track)" by Oliver Tree & Robin Schulz
+- "Mind Mischief - Live" by Tame Impala
 - "Closer" by Tegan and Sara
-- "Walking With a Ghost" by Tegan and Sara
-- "Meet Me At Our Spot" by THE ANXIETY, WILLOW & Tyler Cole
-- "Hate It or Love It (G-Unit Remix) [feat. The Game, Tony Yayo, Young Buck & Lloyd Banks]" by 50 Cent
-- "Cariño" by The Marías
-- "Just Playing (Dreams) [2005 Remaster]" by The Notorious B.I.G.
-- "Runnin'" by The Pharcyde
-- "Breathe" by The Prodigy
-- "1979" by The Smashing Pumpkins
-- "In a Mood" by TheSecondSex
-- "Half On a Sack" by Three 6 Mafia
-- "Late Night Tip" by Three 6 Mafia
-- "Sippin On Some Syrup (feat. UGK & Project Pat)" by Three 6 Mafia
-- "Stay Fly (feat. Three 6 Mafia)" by Young Buck & 8Ball & MJG
-- "I Think We're Alone Now" by Tiffany
-- "Blow the Whistle" by Too $hort
-- "I'm a Player (Street Version)" by Too $hort
-- "Ordinary Pleasure" by Toro y Moi
-- "Topanga" by Trippie Redd
+- "Something Just Like This" by The Chainsmokers & Coldplay
+- "Setting Sun" by The Chemical Brothers
 - "Got Me Started" by Troye Sivan
-- "Fake You Out" by twenty one pilots
-- "Fall Away" by twenty one pilots
-- "House of Gold" by twenty one pilots
-- "Not Today" by twenty one pilots
-- "Semi-Automatic" by twenty one pilots
-- "Sunshine (feat. Anthony Hamilton)" by Twista
-- "Go F**k Yourself" by Two Feet
-- "Had Some Drinks" by Two Feet
-- "I THINK (Mixed)" by Tyler, The Creator
-- "One Day (Radio Version)" by UGK
-- "Hunnybee" by Unknown Mortal Orchestra
-- "Like Acid Rain" by Unknown Mortal Orchestra
-- "Meshuggah" by Unknown Mortal Orchestra
-- "Multi-Love" by Unknown Mortal Orchestra
-- "Necessary Evil" by Unknown Mortal Orchestra
-- "So Good at Being in Trouble" by Unknown Mortal Orchestra
-- "Swim and Sleep (Like a Shark) [Acoustic Version]" by Unknown Mortal Orchestra
-- "Weekend Run" by Unknown Mortal Orchestra
-- "745" by Vince Staples
-- "Don't Get Chipped" by Vince Staples
-- "Norf Norf" by Vince Staples
-- "Opps" by Vince Staples, Yugen Blakrok
-- "Señorita" by Vince Staples
-- "Your Woman" by White Town
-- "Wait a Minute!" by WILLOW
-- "The Thrill (feat. Empire Of The Sun)" by Wiz Khalifa
-- "Preservation (Instrumental)" by Wu-Tang Clan
-- "F**k Love" by XXXTENTACION & Trippie Redd
-- "Jocelyn Flores" by XXXTENTACION
-- "Look At Me!" by XXXTENTACION
-- "Moonlight" by XXXTENTACION
-- "Fly-day Chinatown" by yasuha
-- "Heads Will Roll (A-Trak Remix)" by Yeah Yeah Yeahs
-- "Maps" by Yeah Yeah Yeahs
-- "Errrbody" by Yo Gotti
-- "Rake It Up (feat. Nicki Minaj) [Diplo & Party Favor Remix]" by Yo Gotti
-- "Major (feat. Key Glock)" by Young Dolph
-- "2 Bitches" by Young Thug
+- "The Thrill (Feat. Empire of the Sun)" by Wiz Khalifa
+- "Heads Will Roll" by Yeah Yeah Yeahs
+- "Stay the Night (feat. Hayley Williams)" by Zedd
 
 ### bass (locked)
 - "Doja" by $NOT & A$AP Rocky
