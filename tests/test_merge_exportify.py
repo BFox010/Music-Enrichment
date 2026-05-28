@@ -167,6 +167,30 @@ class TestParseExportifyRow:
         assert block["audio_features"]["danceability"] is None
         assert block["audio_features"]["source"] == "exportify"
 
+    def test_genres_parsed_from_comma_separated(self) -> None:
+        row = {"Track Name": "Babushka Boi", "Artist Name(s)": "A$AP Rocky", "Genres": "rap,hip hop,trap"}
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["genres"] == ["rap", "hip hop", "trap"]
+
+    def test_genres_empty_string_returns_empty_list(self) -> None:
+        row = {"Track Name": "x", "Artist Name(s)": "y", "Genres": ""}
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["genres"] == []
+
+    def test_genres_absent_returns_empty_list(self) -> None:
+        row = {"Track Name": "x", "Artist Name(s)": "y"}
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["genres"] == []
+
+    def test_genres_whitespace_stripped(self) -> None:
+        row = {"Track Name": "x", "Artist Name(s)": "y", "Genres": " neo-psychedelic , indie "}
+        block = parse_exportify_row(row)
+        assert block is not None
+        assert block["genres"] == ["neo-psychedelic", "indie"]
+
     def test_tunemymusic_column_names(self) -> None:
         # Spotify Library export from TuneMyMusic uses "Track name" / "Artist name" / "Spotify - id"
         row = {

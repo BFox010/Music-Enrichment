@@ -165,6 +165,9 @@ def parse_exportify_row(row: dict[str, Any]) -> dict[str, Any] | None:
         if value is not None:
             has_any_feature = True
 
+    genres_raw = _ci_get(row, "Genres")
+    genres = [g.strip() for g in genres_raw.split(",") if g.strip()] if genres_raw else []
+
     return {
         "artist_normalized": normalize_artist(first_artist),
         "track_normalized": normalize_track(track_name),
@@ -182,6 +185,7 @@ def parse_exportify_row(row: dict[str, Any]) -> dict[str, Any] | None:
             _ci_get(row, "Album Release Date", "Release Date")
         ),
         "audio_features": audio_features if has_any_feature else None,
+        "genres": genres,
     }
 
 
@@ -297,6 +301,15 @@ def merge(
             new_value = block.get(field)
             if new_value is not None:
                 track[field] = new_value
+        # Merge genres: union of existing + Exportify genres, preserving order
+        new_genres = block.get("genres") or []
+        if new_genres:
+            existing = track.get("genres") or []
+            merged = list(existing)
+            for g in new_genres:
+                if g not in merged:
+                    merged.append(g)
+            track["genres"] = merged
 
     pct = (matched / len(tracks) * 100) if tracks else 0.0
     log.info("Matched: %d / %d (%.1f%%)", matched, len(tracks), pct)
