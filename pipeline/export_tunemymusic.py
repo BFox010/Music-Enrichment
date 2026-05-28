@@ -16,6 +16,7 @@ import json
 from pathlib import Path
 
 from pipeline.config import INPUTS_DIR, TRACKS_SKELETON_PATH, configure_logging, get_logger
+from pipeline.normalize import clean_artist_for_search, clean_track_for_search
 
 OUTPUT_PATH = INPUTS_DIR / "tunemymusic_upload.csv"
 
@@ -53,7 +54,9 @@ def export(
         writer = csv.writer(fh)
         writer.writerow(["Artist", "Track", "Album"])
         for t in tracks:
-            writer.writerow([t["artist"], t["track"], t.get("album", "")])
+            artist = clean_artist_for_search(t["artist"])
+            track = clean_track_for_search(t["track"])
+            writer.writerow([artist, track, t.get("album", "")])
 
     log.info("Wrote %d rows → %s", len(tracks), output_path)
     return len(tracks)

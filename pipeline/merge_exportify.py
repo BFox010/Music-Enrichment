@@ -33,7 +33,7 @@ from pipeline.config import (
     get_logger,
 )
 from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
-from pipeline.normalize import normalize_artist, normalize_track
+from pipeline.normalize import normalize_artist, normalize_track, search_join_key
 
 log = get_logger(__name__)
 
@@ -265,12 +265,17 @@ def merge(
     if median is not None and median < 0.2:
         log.warning("Median energy %.3f is unusually low — verify Exportify output", median)
 
-    # Build join-key index. Multiple CSV rows can share a key (compilation
-    # appearances, etc.); take the FIRST encountered.
+    # Build join-key indexes. Primary: full normalized key. Fallback: feat-stripped
+    # key for cases where Last.fm scrobble name and Spotify canonical name differ
+    # (e.g. library has "Song (feat. X)", CSV has "Song", or vice versa).
+    # Both indexes take the FIRST CSV row encountered for a given key.
     csv_index: dict[tuple[str, str], dict] = {}
+    csv_search_index: dict[str, dict] = {}
     for block in csv_blocks:
         key = (block["artist_normalized"], block["track_normalized"])
         csv_index.setdefault(key, block)
+        skey = search_join_key(block["exportify_artist"], block["exportify_track"])
+        csv_search_index.setdefault(skey, block)
 
     # Load existing tracks
     tracks: list[dict] = []
@@ -281,10 +286,16 @@ def merge(
                 tracks.append(json.loads(line))
 
     matched = 0
+    fallback_matched = 0
     unmatched: list[tuple[str, str]] = []
     for track in tracks:
         key = (track["artist_normalized"], track["track_normalized"])
         block = csv_index.get(key)
+        if block is None:
+            skey = search_join_key(track["artist"], track["track"])
+            block = csv_search_index.get(skey)
+            if block is not None:
+                fallback_matched += 1
         if block is None:
             unmatched.append((track["artist"], track["track"]))
             continue
@@ -312,7 +323,11 @@ def merge(
             track["genres"] = merged
 
     pct = (matched / len(tracks) * 100) if tracks else 0.0
-    log.info("Matched: %d / %d (%.1f%%)", matched, len(tracks), pct)
+    log.info(
+        "Matched: %d / %d (%.1f%%) — %d exact, %d via feat-stripped fallback",
+        matched, len(tracks), pct,
+        matched - fallback_matched, fallback_matched,
+    )
 
     if pct < 80.0:
         log.warning("Match rate %.1f%% is below the 80%% target.", pct)
@@ -337,6 +352,7 @@ def merge(
     return {
         "total": len(tracks),
         "matched": matched,
+        "fallback_matched": fallback_matched,
         "match_rate": pct,
         "csv_rows": len(csv_blocks),
         "median_energy": median,
