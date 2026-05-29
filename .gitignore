@@ -239,6 +239,9 @@ tracks_with_availability.jsonl
 tracks_with_moods.jsonl
 tracks_with_taste.jsonl
 
+# Per-run debug logs (unmatched lists, etc.)
+runs/
+
 # Local env snapshots
 .env.local
 
