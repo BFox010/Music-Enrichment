@@ -27,6 +27,21 @@ class TestFilterLastfmTags:
     def test_drops_favorites(self) -> None:
         assert _filter_lastfm_tags(["favorites", "my favorites", "indie"]) == ["indie"]
 
+    def test_drops_artist_name_tags(self) -> None:
+        assert _filter_lastfm_tags(["kanye west", "drake", "hip hop"]) == ["hip hop"]
+
+    def test_drops_specific_year_tags(self) -> None:
+        assert _filter_lastfm_tags(["2016", "2022", "trap"]) == ["trap"]
+
+    def test_drops_nationality_tags(self) -> None:
+        assert _filter_lastfm_tags(["british", "american", "indie rock"]) == ["indie rock"]
+
+    def test_drops_reaction_noise(self) -> None:
+        assert _filter_lastfm_tags(["masterpiece", "soty", "<3", "alternative"]) == ["alternative"]
+
+    def test_drops_female_vocalists(self) -> None:
+        assert _filter_lastfm_tags(["female vocalists", "pop"]) == ["pop"]
+
     def test_keeps_mood_tags(self) -> None:
         # User chose "keep mood-ish tags" — these must NOT be filtered
         tags = ["melancholic", "dark", "sad", "upbeat", "energetic", "happy"]

@@ -44,9 +44,9 @@ DEFAULT_INPUT = (
     else TRACKS_WITH_METADATA_PATH
 )
 
-# Minimal blocklist — interaction/meta tags and decade strings only.
-# Mood-adjacent tags (melancholic, dark, sad, upbeat, etc.) are intentionally
-# kept per user preference.
+# Blocklist — non-genre tags filtered before lastfm_tags enter genres.
+# Mood-adjacent tags (melancholic, dark, sad, upbeat, chill, rage, etc.)
+# are intentionally kept per user preference.
 JUNK_TAGS: frozenset[str] = frozenset({
     # Interaction / ownership meta-tags
     "seen live",
@@ -56,15 +56,30 @@ JUNK_TAGS: frozenset[str] = frozenset({
     "best of", "top tracks", "top songs",
     "owned", "downloaded", "wishlist", "library",
     "to listen", "to buy",
-    # Decade strings — year references, not genres
-    "60s", "70s", "80s", "90s", "00s",
+    "my top songs", "love at first listen",
+    # Quality / reaction words (too vague to be genre-useful)
+    "good", "great", "amazing", "beautiful", "brilliant", "cool",
+    "masterpiece", "soty", "<3",
+    # Decade / year strings — time references, not genres
+    "60s", "70s", "80s", "90s", "00s", "10s",
     "1960s", "1970s", "1980s", "1990s", "2000s", "2010s", "2020s",
-    # Generic quality words too vague to be genre-useful
-    "good", "great", "amazing", "beautiful", "brilliant",
-    # Language-only tags
-    "english",
-    # Last.fm housekeeping
-    "all", "under 2000 listeners",
+    "2011", "2012", "2013", "2014", "2015", "2016", "2017",
+    "2018", "2019", "2020", "2021", "2022", "2023", "2024", "2025",
+    # Nationality / language — not genres
+    "english", "british", "american", "canadian", "australian", "japanese",
+    # Descriptor-only (not genre)
+    "female vocalists", "female vocalist",
+    # Radio station tag
+    "wsum 91.7 fm madison",
+    # Last.fm housekeeping noise
+    "all", "under 2000 listeners", "peter", "poptron",
+    # Artist name tags — Last.fm users tag songs with artist names; not genres
+    "21 savage", "adele", "asap rocky", "baby keem", "coldplay",
+    "don toliver", "drake", "frank ocean", "future", "gorillaz",
+    "kanye west", "kendrick lamar", "kid cudi", "lana del rey",
+    "lil baby", "linkin park", "mac miller", "metro boomin",
+    "muse", "my chemical romance", "paramore", "pink floyd",
+    "playboi carti", "rihanna", "the weeknd", "travis scott",
 })
 
 
