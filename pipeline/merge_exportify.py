@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import io
 import json
 import statistics
 import sys
@@ -210,6 +211,30 @@ def _check_energy_bug(rows: list[dict]) -> float | None:
     return median
 
 
+def _prepare_csv(raw_path: Path, out_path: Path) -> None:
+    """Convert a raw Exportify browser download to a clean CSV.
+
+    Exportify's download has a blob: URL on line 1, a blank line 2, and the
+    same blob: URL prepended to the CSV header on line 3. Strip those artefacts
+    and write a clean file to out_path.
+    """
+    import re as _re
+    with open(raw_path, "r", encoding="utf-8", errors="replace") as fh:
+        lines = fh.readlines()
+    header_idx = next(
+        (i for i, l in enumerate(lines) if "Track URI" in l and "Track Name" in l),
+        None,
+    )
+    if header_idx is None:
+        raise ValueError(f"Cannot find CSV header in {raw_path}")
+    header = _re.sub(r"^.*?(Track URI)", r"\1", lines[header_idx])
+    clean = [header] + lines[header_idx + 1 :]
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, "w", encoding="utf-8", newline="") as fh:
+        fh.writelines(clean)
+    log.info("Prepared clean CSV → %s (%d data rows)", out_path, len(clean) - 1)
+
+
 def _pick_input(explicit: Path | None) -> Path:
     if explicit is not None:
         if not explicit.exists():
@@ -234,25 +259,40 @@ def merge(
     log.info("=== Phase 3c: Exportify audio-features merge ===")
 
     if not csv_path.exists():
-        log.error(
-            "Exportify CSV not found at %s. Run Phase 3a, do TuneMyMusic + Exportify, "
-            "then save the result here.", csv_path,
-        )
-        raise FileNotFoundError(csv_path)
+        # Fall back to the raw exportify file committed to the repo root.
+        # Exportify's browser download prepends a blob: URL line and embeds
+        # it again on the header row; _prepare_csv strips both artefacts.
+        raw_fallback = REPO_ROOT / "exportify"
+        if raw_fallback.exists():
+            log.info(
+                "inputs/exportify.csv not found — preparing it from %s", raw_fallback
+            )
+            _prepare_csv(raw_fallback, csv_path)
+        else:
+            log.error(
+                "Exportify CSV not found at %s. Run Phase 3a, do TuneMyMusic + Exportify, "
+                "then save the result here.", csv_path,
+            )
+            raise FileNotFoundError(csv_path)
 
     chosen_input = _pick_input(input_path)
     log.info("CSV    : %s", csv_path)
     log.info("Input  : %s", chosen_input)
     log.info("Output : %s", output_path)
 
-    # Parse CSV (utf-8-sig strips a BOM if Excel/TuneMyMusic emits one)
+    # Parse CSV (utf-8-sig strips a BOM if Excel/TuneMyMusic emits one).
+    # Exportify uses Unicode "smart quotes" (“/”) instead of ASCII
+    # double quotes, so the Python csv module never treats them as quoting
+    # characters and splits genre/label fields on internal commas. Normalise
+    # before handing to DictReader.
     csv_blocks: list[dict] = []
     with open(csv_path, "r", encoding="utf-8-sig", newline="") as fh:
-        reader = csv.DictReader(fh)
-        for row in reader:
-            block = parse_exportify_row(row)
-            if block is not None:
-                csv_blocks.append(block)
+        raw = fh.read().replace("“", '"').replace("”", '"')
+    reader = csv.DictReader(io.StringIO(raw))
+    for row in reader:
+        block = parse_exportify_row(row)
+        if block is not None:
+            csv_blocks.append(block)
 
     log.info("CSV rows parsed: %d", len(csv_blocks))
 
