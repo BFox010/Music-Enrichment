@@ -236,6 +236,7 @@ tracks_with_apple.jsonl
 tracks_with_audio.jsonl
 tracks_with_metadata.jsonl
 tracks_with_availability.jsonl
+tracks_with_discogs.jsonl
 tracks_with_moods.jsonl
 tracks_with_taste.jsonl
 

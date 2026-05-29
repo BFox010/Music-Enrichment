@@ -31,6 +31,7 @@ from pipeline.config import (
     ITUNES_SEARCH_API,
     REPO_ROOT,
     TRACKS_WITH_AVAILABILITY_PATH,
+    TRACKS_WITH_DISCOGS_PATH,
     TRACKS_WITH_METADATA_PATH,
     configure_logging,
     get_logger,
@@ -39,7 +40,11 @@ from pipeline.normalize import normalize_artist, normalize_track
 
 log = get_logger(__name__)
 
-DEFAULT_INPUT = TRACKS_WITH_METADATA_PATH
+# Prefer Discogs-enriched output if Phase 4b ran; fall back to metadata output.
+DEFAULT_INPUT = (
+    TRACKS_WITH_DISCOGS_PATH if TRACKS_WITH_DISCOGS_PATH.exists()
+    else TRACKS_WITH_METADATA_PATH
+)
 
 
 def _best_match(response: Any, artist_norm: str, track_norm: str) -> dict[str, Any] | None:
