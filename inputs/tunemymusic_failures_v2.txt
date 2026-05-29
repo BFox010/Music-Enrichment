@@ -1,0 +1,147 @@
+Track name,Artist name,Album,Playlist name,Type
+$NOT,Doja,,,My Playlist,playlist
+50 Cent,I'm Supposed to Die Tonight,,,My Playlist,playlist
+A$AP Rocky,A$AP Forever (REMIX),,,My Playlist,playlist
+A$AP Rocky,M'$,,,My Playlist,playlist
+A$AP Rocky,Wild For The Night,,,My Playlist,playlist
+Angels,Heaven,,,My Playlist,playlist
+Angels,Sirens,,,My Playlist,playlist
+Anonymuz,Hiei,,,My Playlist,playlist
+Armand Hammer,Stonefruit,,,My Playlist,playlist
+As Blood Runs Black,Strife (Chug Chug),,,My Playlist,playlist
+As I Lay Dying,Forsaken,,,My Playlist,playlist
+Nigo,Arya,,,My Playlist,playlist
+AWOLNATION,KOOKSEVERYWHERE!!!,,,My Playlist,playlist
+AWOLNATION,Sound Witness System,,,My Playlist,playlist
+Baby Keem,Baby Keem,,,My Playlist,playlist
+Baby Keem,Gang Activities,,,My Playlist,playlist
+Baby Keem,killstreaks (with Don Toliver & PinkPantheress),,,My Playlist,playlist
+Baby Keem,MOSHPIT,,,My Playlist,playlist
+Bassti,not even the friendzone,,,My Playlist,playlist
+Beach Fossils,Sugar,,,My Playlist,playlist
+Belle Haven,The Carving Knife,,,My Playlist,playlist
+Ben Reilly,Maytag (Tax Free),,,My Playlist,playlist
+Big Punisher,Twinz,,,My Playlist,playlist
+boygenius,$20,,,My Playlist,playlist
+boygenius,Satanist,,,My Playlist,playlist
+BROCKHAMPTON,SEX,,,My Playlist,playlist
+Broken Bells,Control,,,My Playlist,playlist
+Broken Bells,Medicine,,,My Playlist,playlist
+Buddha Trixie,Telekinesis,,,My Playlist,playlist
+Bun B,Concrete,,,My Playlist,playlist
+Buzy,Be Somewhere,,,My Playlist,playlist
+Cage the Elephant,Sabertooth Tiger,,,My Playlist,playlist
+Cage the Elephant,Trouble,,,My Playlist,playlist
+Calvin Harris,Slide,,,My Playlist,playlist
+Clairo,Sofia,,,My Playlist,playlist
+Clipse,E.B.I.T.D.A.,,,My Playlist,playlist
+Dance Gavin Dance,Evaporate,,,My Playlist,playlist
+Dance Gavin Dance,Exposed,,,My Playlist,playlist
+Darkside,Heart,,,My Playlist,playlist
+Deftones,Sextape,,,My Playlist,playlist
+Dehd,Disappear,,,My Playlist,playlist
+Dehd,Loner,,,My Playlist,playlist
+DOMi,NOT TiGHT,,,My Playlist,playlist
+DOMi,PiLOT,,,My Playlist,playlist
+DreamSoda,CHIHIRO,,,My Playlist,playlist
+Dry the River,New Cross,,,My Playlist,playlist
+Efelante,Luna,,,My Playlist,playlist
+Emarosa,Sure,,,My Playlist,playlist
+ERRA,Luminesce,,,My Playlist,playlist
+Everything Everything,Planets,,,My Playlist,playlist
+Felixx,Kids,,,My Playlist,playlist
+Fievel Is Glauque,Decoy,,,My Playlist,playlist
+Frank Ocean,Nikes,,,My Playlist,playlist
+Frank Ocean,Novacane,,,My Playlist,playlist
+Freddie Dredd,DITTY,,,My Playlist,playlist
+Freddie Dredd,In My Blood,,,My Playlist,playlist
+Frederic,Oddloop,,,My Playlist,playlist
+Future Islands,Seasons (Waiting on You),,,My Playlist,playlist
+Ghivio,Bouquet Boi,,,My Playlist,playlist
+Gorillaz,19-2000,,,My Playlist,playlist
+Gorillaz,Aries,,,My Playlist,playlist
+Gorillaz,MLS,,,My Playlist,playlist
+Gorillaz,Opium,,,My Playlist,playlist
+Gorillaz,Simplicity,,,My Playlist,playlist
+Gorillaz,Stylo,,,My Playlist,playlist
+Gorillaz,Sweepstakes,,,My Playlist,playlist
+HAARPER,Anemic,,,My Playlist,playlist
+HAARPER,Baki,,,My Playlist,playlist
+Halsey,Ego,,,My Playlist,playlist
+Hayley Williams,Simmer,,,My Playlist,playlist
+Helia,Metempsychosis,,,My Playlist,playlist
+Her's,Cool with You,,,My Playlist,playlist
+Hippo Campus,South,,,My Playlist,playlist
+Ice Spice,Munch (Feelin' U),,,My Playlist,playlist
+ichika Nito,ice,,,My Playlist,playlist
+ichika Nito,Orb,,,My Playlist,playlist
+ichika Nito,Picturesque,,,My Playlist,playlist
+J A Y E L E C T R O N I C A,Exhibit C,,,My Playlist,playlist
+JAY-Z,Kill Jay Z,,,My Playlist,playlist
+JAY-Z,Legacy,,,My Playlist,playlist
+JAY-Z,Primetime,,,My Playlist,playlist
+Juicy J,Let Me See,,,My Playlist,playlist
+Kanye West,All Mine,,,My Playlist,playlist
+Kanye West,Gone,,,My Playlist,playlist
+Kanye West,Intro,,,My Playlist,playlist
+Kanye West,Monster,,,My Playlist,playlist
+Kanye West,Pt. 2,,,My Playlist,playlist
+Kendrick Lamar,Alien Girl (Today W/ Her),,,My Playlist,playlist
+Kendrick Lamar,Rigamortus,,,My Playlist,playlist
+Kendrick Lamar,u,,,My Playlist,playlist
+Kid Cudi,Alive (Nightmare),,,My Playlist,playlist
+Kid Cudi,Elsie's Baby Boy (flashback),,,My Playlist,playlist
+Kid Cudi,Lovin' Me,,,My Playlist,playlist
+Kid Cudi,Sept. 16,,,My Playlist,playlist
+King Gizzard,This Thing,,,My Playlist,playlist
+Kings of Leon,A Wave,,,My Playlist,playlist
+Kings of Leon,Echoing,,,My Playlist,playlist
+Kings of Leon,Notion,,,My Playlist,playlist
+Lady Gaga,Applause,,,My Playlist,playlist
+Lewis Del Mar,Such Small Scenes,,,My Playlist,playlist
+Lil Yachty,:(failure(:,,,My Playlist,playlist
+LXST CXNTURY,Andromeda,,,My Playlist,playlist
+LXST CXNTURY,ODIUM,,,My Playlist,playlist
+LXST CXNTURY,VISION,,,My Playlist,playlist
+Mac Miller,ROS,,,My Playlist,playlist
+Mac Miller,Yeah (bonus),,,My Playlist,playlist
+Mcap Steve,Minecraft Steve,,,My Playlist,playlist
+Migos,Straightenin,,,My Playlist,playlist
+Mike,Hunger,,,My Playlist,playlist
+Milo,Sorcerer,,,My Playlist,playlist
+MIMIDEATH,if god didnt want us to snort worms he wouldn't have made them cylindrical!,,,My Playlist,playlist
+MyGrain,Veil Of Sun,,,My Playlist,playlist
+Nappy Roots,Me,,,My Playlist,playlist
+OutKast,B.O.B. (Bombs Over Baghdad),,,My Playlist,playlist
+Piri,on & on,,,My Playlist,playlist
+Pouya,Aftershock,,,My Playlist,playlist
+Saba,LOGOUT,,,My Playlist,playlist
+She Past Away,Ruh,,,My Playlist,playlist
+Shifty,OPTIONS,,,My Playlist,playlist
+Skrillex,ANDY,,,My Playlist,playlist
+Speech Patterns,Numb,,,My Playlist,playlist
+Taiwere,FanTaise$,,,My Playlist,playlist
+Tame Impala,Afterthought,,,My Playlist,playlist
+Tame Impala,Gossip,,,My Playlist,playlist
+Tame Impala,I Don't Really Mind,,,My Playlist,playlist
+Tame Impala,Island Walking,,,My Playlist,playlist
+Tame Impala,Led Zeppelin,,,My Playlist,playlist
+Tame Impala,List of People (to Try and Forget About),,,My Playlist,playlist
+Tame Impala,Nothing That Has Happened So Far Has Been Anything We Could Control,,,My Playlist,playlist
+Tatsuro Yamashita,Fragile,,,My Playlist,playlist
+Thao,Astonished Man,,,My Playlist,playlist
+The Marías,ABQ,,,My Playlist,playlist
+The Marías,Calling U Back,,,My Playlist,playlist
+The Smashing Pumpkins,1979,,,My Playlist,playlist
+Tilian,Dose,,,My Playlist,playlist
+TOKYOPILL,E t h e r e a l,,,My Playlist,playlist
+Twista,Sunshine,,,My Playlist,playlist
+Tyler the Creator,RUNITUP,,,My Playlist,playlist
+Unknown Mortal Orchestra,Stage or Screen,,,My Playlist,playlist
+Vince Staples,Señorita,,,My Playlist,playlist
+Vince Staples,Summertime,,,My Playlist,playlist
+We Came as Romans,Dreams,,,My Playlist,playlist
+XXXTENTACION,YuNg BrAtZ,,,My Playlist,playlist
+Young Thug,Old English,,,My Playlist,playlist
+YUI,LIFE,,,My Playlist,playlist
+Yung Dori,Agora,,,My Playlist,playlist
