@@ -1,75 +1,85 @@
 # TODO — remaining build-out
 
 What's left to build or fill in on the metadata assembly line. The pipeline
-phases (1–8) all run end-to-end; this tracks the *gaps* — sources not yet
-wired up, fields still empty, and data the owner still needs to provide.
+phases all run end-to-end; this tracks *gaps* — API runs that need network,
+data the owner needs to provide, and fields still under-populated.
 
 Snapshot taken 2026-05-29 against `tracks.jsonl` (2,730 tracks).
 
 ---
 
-## 1. Discogs enrichment — NOT BUILT
+## 1. Run full pipeline — BLOCKED on network
 
-Phase 4 (`enrich_metadata.py`) only calls Last.fm `track.getInfo`. Discogs is
-stubbed but never called: `discogs_styles` is seeded to `[]` and stays empty.
+The cloud execution environment blocks outbound API calls (Last.fm, Discogs,
+iTunes). All code is written and tested. To unblock:
 
-- [ ] Implement Discogs API client (token already planned: `DISCOGS_TOKEN`)
-- [ ] Match on ISRC first (we now have 82.7% ISRC coverage from Exportify),
-      fall back to artist+release search
-- [ ] Populate `discogs_styles` — the most granular sub-genre labels available
-      (e.g. "Crunk", "Shoegaze", "Boom Bap")
-- [ ] Respect "only-if-clear-match" rule from the spec — no fuzzy guessing
+- [ ] Allowlist `ws.audioscrobbler.com`, `api.discogs.com`, `itunes.apple.com`
+      in the environment's network policy (see code.claude.com/docs), OR
+- [ ] Pull branch locally and run with open network
+
+Once network is available, run from Phase 4 (Last.fm already ran once, but
+.cache/ is gone from this container — full re-run needed):
+
+```
+python -m pipeline.run_full_pipeline --start-from 4
+```
+
+Expected runtime at rate limits: ~45 min Phase 4, ~45 min Phase 4b, ~140 min Phase 5.
+
+## 2. Discogs styles — BUILT, not yet run
+
+Phase 4b (`enrich_discogs.py`) is complete with 21 tests. Will populate
+`discogs_styles` via artist+title search (0.85 similarity threshold).
+
 - **Current coverage:** `discogs_styles` 0/2730 (0.0%)
+- **Unblocked by:** #1 (network)
 
-## 2. Canonical `genres` field — NOT POPULATED
+## 3. Genres coverage — 33.8% (offline only)
 
-The `genres` field exists in the schema but nothing writes to it. We have raw
-signals (`lastfm_tags`, `itunes_genre`, soon `discogs_styles`) but no phase
-that distills them into a clean, deduplicated genre list.
+Phase 4c ran offline against existing lastfm+itunes signals. Will jump to ~50%+
+once Discogs runs. Genres from Discogs have the best sub-genre granularity
+("Boom Bap", "Shoegaze", etc.).
 
-- [ ] Decide precedence: discogs_styles > lastfm_tags > itunes_genre (?)
-- [ ] Add a normalization/merge step (probably end of Phase 4, or a new 4b)
-- [ ] Filter folksonomy noise from lastfm_tags ("seen live", "favorites", etc.)
-- **Current coverage:** `genres` 0/2730 (0.0%)
+- **Current coverage:** `genres` 922/2730 (33.8%)
+- **Unblocked by:** #1 + #2 (network + Discogs run)
 
-## 3. Last.fm tag coverage is thin — 30.9%
+## 4. Last.fm tag coverage — 30.9%
 
-Only 843/2730 tracks have any `lastfm_tags`. The rest came back empty from
-`track.getInfo`. Worth re-running Phase 4 now that Exportify gave us better
-identity data (ISRC, spotify_id) to improve match rate.
+843/2730 tracks have tags. Re-running Phase 4 with fresh cache will re-hit
+the same tracks but won't improve coverage unless we add an
+`artist.getTopTags` fallback for tracks with no track-level match.
 
-- [ ] Re-run Phase 4 and measure delta
-- [ ] Consider `artist.getTopTags` fallback for tracks with no track-level tags
+- [ ] Re-run Phase 4 (covered by #1)
+- [ ] Consider `artist.getTopTags` fallback — adds ~artist-level genre signal
+      for the 1,887 tracks with no track tags
 - **Current coverage:** `lastfm_tags` 843/2730 (30.9%)
 
-## 4. iTunes / Apple Music XML — 3.7% coverage
-
-Phase A only matched ~101 tracks because the iTunes library XML provided so
-far covers a small slice of the catalog. Personal play counts / skip counts /
-date-added are richer than Last.fm for owned tracks but mostly null right now.
-
-- [ ] Owner: export full Apple Music library as XML → `inputs/apple_music_library.xml`
-- [ ] Re-run Phase A, then re-run downstream phases
-- **Current coverage:** `itunes_play_count>0` 101/2730 (3.7%)
-
-## 5. Mood classification — 684 tracks unresolved
+## 5. Claude mood batch — 684 tracks unresolved
 
 Phase 6 queued 684 tracks to `inputs/claude_mood_batch.jsonl` (no audio
 features, or too far from every centroid). They have no mood tags.
 
 - [ ] Run the batch through Claude.ai
 - [ ] Save verdicts as `inputs/claude_mood_results.jsonl`
-- [ ] Re-run Phase 6 — Claude verdicts override centroid guesses ("high" conf)
-- **Current coverage:** `mood_tags` 2217/2730 (81.2%), 513 still None after merge
+- [ ] Re-run Phase 6 — Claude verdicts override centroid guesses
+- **Current coverage:** `mood_tags` 2217/2730 (81.2%), 513 still None
 
-## 6. Missing mood centroids — 4 of 14 categories untrained
+## 6. iTunes / Apple Music XML — 4.4% coverage
 
-No owner playlist covered **Fast, Groove, Slow, Uplifting**, so no centroid was
-built for them. (Some tracks carry these tags, but only from prior runs /
-direct inheritance, not from this session's training.)
+Phase A matched only 120 tracks because the library XML covers a small slice.
+Full export would raise this significantly.
 
-- [ ] Owner: provide playlists for Fast / Groove / Slow / Uplifting if wanted,
-      OR confirm these should only ever come from the Claude batch pass
+- [ ] Owner: export full Apple Music library as XML → `inputs/apple_music_library.xml`
+- [ ] Re-run Phase A, then re-run downstream phases
+- **Current coverage:** `itunes_play_count > 0` 101/2730 (3.7%)
+
+## 7. Missing mood centroids — 4 of 14 categories untrained
+
+No owner playlist covered **Fast, Groove, Slow, Uplifting**, so no centroid
+was built for them. Tracks with these moods can only come from the Claude batch.
+
+- [ ] Owner: provide Exportify CSVs for Fast / Groove / Slow / Uplifting playlists,
+      OR confirm these should only come from the Claude batch pass
 
 ---
 
@@ -77,14 +87,21 @@ direct inheritance, not from this session's training.)
 
 | Input | Path | Unblocks |
 |-------|------|----------|
-| Full Apple Music library XML | `inputs/apple_music_library.xml` | #4 |
+| Network access (allowlist or local run) | — | #1, #2, #3, #4 |
 | Claude mood verdicts | `inputs/claude_mood_results.jsonl` | #5 |
-| Fast/Groove/Slow/Uplifting playlists | (Exportify CSVs) | #6 |
-| `DISCOGS_TOKEN` in `.env` | — | #1 |
+| Full Apple Music library XML | `inputs/apple_music_library.xml` | #6 |
+| Fast/Groove/Slow/Uplifting playlists | (Exportify CSVs) | #7 |
 
-## Done this session (for context)
+## Done this session (2026-05-29)
 
-- Exportify integration: smart-quote fix + auto-prepare from committed raw file
-- Ran phases 3c→8 on the new export
-- Built mood training set from 7 playlists → `mood_audit.csv` (committed at root)
-- 10/14 mood centroids trained; tracks.jsonl at 82.7% audio features, 81.2% moods
+- Researched Discogs API — 60 req/min auth limit, no ISRC search endpoint
+- Built Phase 4b: `enrich_discogs.py` — artist+title search, 0.85 similarity
+  threshold, Authorization header auth, `.cache/discogs.json`, 21 tests
+- Built Phase 4c: `distill_genres.py` — merges discogs+lastfm+itunes into
+  `genres`, minimal junk filter per user preference (keep mood-adjacent tags)
+- Expanded JUNK_TAGS blocklist from real Last.fm data analysis — added artist
+  name tags (kanye west, drake, etc.), specific year tags (2011–2025),
+  nationality tags, radio station tag, descriptor noise
+- Applied genres distillation offline → 922/2730 tracks now have genres
+- Both API tokens saved to `.env` (gitignored)
+- 300 tests passing

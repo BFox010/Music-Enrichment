@@ -12,6 +12,11 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-29 phase 4c: DONE (offline) — genres distilled from lastfm+itunes; 922/2730 (33.8%) populated; Discogs will push higher once network runs
+- 2026-05-29 phase 4c: BUILT — distill_genres.py + 29 tests; JUNK_TAGS expanded with artist-name tags, year tags, nationality tags from real data analysis
+- 2026-05-29 phase 4b: BUILT — enrich_discogs.py + 21 tests; artist+title search, 0.85 similarity threshold, token auth, .cache/discogs.json
+- 2026-05-29 BLOCKED — API calls blocked by environment network policy (lastfm, discogs, itunes all return 403 Host not in allowlist); full pipeline re-run deferred until network is open
+- 2026-05-29 .env created — LASTFM_API_KEY + DISCOGS_TOKEN written (gitignored); both tokens confirmed set
 - 2026-05-29 TODO.md created — remaining build-out tracked (Discogs, genres field, iTunes XML, Claude mood batch, untrained centroids)
 - 2026-05-29 phase 6: DONE — 7 owner playlists → mood_audit.csv (committed at root), 247 direct + 1,799 centroid; 684 queued for Claude
 - 2026-05-29 phases 3c→8: RE-RUN on new Exportify export — tracks.jsonl at 82.7% audio features, 81.2% moods
@@ -126,31 +131,30 @@ to see if Phase 6 mood centroid training data could be reused.
 - [x] **0** scaffolding (committed)
 - [x] **1** scrobble ingest → `scrobbles.jsonl` (13,669 rows)
 - [x] **2** dedupe → `tracks_skeleton.jsonl` (2,730 unique tracks)
-- [x] **A** iTunes XML enrichment → `tracks_with_apple.jsonl` (122/2,730 matched — see notes below)
+- [x] **A** iTunes XML enrichment → `tracks_with_apple.jsonl` (122/2,730 matched)
 - [x] **3a** TuneMyMusic CSV export script (output: `inputs/tunemymusic_upload.csv`)
-- [ ] **3b** owner runs TuneMyMusic + Exportify (manual — pending owner)
-- [x] **3c** Exportify CSV merge — code written, waits on Exportify CSV
-- [x] **4** metadata enrichment → `tracks_with_metadata.jsonl` (2,165 matched, 79.3%)
-- [x] **5** Apple Music availability → `tracks_with_availability.jsonl` (1,916/2,730 = 70.2%)
-- [~] **6** mood classification — code complete, waits on (a) Exportify audio features, (b) existing_audit.csv with 14-category mood labels
-- [~] **7** saturation/curation from `taste_profile.md` — code complete, needs owner to fill in `taste_profile.md` (template provided)
-- [x] **8** final merge → tracks.jsonl (re-run with availability — current state below)
+- [x] **3b** owner ran Exportify — raw file committed to repo root as `exportify`
+- [x] **3c** Exportify CSV merge — smart-quote fix, auto-prepare from committed raw file
+- [x] **4** metadata enrichment → Last.fm + MusicBrainz (2,165/2,730 matched, 79.3%)
+- [~] **4b** Discogs styles — BUILT, awaiting network unblock to run
+- [x] **4c** genres distillation — BUILT + applied offline; 922/2,730 (33.8%) populated
+- [x] **5** Apple Music availability — 1,916/2,730 = 70.2% (needs re-run after 4b)
+- [x] **6** mood classification — 2,217/2,730 (81.2%); 684 queued for Claude batch
+- [~] **7** saturation/curation from `taste_profile.md` — code complete
+- [x] **8** final merge → `tracks.jsonl`
 - [x] **9** orchestrator (`python -m pipeline.run_full_pipeline`)
 
-## Final coverage in tracks.jsonl
+## Current coverage in tracks.jsonl (2026-05-29)
 
-| Field                  | Coverage | Note                                      |
-|------------------------|----------|-------------------------------------------|
-| Apple Music checked    | 100%     | iTunes Search API hit on every track      |
-| Apple Music available  | 70.2%    | Probable, not confirmed                   |
-| MusicBrainz ID         | 76.8%    | From Last.fm track.getInfo                |
-| Last.fm tags           | 30.9%    | Community-tagged subset                   |
-| iTunes XML metadata    | 4.5%     | Local library only has 278 tracks         |
-| Spotify ID             | 0%       | Phase 3c — waits on Exportify CSV         |
-| Audio features         | 0%       | Phase 3c — waits on Exportify CSV         |
-| Mood tags              | 0%       | Phase 6 — waits on Exportify + audit      |
-| Saturation tier        | 0%       | Phase 7 — waits on taste_profile.md       |
-- [ ] **6** mood classification (centroid + Claude batch) → `tracks_with_moods.jsonl`
-- [ ] **7** saturation/curation state from `taste_profile.md`
-- [ ] **8** final merge → `tracks.jsonl`
-- [ ] **9** orchestrator (`python -m pipeline.run_full_pipeline`)
+| Field                  | Coverage     | Note                                             |
+|------------------------|--------------|--------------------------------------------------|
+| Audio features         | 82.7%        | From Exportify (Spotify)                         |
+| Spotify ID / ISRC      | 82.7% / 81.2%| From Exportify                                   |
+| Mood tags              | 81.2%        | Centroid + direct; 684 queued for Claude batch   |
+| Apple Music available  | 70.2%        | Probable, not confirmed                          |
+| MusicBrainz ID         | 76.8%        | From Last.fm track.getInfo                       |
+| Last.fm tags           | 30.9%        | Community-tagged subset                          |
+| Genres                 | 33.8%        | Offline distillation from lastfm+itunes only     |
+| Saturation tier        | 34.0%        | From taste_profile.md                            |
+| iTunes XML metadata    | 4.4%         | Local library only has 278 tracks                |
+| Discogs styles         | 0%           | Phase 4b built, blocked on network               |
