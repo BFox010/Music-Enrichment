@@ -32,6 +32,7 @@ from pipeline.config import (
     REPO_ROOT,
     TRACKS_WITH_AVAILABILITY_PATH,
     TRACKS_WITH_DISCOGS_PATH,
+    TRACKS_WITH_GENRES_PATH,
     TRACKS_WITH_METADATA_PATH,
     configure_logging,
     get_logger,
@@ -40,11 +41,14 @@ from pipeline.normalize import normalize_artist, normalize_track
 
 log = get_logger(__name__)
 
-# Prefer Discogs-enriched output if Phase 4b ran; fall back to metadata output.
-DEFAULT_INPUT = (
-    TRACKS_WITH_DISCOGS_PATH if TRACKS_WITH_DISCOGS_PATH.exists()
-    else TRACKS_WITH_METADATA_PATH
-)
+# Prefer the most-enriched file available: genres → discogs → metadata.
+def _default_input() -> Path:
+    for candidate in (TRACKS_WITH_GENRES_PATH, TRACKS_WITH_DISCOGS_PATH, TRACKS_WITH_METADATA_PATH):
+        if candidate.exists():
+            return candidate
+    return TRACKS_WITH_METADATA_PATH
+
+DEFAULT_INPUT = _default_input()
 
 
 def _best_match(response: Any, artist_norm: str, track_norm: str) -> dict[str, Any] | None:
