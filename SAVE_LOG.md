@@ -12,6 +12,8 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-29 TuneMyMusic retry: 140/144 matched (97%) after search-cleaning + comma-fix + dedup. Methodology captured in `TUNEMYMUSIC_PLAYBOOK.md` — use it to model future batches. 4 residual misses are symbolic/ultra-short/artist-name-collision titles (manual-only).
+- 2026-05-29 search-clean layer added to normalize.py (clean_artist_for_search, clean_track_for_search, search_join_key) + Phase 3c fallback join. Spotify/audio coverage 83%→90%, genres 0%→40%.
 - 2026-05-10 full-pipeline orchestrator end-to-end VERIFIED — all phases chain cleanly
 - 2026-05-10 views/library_overnight.xlsx + library_stats_overnight.txt generated for AM review
 - 2026-05-10 phase 7: BUILT — taste_profile.md parser + applier + 19 tests; template at `taste_profile_template.md`
