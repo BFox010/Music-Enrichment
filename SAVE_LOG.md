@@ -12,6 +12,10 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-29 TODO.md created — remaining build-out tracked (Discogs, genres field, iTunes XML, Claude mood batch, untrained centroids)
+- 2026-05-29 phase 6: DONE — 7 owner playlists → mood_audit.csv (committed at root), 247 direct + 1,799 centroid; 684 queued for Claude
+- 2026-05-29 phases 3c→8: RE-RUN on new Exportify export — tracks.jsonl at 82.7% audio features, 81.2% moods
+- 2026-05-29 phase 3c: DONE — Exportify smart-quote fix + auto-prepare from committed raw file
 - 2026-05-10 full-pipeline orchestrator end-to-end VERIFIED — all phases chain cleanly
 - 2026-05-10 views/library_overnight.xlsx + library_stats_overnight.txt generated for AM review
 - 2026-05-10 phase 7: BUILT — taste_profile.md parser + applier + 19 tests; template at `taste_profile_template.md`
