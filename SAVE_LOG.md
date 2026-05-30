@@ -12,6 +12,8 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-29 phase 4b: BUILT + RUN — Discogs styles enrichment (pipeline/enrich_discogs.py). 1,923/2,730 (70.4%) got styles, 0 errors. Searches by artist+album (cache deduped per album → 1,581 unique queries). Wired into manifest between 4 and 5; +15 tests (274 total pass).
+- 2026-05-29 LINEARIZED chain — phase 4 now reads tracks_with_audio (was tracks_with_apple) and phase 6 reads tracks_with_availability (deepest), so new enrichment fields (e.g. discogs_styles) reach Phase 8 instead of being dropped at the branch split. Full pipeline re-run from Phase 1 verified end-to-end.
 - 2026-05-10 full-pipeline orchestrator end-to-end VERIFIED — all phases chain cleanly
 - 2026-05-10 views/library_overnight.xlsx + library_stats_overnight.txt generated for AM review
 - 2026-05-10 phase 7: BUILT — taste_profile.md parser + applier + 19 tests; template at `taste_profile_template.md`

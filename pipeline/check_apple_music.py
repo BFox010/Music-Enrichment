@@ -31,6 +31,7 @@ from pipeline.config import (
     ITUNES_SEARCH_API,
     REPO_ROOT,
     TRACKS_WITH_AVAILABILITY_PATH,
+    TRACKS_WITH_DISCOGS_PATH,
     TRACKS_WITH_METADATA_PATH,
     configure_logging,
     get_logger,
@@ -39,7 +40,14 @@ from pipeline.normalize import normalize_artist, normalize_track
 
 log = get_logger(__name__)
 
-DEFAULT_INPUT = TRACKS_WITH_METADATA_PATH
+# Input preference — deepest in the chain first. Phase 4b (Discogs) sits
+# between Phase 4 and here; fall back to the Phase 4 output if 4b was skipped.
+_INPUT_PRIORITY = [
+    TRACKS_WITH_DISCOGS_PATH,
+    TRACKS_WITH_METADATA_PATH,
+    REPO_ROOT / "tracks_with_apple.jsonl",
+]
+DEFAULT_INPUT = TRACKS_WITH_DISCOGS_PATH
 
 
 def _best_match(response: Any, artist_norm: str, track_norm: str) -> dict[str, Any] | None:
@@ -88,9 +96,7 @@ def check(
     log.info("=== Phase 5: Apple Music availability ===")
 
     if input_path is None:
-        input_path = DEFAULT_INPUT if DEFAULT_INPUT.exists() else (
-            REPO_ROOT / "tracks_with_apple.jsonl"
-        )
+        input_path = next((p for p in _INPUT_PRIORITY if p.exists()), DEFAULT_INPUT)
     log.info("Input : %s", input_path)
     log.info("Output: %s", output_path)
     log.info("Cache : %s", APPLE_MUSIC_CACHE)

@@ -328,11 +328,14 @@ def classify(
     configure_logging(run_log_path)
     log.info("=== Phase 6: mood classification ===")
 
-    # Resolve input — pick deepest intermediate so we don't lose Phase 5 availability data
+    # Resolve input — pick the DEEPEST intermediate so we carry every upstream
+    # field forward (Phase 5 availability, Phase 4b discogs_styles, ...). Since
+    # Phase 4 now reads the audio branch, tracks_with_availability carries
+    # audio_features too, so the centroid still has what it needs.
     chosen_input = None
     for candidate in (
-        tracks_path,
         REPO_ROOT / "tracks_with_availability.jsonl",
+        tracks_path,
         REPO_ROOT / "tracks_with_metadata.jsonl",
     ):
         if candidate.exists():

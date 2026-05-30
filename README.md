@@ -22,7 +22,8 @@ fast "where are we" pointer between sessions.
 | 3b    | TuneMyMusic + Exportify       | _(manual — owner)_                                        | `inputs/tunemymusic_upload.csv`                                     | `inputs/exportify.csv`                                   | 3a            | BLOCKED (owner action)          |
 | 3c    | Exportify merge               | [pipeline/merge_exportify.py](pipeline/merge_exportify.py) | `tracks_with_apple.jsonl`, `inputs/exportify.csv`                   | `tracks_with_audio.jsonl`                                | 3b            | BLOCKED on 3b (code complete)   |
 | 4     | Last.fm + MusicBrainz         | [pipeline/enrich_metadata.py](pipeline/enrich_metadata.py) | `tracks_with_audio.jsonl` _(or tracks_with_apple.jsonl if 3c skipped)_ | `tracks_with_metadata.jsonl`                          | A (3c if run) | DONE (2,165/2,730 = 79.3%)      |
-| 5     | Apple Music availability      | [pipeline/check_apple_music.py](pipeline/check_apple_music.py) | `tracks_with_metadata.jsonl`                                        | `tracks_with_availability.jsonl`                         | 4             | DONE (1,916/2,730 = 70.2%)      |
+| 4b    | Discogs styles                | [pipeline/enrich_discogs.py](pipeline/enrich_discogs.py)  | `tracks_with_metadata.jsonl`                                        | `tracks_with_discogs.jsonl`                              | 4             | DONE (1,923/2,730 = 70.4%)      |
+| 5     | Apple Music availability      | [pipeline/check_apple_music.py](pipeline/check_apple_music.py) | `tracks_with_discogs.jsonl` _(or tracks_with_metadata.jsonl if 4b skipped)_ | `tracks_with_availability.jsonl`                | 4b            | DONE (1,916/2,730 = 70.2%)      |
 | 6     | mood classification           | [pipeline/classify_moods.py](pipeline/classify_moods.py)  | `tracks_with_availability.jsonl`, `inputs/existing_audit.csv`        | `tracks_with_moods.jsonl`                                | 5, 3c         | PENDING (centroid → swap in β)  |
 | 7     | saturation / curation         | [pipeline/apply_taste_profile.py](pipeline/apply_taste_profile.py) | `tracks_with_moods.jsonl`, [taste_profile.md](taste_profile.md)     | `tracks_with_taste.jsonl`                                | 6             | PENDING (waits on filled profile) |
 | 8     | final merge                   | [pipeline/update_tracks.py](pipeline/update_tracks.py)    | latest per-phase JSONL                                              | `tracks.jsonl`                                           | 7             | DONE (initial — pre-mood)       |
@@ -100,6 +101,9 @@ inputs/lastfm_export.json
        │
        ▼
    Phase 4  tracks_with_metadata.jsonl  ← Last.fm + MusicBrainz API
+       │
+       ▼
+   Phase 4b tracks_with_discogs.jsonl   ← Discogs API (styles)
        │
        ▼
    Phase 5  tracks_with_availability.jsonl ← iTunes Search API

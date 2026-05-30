@@ -58,6 +58,7 @@ _INPUT_PRIORITY: list[Path] = [
 _SOURCE_TRIGGERS: dict[str, list[str]] = {
     "lastfm_tags": ["lastfm_tags"],
     "musicbrainz_id": ["musicbrainz"],
+    "discogs_styles": ["discogs"],     # populated in Phase 4b
     "audio_features": ["exportify"],   # populated in Phase 3c
     "itunes_persistent_id": ["itunes_xml"],
     "apple_music_checked_at": ["itunes_search"],

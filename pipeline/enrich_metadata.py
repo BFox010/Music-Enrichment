@@ -32,6 +32,7 @@ from pipeline.config import (
     LASTFM_CACHE,
     LASTFM_RATE_LIMIT,
     REPO_ROOT,
+    TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_METADATA_PATH,
     configure_logging,
     get_logger,
@@ -40,8 +41,15 @@ from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
 
 log = get_logger(__name__)
 
-# Input preference order: with_apple → skeleton (fallback)
-DEFAULT_INPUT = TRACKS_WITH_APPLE_PATH
+# Input preference — deepest first. Prefer the Phase 3c audio output (carries
+# audio_features + spotify_id forward so the chain stays linear and every field
+# reaches Phase 8), falling back to the Phase A apple output, then the skeleton.
+_INPUT_PRIORITY = [
+    TRACKS_WITH_AUDIO_PATH,
+    TRACKS_WITH_APPLE_PATH,
+    REPO_ROOT / "tracks_skeleton.jsonl",
+]
+DEFAULT_INPUT = TRACKS_WITH_AUDIO_PATH
 
 
 def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
@@ -100,9 +108,7 @@ def enrich(
 
     # Pick input
     if input_path is None:
-        input_path = DEFAULT_INPUT if DEFAULT_INPUT.exists() else (
-            REPO_ROOT / "tracks_skeleton.jsonl"
-        )
+        input_path = next((p for p in _INPUT_PRIORITY if p.exists()), DEFAULT_INPUT)
     log.info("Input : %s", input_path)
     log.info("Output: %s", output_path)
     log.info("Cache : %s", LASTFM_CACHE)
