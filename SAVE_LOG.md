@@ -12,6 +12,7 @@ Keep it terse. The git log is the authoritative history; this is just a fast
 
 ## Log
 
+- 2026-05-30 TAG NOISE FILTER — new `pipeline/tag_filter.py` drops 4 Last.fm tag-noise classes before write: radio stations (freq pattern e.g. "wsum 91.7 fm madison"), artist-name-as-tag (matched vs library artist set), personal "my …" tags, and specific years (decades like 90s/2010s KEPT). Protected allowlist guards genres/moods from over-blocking. Wired into Phase 4 (enrich_metadata); +36 tests (310 total). Re-ran 4→8 (caches warm) to scrub existing data; tags now 3,771 instances / 567 distinct, 0 stragglers.
 - 2026-05-29 phase 4b: BUILT + RUN — Discogs styles enrichment (pipeline/enrich_discogs.py). 1,923/2,730 (70.4%) got styles, 0 errors. Searches by artist+album (cache deduped per album → 1,581 unique queries). Wired into manifest between 4 and 5; +15 tests (274 total pass).
 - 2026-05-29 LINEARIZED chain — phase 4 now reads tracks_with_audio (was tracks_with_apple) and phase 6 reads tracks_with_availability (deepest), so new enrichment fields (e.g. discogs_styles) reach Phase 8 instead of being dropped at the branch split. Full pipeline re-run from Phase 1 verified end-to-end.
 - 2026-05-10 full-pipeline orchestrator end-to-end VERIFIED — all phases chain cleanly

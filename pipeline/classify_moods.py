@@ -264,8 +264,9 @@ def write_claude_batch(tracks: list[dict], path: Path = CLAUDE_BATCH_PATH) -> in
     """Write ambiguous tracks to a JSONL batch for Claude review.
 
     Each line has only the fields Claude needs to classify: identity, audio
-    features, lastfm_tags, itunes_genre. Owner pastes Claude's responses
-    back as ``inputs/claude_mood_results.jsonl`` (same join key + mood_tags).
+    features, lastfm_tags, discogs_styles, itunes_genre. Owner pastes Claude's
+    responses back as ``inputs/claude_mood_results.jsonl`` (same join key +
+    mood_tags).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -277,6 +278,7 @@ def write_claude_batch(tracks: list[dict], path: Path = CLAUDE_BATCH_PATH) -> in
                 "track_normalized": t.get("track_normalized"),
                 "audio_features": t.get("audio_features"),
                 "lastfm_tags": t.get("lastfm_tags") or [],
+                "discogs_styles": t.get("discogs_styles") or [],
                 "itunes_genre": t.get("itunes_genre"),
                 "release_year": t.get("release_year"),
             }

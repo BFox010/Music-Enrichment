@@ -38,6 +38,7 @@ from pipeline.config import (
     get_logger,
 )
 from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
+from pipeline.tag_filter import build_artist_block, filter_tags
 
 log = get_logger(__name__)
 
@@ -126,6 +127,12 @@ def enrich(
         tracks = tracks[:limit]
     log.info("Tracks to enrich: %d", len(tracks))
 
+    # Noise-tag filtering needs the library's own artist set so it can drop
+    # artist-name-as-tag entries (built from the full track list, not the
+    # possibly-truncated debug slice would miss artists — so use all tracks).
+    artist_block = build_artist_block(tracks)
+    log.info("Artist-name block set: %d names", len(artist_block))
+
     client = RateLimitedClient(
         LASTFM_CACHE,
         rate_per_second=LASTFM_RATE_LIMIT,
@@ -155,6 +162,9 @@ def enrich(
         }
         response = client.get(LASTFM_API_ROOT, params, cache_key)
         fields = _extract_lastfm_fields(response)
+        # Drop noise tags (radio stations, artist names, "my …", specific years)
+        # before they ever land in the JSONL.
+        fields["lastfm_tags"] = filter_tags(fields["lastfm_tags"], artist_block)
 
         if isinstance(response, dict) and response.get("_error"):
             stats["errors" if response["_error"] != "not_found" else "no_match"] += 1
