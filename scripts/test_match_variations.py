@@ -136,11 +136,20 @@ def _query_lastfm(client: RateLimitedClient, api_key: str, artist: str, track: s
 
 
 def _is_hit(response: dict) -> bool:
+    """An *actionable* hit yields something the pipeline can actually store:
+    a track-level MBID or at least one top tag. A bare ``listeners`` count
+    means Last.fm has a thin page for the name but nothing usable — that is
+    exactly the state these tracks are already in, so it does not count.
+    This mirrors enrich_metadata's own keep-condition (musicbrainz_id or tags)."""
     if not isinstance(response, dict) or response.get("_error"):
         return False
     t = response.get("track") or {}
-    # A real hit has at least an MBID or a listeners count
-    return bool(t.get("mbid") or t.get("listeners"))
+    if t.get("mbid"):
+        return True
+    toptags = (t.get("toptags") or {}).get("tag") or []
+    if isinstance(toptags, dict):  # single-tag responses can come as dict
+        toptags = [toptags]
+    return any(isinstance(tag, dict) and tag.get("name") for tag in toptags)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
