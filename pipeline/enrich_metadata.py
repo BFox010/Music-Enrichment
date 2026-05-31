@@ -32,16 +32,26 @@ from pipeline.config import (
     LASTFM_CACHE,
     LASTFM_RATE_LIMIT,
     REPO_ROOT,
+    TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_METADATA_PATH,
     configure_logging,
     get_logger,
 )
 from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
+from pipeline.name_variations import lookup_variations
+from pipeline.tag_filter import build_artist_block, filter_tags
 
 log = get_logger(__name__)
 
-# Input preference order: with_apple → skeleton (fallback)
-DEFAULT_INPUT = TRACKS_WITH_APPLE_PATH
+# Input preference — deepest first. Prefer the Phase 3c audio output (carries
+# audio_features + spotify_id forward so the chain stays linear and every field
+# reaches Phase 8), falling back to the Phase A apple output, then the skeleton.
+_INPUT_PRIORITY = [
+    TRACKS_WITH_AUDIO_PATH,
+    TRACKS_WITH_APPLE_PATH,
+    REPO_ROOT / "tracks_skeleton.jsonl",
+]
+DEFAULT_INPUT = TRACKS_WITH_AUDIO_PATH
 
 
 def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
@@ -72,6 +82,58 @@ def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
     }
 
 
+def _is_actionable(fields: dict[str, Any]) -> bool:
+    """True if the response gave us something to store — a track MBID or
+    at least one surviving (noise-filtered) tag. Mirrors the keep-condition
+    used for the ``matched`` stat below, and decides whether to stop retrying."""
+    return bool(fields["musicbrainz_id"] or fields["lastfm_tags"])
+
+
+def _lookup_with_variations(
+    client: RateLimitedClient,
+    api_key: str,
+    track: dict,
+    artist_block: frozenset[str],
+) -> tuple[dict[str, Any], Any, str]:
+    """Query Last.fm for a track, retrying through name variations.
+
+    Tries ``original`` first (preserving the existing cache key so prior runs
+    still hit cache), then the measured recovery rules — strip_feat,
+    strip_parens, first_artist — stopping at the first variation that yields an
+    MBID or tags. Returns ``(filtered_fields, response, variation_label)``. If
+    nothing is actionable, returns the original query's result so the caller can
+    still classify it as an error or a genuine no-match.
+    """
+    base_key = f"{track['artist_normalized']}|{track['track_normalized']}"
+    original_fields: dict[str, Any] | None = None
+    original_response: Any = None
+
+    for label, artist, title in lookup_variations(track["artist"], track["track"]):
+        cache_key = base_key if label == "original" else f"{base_key}#{label}"
+        params = {
+            "method": "track.getInfo",
+            "api_key": api_key,
+            "artist": artist,
+            "track": title,
+            "format": "json",
+            "autocorrect": "1",
+        }
+        response = client.get(LASTFM_API_ROOT, params, cache_key)
+        fields = _extract_lastfm_fields(response)
+        # Drop noise tags (radio stations, artist names, "my …", years) before
+        # they ever land in the JSONL — and before the actionable check.
+        fields["lastfm_tags"] = filter_tags(fields["lastfm_tags"], artist_block)
+
+        if label == "original":
+            original_fields, original_response = fields, response
+
+        if _is_actionable(fields):
+            return fields, response, label
+
+    # Nothing recovered usable data — report the original attempt.
+    return original_fields or {}, original_response, "original"
+
+
 def enrich(
     input_path: Path | None = None,
     output_path: Path = TRACKS_WITH_METADATA_PATH,
@@ -100,9 +162,7 @@ def enrich(
 
     # Pick input
     if input_path is None:
-        input_path = DEFAULT_INPUT if DEFAULT_INPUT.exists() else (
-            REPO_ROOT / "tracks_skeleton.jsonl"
-        )
+        input_path = next((p for p in _INPUT_PRIORITY if p.exists()), DEFAULT_INPUT)
     log.info("Input : %s", input_path)
     log.info("Output: %s", output_path)
     log.info("Cache : %s", LASTFM_CACHE)
@@ -120,6 +180,12 @@ def enrich(
         tracks = tracks[:limit]
     log.info("Tracks to enrich: %d", len(tracks))
 
+    # Noise-tag filtering needs the library's own artist set so it can drop
+    # artist-name-as-tag entries (built from the full track list, not the
+    # possibly-truncated debug slice would miss artists — so use all tracks).
+    artist_block = build_artist_block(tracks)
+    log.info("Artist-name block set: %d names", len(artist_block))
+
     client = RateLimitedClient(
         LASTFM_CACHE,
         rate_per_second=LASTFM_RATE_LIMIT,
@@ -130,30 +196,28 @@ def enrich(
     stats = {
         "total": len(tracks),
         "matched": 0,
+        "recovered_via_variation": 0,
         "no_match": 0,
         "errors": 0,
         "from_cache": len(client.cache),
     }
+    variation_hits: dict[str, int] = {}
     t0 = time.monotonic()
 
     enriched: list[dict] = []
     for i, track in enumerate(tracks, start=1):
-        cache_key = f"{track['artist_normalized']}|{track['track_normalized']}"
-        params = {
-            "method": "track.getInfo",
-            "api_key": api_key,
-            "artist": track["artist"],
-            "track": track["track"],
-            "format": "json",
-            "autocorrect": "1",
-        }
-        response = client.get(LASTFM_API_ROOT, params, cache_key)
-        fields = _extract_lastfm_fields(response)
+        fields, response, variation = _lookup_with_variations(
+            client, api_key, track, artist_block
+        )
 
-        if isinstance(response, dict) and response.get("_error"):
-            stats["errors" if response["_error"] != "not_found" else "no_match"] += 1
-        elif fields["musicbrainz_id"] or fields["lastfm_tags"]:
+        if _is_actionable(fields):
             stats["matched"] += 1
+            if variation != "original":
+                stats["recovered_via_variation"] += 1
+                variation_hits[variation] = variation_hits.get(variation, 0) + 1
+        elif isinstance(response, dict) and response.get("_error") \
+                and response["_error"] != "not_found":
+            stats["errors"] += 1
         else:
             stats["no_match"] += 1
 
@@ -185,6 +249,14 @@ def enrich(
         100 * stats["matched"] / stats["total"] if stats["total"] else 0,
         stats["no_match"], stats["errors"],
     )
+    if stats["recovered_via_variation"]:
+        breakdown = ", ".join(
+            f"{label} {n}" for label, n in sorted(variation_hits.items(), key=lambda x: -x[1])
+        )
+        log.info(
+            "  of which %d recovered via name-variation retry (%s)",
+            stats["recovered_via_variation"], breakdown,
+        )
     log.info("Wrote → %s", output_path)
     return stats
 

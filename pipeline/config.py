@@ -18,6 +18,8 @@ SCROBBLES_PATH: Path = REPO_ROOT / "scrobbles.jsonl"
 TRACKS_SKELETON_PATH: Path = REPO_ROOT / "tracks_skeleton.jsonl"
 TRACKS_WITH_AUDIO_PATH: Path = REPO_ROOT / "tracks_with_audio.jsonl"
 TRACKS_WITH_METADATA_PATH: Path = REPO_ROOT / "tracks_with_metadata.jsonl"
+TRACKS_WITH_DISCOGS_PATH: Path = REPO_ROOT / "tracks_with_discogs.jsonl"
+TRACKS_WITH_GENRES_PATH: Path = REPO_ROOT / "tracks_with_genres.jsonl"
 TRACKS_WITH_AVAILABILITY_PATH: Path = REPO_ROOT / "tracks_with_availability.jsonl"
 TRACKS_WITH_MOODS_PATH: Path = REPO_ROOT / "tracks_with_moods.jsonl"
 

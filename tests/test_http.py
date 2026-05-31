@@ -10,6 +10,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from pipeline._http import RateLimitedClient
 
 
@@ -50,3 +52,13 @@ class TestRateLimitedClientCache:
             c.cache["k"] = "v"
             c.flush()
             assert not (Path(tmp) / "c.json.tmp").exists()
+
+    def test_rejects_non_positive_rate_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with pytest.raises(ValueError, match="rate_per_second"):
+                RateLimitedClient(Path(tmp) / "c.json", rate_per_second=0)
+
+    def test_rejects_non_positive_flush_every(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with pytest.raises(ValueError, match="flush_every"):
+                RateLimitedClient(Path(tmp) / "c.json", rate_per_second=1.0, flush_every=0)

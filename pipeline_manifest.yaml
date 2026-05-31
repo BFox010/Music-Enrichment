@@ -118,15 +118,40 @@ phases:
     schema_version: 5
     resumable: true
 
+  - id: "4b"
+    name: Discogs styles
+    module: pipeline.enrich_discogs
+    callable: enrich
+    inputs:
+      - tracks_with_metadata.jsonl
+    outputs:
+      - tracks_with_discogs.jsonl
+    depends_on: ["4"]
+    schema_version: 5
+    resumable: true
+    optional: true
+
+  - id: "4c"
+    name: genre derivation
+    module: pipeline.derive_genres
+    callable: derive
+    inputs:
+      - tracks_with_discogs.jsonl
+    outputs:
+      - tracks_with_genres.jsonl
+    depends_on: ["4b"]
+    schema_version: 5
+    resumable: true
+
   - id: "5"
     name: Apple Music availability
     module: pipeline.check_apple_music
     callable: check
     inputs:
-      - tracks_with_metadata.jsonl
+      - tracks_with_genres.jsonl
     outputs:
       - tracks_with_availability.jsonl
-    depends_on: ["4"]
+    depends_on: ["4c"]
     schema_version: 5
     resumable: true
 
