@@ -128,8 +128,6 @@ py -3.13 -m pipeline.run_full_pipeline --skip-pause
 py -3.13 -m pipeline.run_full_pipeline --start-from 4
 ```
 
-Or the standalone overnight runner: `py -3.13 run_pipeline.py`.
-
 ---
 
 ## Schema version policy
