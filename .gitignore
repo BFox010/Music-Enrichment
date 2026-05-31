@@ -249,3 +249,7 @@ runs/unmatched_exportify_*.txt
 # Local env snapshots
 .env.local
 
+# Handoff notes — local VSCode <-> Claude Code comms only, never versioned
+HANDOFF.md
+Handoff.md
+
