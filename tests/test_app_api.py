@@ -1,0 +1,340 @@
+"""Self-contained API tests for the FastAPI music dashboard.
+
+Uses a tiny temp-JSONL fixture via ``app.data.use_paths()`` so no real
+tracks.jsonl / scrobbles.jsonl is needed. No network or secrets required.
+"""
+
+from __future__ import annotations
+
+import json
+import tempfile
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+import app.data as data
+from app.main import app
+
+# ── Fixture data ──────────────────────────────────────────────────────────────
+
+_TRACK = {
+    "artist": "Portishead",
+    "track": "Roads",
+    "album": "Dummy",
+    "play_count": 10,
+    "release_year": 1994,
+    "genres": ["trip-hop", "electronic"],
+    "mood_tags": ["Moody", "Dark"],
+    "mood_source": "claude_batch",
+    "mood_confidence": "high",
+    "audio_features": {
+        "energy": 0.4,
+        "valence": 0.2,
+        "danceability": 0.5,
+        "tempo": 85.0,
+        "loudness": -8.0,
+        "acousticness": 0.6,
+        "speechiness": 0.05,
+        "instrumentalness": 0.1,
+        "liveness": 0.1,
+    },
+    "saturation_tier": 1,
+    "blacklisted": False,
+    "playlists": [],
+    "curation_state": None,
+    "rejected_reason": None,
+    "enriched_at": "2026-01-01T00:00:00Z",
+    "first_scrobbled": "2020-06-15",
+    "last_scrobbled": "2020-06-15",
+}
+
+_SCROBBLE = {
+    "artist": "Portishead",
+    "track": "Roads",
+    "album": "Dummy",
+    "scrobbled_at": "2020-06-15T22:30:00Z",
+    "year": 2020,
+    "month": 6,
+    "day_of_week": 0,
+    "hour": 22,
+    "season": "summer",
+}
+
+
+@pytest.fixture(scope="module")
+def client():
+    with tempfile.TemporaryDirectory() as tmp:
+        tp = Path(tmp) / "tracks.jsonl"
+        sp = Path(tmp) / "scrobbles.jsonl"
+        tp.write_text(json.dumps(_TRACK) + "\n", encoding="utf-8")
+        sp.write_text(json.dumps(_SCROBBLE) + "\n", encoding="utf-8")
+        with data.use_paths(tp, sp):
+            yield TestClient(app)
+
+
+# ── Tests ─────────────────────────────────────────────────────────────────────
+
+class TestOverview:
+    def test_status(self, client):
+        r = client.get("/api/overview")
+        assert r.status_code == 200
+
+    def test_counts(self, client):
+        body = client.get("/api/overview").json()
+        assert body["track_count"] == 1
+        assert body["scrobble_count"] == 1
+
+    def test_scrobble_range(self, client):
+        body = client.get("/api/overview").json()
+        rng = body["scrobble_range"]
+        assert rng["first"] == 2020
+        assert rng["last"] == 2020
+
+    def test_coverage_keys(self, client):
+        body = client.get("/api/overview").json()
+        cov = body["coverage"]
+        assert isinstance(cov, dict)
+        for v in cov.values():
+            assert "n" in v and "pct" in v
+
+
+class TestGenres:
+    def test_status(self, client):
+        assert client.get("/api/genres").status_code == 200
+
+    def test_structure(self, client):
+        body = client.get("/api/genres").json()
+        assert isinstance(body, list)
+        assert len(body) >= 1
+        for item in body:
+            assert "genre" in item
+            assert "count" in item
+            assert isinstance(item["count"], int)
+
+    def test_contains_trip_hop(self, client):
+        body = client.get("/api/genres").json()
+        genres = {item["genre"] for item in body}
+        assert "trip-hop" in genres
+
+    def test_top_param(self, client):
+        body = client.get("/api/genres?top=1").json()
+        assert len(body) <= 1
+
+
+class TestMoods:
+    def test_status(self, client):
+        assert client.get("/api/moods").status_code == 200
+
+    def test_structure(self, client):
+        body = client.get("/api/moods").json()
+        assert isinstance(body, list)
+        for item in body:
+            assert "mood" in item and "count" in item
+
+    def test_contains_moody(self, client):
+        body = client.get("/api/moods").json()
+        moods = {item["mood"] for item in body}
+        assert "Moody" in moods
+        assert "Dark" in moods
+
+
+class TestTimeline:
+    def test_by_year(self, client):
+        body = client.get("/api/timeline?by=year").json()
+        assert isinstance(body, list)
+        assert len(body) == 1
+        assert body[0]["period"] == "2020"
+        assert body[0]["plays"] == 1
+
+    def test_by_month(self, client):
+        body = client.get("/api/timeline?by=month").json()
+        assert isinstance(body, list)
+        assert len(body) == 1
+        assert body[0]["period"] == "2020-06"
+        assert body[0]["plays"] == 1
+
+    def test_default_is_year(self, client):
+        r = client.get("/api/timeline")
+        assert r.status_code == 200
+        body = r.json()
+        assert body[0]["period"] == "2020"
+
+
+class TestTimeOfDay:
+    def test_status(self, client):
+        assert client.get("/api/time-of-day").status_code == 200
+
+    def test_structure(self, client):
+        body = client.get("/api/time-of-day").json()
+        assert "hour_weekday" in body
+        assert "calendar" in body
+        assert isinstance(body["hour_weekday"], list)
+        assert isinstance(body["calendar"], list)
+
+    def test_hour_weekday_entry(self, client):
+        body = client.get("/api/time-of-day").json()
+        # sample scrobble: hour=22, day_of_week=0
+        entries = {(row[0], row[1]): row[2] for row in body["hour_weekday"]}
+        assert entries.get((22, 0)) == 1
+
+    def test_calendar_entry(self, client):
+        body = client.get("/api/time-of-day").json()
+        cal = {row[0]: row[1] for row in body["calendar"]}
+        assert cal.get("2020-06-15") == 1
+
+
+class TestArtistTrajectory:
+    def test_status(self, client):
+        assert client.get("/api/artist-trajectory").status_code == 200
+
+    def test_structure(self, client):
+        body = client.get("/api/artist-trajectory").json()
+        assert "data" in body
+        assert isinstance(body["data"], list)
+
+    def test_portishead_present(self, client):
+        body = client.get("/api/artist-trajectory?top=1").json()
+        assert len(body["data"]) >= 1
+        # each entry: [period, count, artist]
+        entry = body["data"][0]
+        assert len(entry) == 3
+        assert entry[2] == "Portishead"
+        assert entry[1] == 1
+        assert entry[0] == "2020-06-01"
+
+
+class TestTop:
+    def test_artists(self, client):
+        body = client.get("/api/top?dim=artists&n=5").json()
+        assert isinstance(body, list)
+        assert body[0]["name"] == "Portishead"
+        assert body[0]["plays"] == 10
+
+    def test_tracks(self, client):
+        body = client.get("/api/top?dim=tracks&n=5").json()
+        assert isinstance(body, list)
+        assert body[0]["track"] == "Roads"
+        assert body[0]["plays"] == 10
+
+    def test_status_both_dims(self, client):
+        assert client.get("/api/top?dim=artists").status_code == 200
+        assert client.get("/api/top?dim=tracks").status_code == 200
+
+
+class TestAudioFeatures:
+    def test_status(self, client):
+        assert client.get("/api/audio-features").status_code == 200
+
+    def test_structure(self, client):
+        body = client.get("/api/audio-features").json()
+        assert "histograms" in body
+        assert "scatter" in body
+        assert isinstance(body["histograms"], dict)
+        assert isinstance(body["scatter"], list)
+
+    def test_scatter_entry(self, client):
+        body = client.get("/api/audio-features").json()
+        assert len(body["scatter"]) == 1
+        pt = body["scatter"][0]
+        assert pt["artist"] == "Portishead"
+        assert abs(pt["energy"] - 0.4) < 0.001
+        assert abs(pt["valence"] - 0.2) < 0.001
+
+    def test_histogram_keys(self, client):
+        body = client.get("/api/audio-features").json()
+        for key in ("energy", "valence", "danceability"):
+            assert key in body["histograms"]
+            assert isinstance(body["histograms"][key], list)
+
+
+class TestSaturation:
+    def test_status(self, client):
+        assert client.get("/api/saturation").status_code == 200
+
+    def test_structure(self, client):
+        body = client.get("/api/saturation").json()
+        assert isinstance(body, list)
+        for item in body:
+            assert "tier" in item and "count" in item
+
+    def test_tier1_present(self, client):
+        body = client.get("/api/saturation").json()
+        tiers = {item["tier"]: item["count"] for item in body}
+        assert tiers.get("1") == 1
+
+
+class TestTracks:
+    def test_no_filter(self, client):
+        body = client.get("/api/tracks").json()
+        assert body["total"] == 1
+        assert body["page"] == 1
+        assert len(body["tracks"]) == 1
+
+    def test_genre_filter_match(self, client):
+        body = client.get("/api/tracks?genre=trip-hop").json()
+        assert body["total"] == 1
+
+    def test_genre_filter_no_match(self, client):
+        body = client.get("/api/tracks?genre=jazz").json()
+        assert body["total"] == 0
+
+    def test_genre_filter_case_insensitive(self, client):
+        body = client.get("/api/tracks?genre=TRIP-HOP").json()
+        assert body["total"] == 1
+
+    def test_mood_filter_match(self, client):
+        body = client.get("/api/tracks?mood=moody").json()
+        assert body["total"] == 1
+
+    def test_mood_filter_no_match(self, client):
+        body = client.get("/api/tracks?mood=happy").json()
+        assert body["total"] == 0
+
+    def test_artist_filter_match(self, client):
+        body = client.get("/api/tracks?artist=portis").json()
+        assert body["total"] == 1
+
+    def test_artist_filter_no_match(self, client):
+        body = client.get("/api/tracks?artist=radiohead").json()
+        assert body["total"] == 0
+
+    def test_year_filter_match(self, client):
+        body = client.get("/api/tracks?year=1994").json()
+        assert body["total"] == 1
+
+    def test_year_filter_no_match(self, client):
+        body = client.get("/api/tracks?year=2000").json()
+        assert body["total"] == 0
+
+    def test_energy_filter(self, client):
+        body = client.get("/api/tracks?min_energy=0.3&max_energy=0.5").json()
+        assert body["total"] == 1
+
+    def test_energy_filter_excludes(self, client):
+        body = client.get("/api/tracks?min_energy=0.8").json()
+        assert body["total"] == 0
+
+    def test_pagination_beyond_results(self, client):
+        body = client.get("/api/tracks?page=2&per_page=1").json()
+        assert body["total"] == 1
+        assert body["page"] == 2
+        assert body["tracks"] == []
+
+    def test_track_fields(self, client):
+        body = client.get("/api/tracks").json()
+        t = body["tracks"][0]
+        assert t["artist"] == "Portishead"
+        assert t["track"] == "Roads"
+        assert t["play_count"] == 10
+
+
+class TestReload:
+    def test_status(self, client):
+        r = client.post("/api/reload")
+        assert r.status_code == 200
+
+    def test_returns_counts(self, client):
+        body = client.post("/api/reload").json()
+        assert body["tracks"] == 1
+        assert body["scrobbles"] == 1
