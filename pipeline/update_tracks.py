@@ -5,7 +5,8 @@ enrichment chain) and writes/updates ``tracks.jsonl``. On re-runs:
   - Human-edited fields (curation_state, rejected_reason) are PRESERVED
   - Higher-confidence mood data is PRESERVED over fresher centroid passes
   - All other enrichment fields are UPDATED from the new pass
-  - enriched_at + enrichment_sources are refreshed each run
+  - enrichment_sources is recomputed each run; enriched_at is bumped only for
+    rows whose data actually changed (so reruns don't churn every line)
 
 Schema is validated before write — aborts if invalid rows are present.
 
@@ -203,8 +204,16 @@ def update(
         existing = existing_index.get(key)
         merged = _merge_with_existing(row, existing)
         merged = fill_defaults(merged)
-        merged["enriched_at"] = today
         merged["enrichment_sources"] = _enrichment_sources(merged)
+        # Refresh enriched_at only when the row actually changed. A no-op regen,
+        # or one that only touched other rows, keeps each row's existing stamp —
+        # so tracks.jsonl diffs show real changes instead of churning all 2,730
+        # lines whenever a rerun crosses midnight UTC.
+        prev_stamp = existing.get("enriched_at") if existing else None
+        if existing is not None and {**merged, "enriched_at": prev_stamp} == existing:
+            merged["enriched_at"] = prev_stamp
+        else:
+            merged["enriched_at"] = today
         merged_rows.append(merged)
         if existing is None:
             new_count += 1
