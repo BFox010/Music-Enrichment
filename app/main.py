@@ -5,11 +5,8 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 ``html=True`` so ``index.html`` is the SPA fallback.
 """
 
-from __future__ import annotations
-
-from __future__ import annotations
-
 from pathlib import Path
+from typing import Optional
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -82,12 +79,12 @@ def api_saturation():
 
 @app.get("/api/tracks")
 def api_tracks(
-    genre: str | None = Query(None),
-    mood: str | None = Query(None),
-    year: int | None = Query(None),
-    artist: str | None = Query(None),
-    min_energy: float | None = Query(None, ge=0.0, le=1.0),
-    max_energy: float | None = Query(None, ge=0.0, le=1.0),
+    genre: Optional[str] = Query(None),
+    mood: Optional[str] = Query(None),
+    year: Optional[int] = Query(None),
+    artist: Optional[str] = Query(None),
+    min_energy: Optional[float] = Query(None, ge=0.0, le=1.0),
+    max_energy: Optional[float] = Query(None, ge=0.0, le=1.0),
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
 ):
