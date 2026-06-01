@@ -379,3 +379,30 @@ class TestReload:
         body = client.post("/api/reload").json()
         assert body["tracks"] == 1
         assert body["scrobbles"] == 1
+
+
+class TestLastFmStatus:
+    def test_status_ok(self, client):
+        r = client.get("/api/lastfm/status")
+        assert r.status_code == 200
+
+    def test_response_shape(self, client):
+        body = client.get("/api/lastfm/status").json()
+        assert "scrobble_count" in body
+        assert "last_scrobbled_at" in body
+        assert "first_scrobbled_at" in body
+        assert isinstance(body["configured"], bool)
+
+    def test_scrobble_count_matches_fixture(self, client):
+        body = client.get("/api/lastfm/status").json()
+        assert body["scrobble_count"] == 1
+
+    def test_last_scrobbled_at_is_iso(self, client):
+        body = client.get("/api/lastfm/status").json()
+        assert body["last_scrobbled_at"] == "2020-06-15T22:30:00Z"
+
+    def test_not_configured_without_env(self, client, monkeypatch):
+        monkeypatch.delenv("LASTFM_USERNAME", raising=False)
+        monkeypatch.delenv("LASTFM_API_KEY", raising=False)
+        body = client.get("/api/lastfm/status").json()
+        assert body["configured"] is False

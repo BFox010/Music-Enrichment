@@ -5,6 +5,7 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 ``html=True`` so ``index.html`` is the SPA fallback.
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -113,6 +114,31 @@ def api_tag_graph(
 @app.post("/api/reload")
 def api_reload():
     return data.reload()
+
+
+@app.get("/api/lastfm/status")
+def lastfm_status():
+    scrobbles = data.get_scrobbles()
+    configured = bool(os.getenv("LASTFM_USERNAME") and os.getenv("LASTFM_API_KEY"))
+    dates = [s.get("scrobbled_at", "") for s in scrobbles if s.get("scrobbled_at")]
+    return {
+        "scrobble_count": len(scrobbles),
+        "last_scrobbled_at": max(dates) if dates else None,
+        "first_scrobbled_at": min(dates) if dates else None,
+        "configured": configured,
+        "username": os.getenv("LASTFM_USERNAME"),
+    }
+
+
+@app.post("/api/lastfm/sync")
+async def lastfm_sync():
+    from app.lastfm_sync import sync as _sync
+    try:
+        result = await _sync(SCROBBLES_PATH)
+        data.reload()
+        return result
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/tracks.jsonl")

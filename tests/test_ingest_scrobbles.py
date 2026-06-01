@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from pipeline.ingest_scrobbles import parse_raw_scrobble
+import json
+import tempfile
+from pathlib import Path
+
+from pipeline.ingest_scrobbles import ingest_from_records, parse_raw_scrobble
 
 # Verified timestamps (UTC):
 # 1730606040 = 2024-11-03T03:54:00Z  (November → fall, Sunday)
@@ -109,3 +113,55 @@ class TestParseRawScrobble:
         assert row is not None
         assert row["artist_normalized"] == "sigur ros"
         assert row["track_normalized"] == "hoppipolla"
+
+
+class TestIngestFromRecords:
+    def _rec(self, uts="1730606040", artist="Portishead", track="Roads"):
+        return {
+            "artist": {"#text": artist, "mbid": ""},
+            "name": track,
+            "album": {"#text": "Dummy", "mbid": ""},
+            "date": {"uts": uts, "#text": ""},
+        }
+
+    def test_replace_writes_all(self) -> None:
+        records = [self._rec("1730606040"), self._rec("1705320000")]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            n = ingest_from_records(records, output_path=out, mode="replace")
+            assert n == 2
+            lines = [json.loads(l) for l in out.read_text().splitlines() if l]
+            assert len(lines) == 2
+
+    def test_append_adds_new(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            # First write
+            ingest_from_records([self._rec("1730606040")], output_path=out, mode="replace")
+            # Append a new scrobble
+            n = ingest_from_records([self._rec("1705320000")], output_path=out, mode="append")
+            assert n == 2
+
+    def test_append_deduplicates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            ingest_from_records([self._rec("1730606040")], output_path=out, mode="replace")
+            # Append the same record again
+            n = ingest_from_records([self._rec("1730606040")], output_path=out, mode="append")
+            assert n == 1  # still only one row
+
+    def test_append_sorts_chronologically(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            ingest_from_records([self._rec("1730606040")], output_path=out, mode="replace")
+            ingest_from_records([self._rec("1705320000")], output_path=out, mode="append")
+            lines = [json.loads(l) for l in out.read_text().splitlines() if l]
+            timestamps = [l["scrobbled_at"] for l in lines]
+            assert timestamps == sorted(timestamps)
+
+    def test_skips_malformed_records(self) -> None:
+        records = [self._rec(), {"name": "", "artist": {"#text": ""}}]
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            n = ingest_from_records(records, output_path=out, mode="replace")
+            assert n == 1

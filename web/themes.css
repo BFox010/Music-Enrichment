@@ -74,7 +74,112 @@ a { color: inherit; }
 /* ============================================================
    Layout shell
    ============================================================ */
-.app { max-width: 1340px; margin: 0 auto; padding: 28px 30px 90px; }
+/* ── Multi-page layout ─────────────────────────────────────────────────── */
+.layout { display: flex; min-height: 100vh; }
+
+.sidebar {
+  width: 210px; flex-shrink: 0;
+  padding: 18px 0 32px;
+  border-right: var(--card-border);
+  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  display: flex; flex-direction: column;
+}
+.sidebar-brand {
+  padding: 0 16px 18px; border-bottom: var(--card-border); margin-bottom: 8px;
+}
+.sidebar-brand .sb-eye {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .16em;
+  text-transform: uppercase; color: var(--faint); display: flex; align-items: center; gap: 7px;
+}
+.sidebar-brand .sb-eye .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.sidebar-brand .sb-title {
+  font-family: var(--font-display); font-size: 17px; font-weight: var(--display-weight);
+  color: var(--text); margin-top: 6px; letter-spacing: var(--display-spacing);
+}
+
+.sidenav { display: flex; flex-direction: column; gap: 1px; padding: 0 8px; flex: 1; }
+.sidenav-section {
+  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .14em;
+  text-transform: uppercase; color: var(--faint); padding: 14px 8px 4px; font-weight: 600;
+}
+.sidenav-item {
+  appearance: none; background: transparent; border: 0; cursor: pointer;
+  font-family: var(--font-body); font-size: 13px; color: var(--text-2);
+  padding: 8px 10px; border-radius: var(--radius-sm); text-align: left; width: 100%;
+  display: flex; align-items: center; gap: 9px;
+  transition: background .14s, color .14s;
+}
+.sidenav-item:hover { background: var(--panel-2); color: var(--text); }
+.sidenav-item.active {
+  background: color-mix(in oklab, var(--accent) 16%, var(--panel)); color: var(--text);
+}
+.sidenav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .7; }
+.sidenav-item.active svg { opacity: 1; }
+
+.main-content { flex: 1; min-width: 0; padding: 28px 32px 90px; max-width: 1140px; }
+
+/* keep .app as an alias for any remaining uses */
+.app { padding: 28px 30px 90px; }
+
+/* ── ECharts chart sections ─────────────────────────────────────────────── */
+.echart-wrap { width: 100%; min-height: 420px; }
+.echart-wrap.tall { min-height: 560px; }
+.echart-wrap.short { min-height: 260px; }
+.echart-loading {
+  width: 100%; height: 100%; min-height: inherit;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--faint); font-family: var(--font-mono); font-size: 12px;
+  letter-spacing: .06em; text-transform: uppercase;
+  animation: pulse-load 1.8s ease-in-out infinite;
+}
+@keyframes pulse-load { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
+
+/* ── Scrobble sync (Data page) ──────────────────────────────────────────── */
+.sync-card { max-width: 560px; }
+.sync-stat { font-family: var(--kpi-family); font-size: 32px; color: var(--text);
+             font-weight: var(--display-weight); letter-spacing: var(--display-spacing); }
+.sync-sub  { font-size: 12.5px; color: var(--muted-s); margin-top: 4px; }
+.sync-hint {
+  margin-top: 18px; padding: 14px 16px; border-radius: var(--radius-sm);
+  background: color-mix(in oklab, var(--warn) 10%, var(--panel));
+  border: 1px solid color-mix(in oklab, var(--warn) 30%, var(--line));
+  font-size: 12.5px; color: var(--text-2); line-height: 1.6;
+}
+.sync-hint code {
+  font-family: var(--font-mono); font-size: 11.5px; color: var(--warn);
+  background: color-mix(in oklab, var(--warn) 14%, transparent);
+  padding: 1px 5px; border-radius: 4px;
+}
+.btn-sync {
+  display: inline-flex; align-items: center; gap: 9px;
+  font-family: var(--font-body); font-size: 14px; font-weight: 600;
+  padding: 11px 22px; border-radius: var(--radius-sm);
+  background: var(--accent); color: var(--accent-ink);
+  border: 0; cursor: pointer; transition: opacity .15s;
+}
+.btn-sync:hover { opacity: .88; }
+.btn-sync:disabled { opacity: .45; cursor: default; }
+.btn-sync svg { width: 16px; height: 16px; }
+.sync-result { margin-top: 16px; padding: 12px 16px; border-radius: var(--radius-sm);
+               background: color-mix(in oklab, var(--good) 10%, var(--panel));
+               border: 1px solid color-mix(in oklab, var(--good) 30%, var(--line));
+               font-size: 13px; color: var(--good); font-family: var(--font-mono); }
+.sync-result.sync-error { background: color-mix(in oklab, #f87171 10%, var(--panel));
+                           border-color: color-mix(in oklab, #f87171 30%, var(--line));
+                           color: #f87171; }
+
+/* ── Responsive sidebar ─────────────────────────────────────────────────── */
+@media (max-width: 768px) {
+  .layout { flex-direction: column; }
+  .sidebar { width: 100%; height: auto; position: static; flex-direction: row;
+             padding: 10px 8px; overflow-x: auto; overflow-y: hidden;
+             border-right: 0; border-bottom: var(--card-border); }
+  .sidebar-brand { display: none; }
+  .sidenav { flex-direction: row; padding: 0; gap: 2px; }
+  .sidenav-section { display: none; }
+  .sidenav-item { white-space: nowrap; padding: 8px 12px; font-size: 12.5px; }
+  .main-content { padding: 16px 16px 70px; }
+}
 
 .topbar {
   display: flex; align-items: flex-end; justify-content: space-between;

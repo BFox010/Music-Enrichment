@@ -93,6 +93,7 @@ function App() {
     return { ...s, byHour: toArr(s.byHour, 24), byDow: toArr(s.byDow, 7), bySeason: s.bySeason || {}, byYear: s.byYear || {}, total: s.total || 0 };
   }, [data]);
 
+  const [page, setPage] = useState("overview");
   const [density, setDensity] = useState(() => localStorage.getItem("ml.density") || "comfortable");
   const [accent, setAccent] = useState(() => localStorage.getItem("ml.accent") || "#a78bfa");
   const [search, setSearch] = useState("");
@@ -101,6 +102,14 @@ function App() {
   const [shuffleSeed, setShuffleSeed] = useState(1);
   const [infoOpen, setInfoOpen] = useState(false);
   const [filters, setFilters] = useState({ genre: "", mood: "", tag: "", decade: "", artist: "" });
+
+  // ECharts components (assigned to window by echarts-charts.jsx, which loads before this file)
+  const TimelineChart    = window.TimelineChart;
+  const ArtistTrajectory = window.ArtistTrajectory;
+  const ListeningMap     = window.ListeningMap;
+  const AudioFeaturesChart = window.AudioFeaturesChart;
+  const SaturationChart  = window.SaturationChart;
+  const TagConstellation = window.TagConstellation;
   const [dzShow, setDzShow] = useState(false);
   const [toast, setToast] = useState("");
   const fileRef = useRef(null);
@@ -302,195 +311,371 @@ function App() {
   }, [filters]);
 
   return (
-    <div className="app">
-      {/* ---------- topbar ---------- */}
-      <header className="topbar">
-        <div className="brand">
-          <div className="brand-eyebrow"><span className="dot"></span> Music-Enrichment · Library Analytics</div>
-          <h1>Listening Atlas</h1>
-          <div className="sub">
-            <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {meta.scrobbleRange}</span>
-            <span className={"pill-live" + (meta.isSample ? "" : " real")}>{meta.isSample ? "sample data" : "live data"}</span>
-          </div>
+    <div className="layout">
+
+      {/* ── Sidebar ───────────────────────────────────────────────── */}
+      <nav className="sidebar">
+        <div className="sidebar-brand">
+          <div className="brand-eyebrow"><span className="dot"></span> Music-Enrichment</div>
         </div>
-        <div className="topbar-actions">
-          <div className="search">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
-          </div>
-          <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} title="Load your tracks.jsonl / scrobbles.jsonl">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0-12l-4 4m4-4l4 4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
-            Load data
+        <div className="sidenav">
+
+          <button className={"sidenav-item" + (page === "overview" ? " active" : "")} onClick={() => setPage("overview")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+            Overview
           </button>
-          <input ref={fileRef} type="file" accept=".jsonl,.json" multiple style={{ display: "none" }} onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
+
+          <div className="sidenav-section">Listening</div>
+          <button className={"sidenav-item" + (page === "timeline" ? " active" : "")} onClick={() => setPage("timeline")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+            Timeline
+          </button>
+          <button className={"sidenav-item" + (page === "trajectory" ? " active" : "")} onClick={() => setPage("trajectory")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 18c3-8 7-10 9-5s5 3 9-5"/><path d="M3 12c2-5 5-7 8-4s5 4 10-2"/><path d="M3 6c2-3 4-4 6-2s4 4 12-2"/></svg>
+            Artist Trajectory
+          </button>
+          <button className={"sidenav-item" + (page === "map" ? " active" : "")} onClick={() => setPage("map")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            Listening Map
+          </button>
+
+          <div className="sidenav-section">Sound</div>
+          <button className={"sidenav-item" + (page === "audio" ? " active" : "")} onClick={() => setPage("audio")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+            Audio Features
+          </button>
+          <button className={"sidenav-item" + (page === "saturation" ? " active" : "")} onClick={() => setPage("saturation")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l4 4"/></svg>
+            Saturation
+          </button>
+
+          <div className="sidenav-section">Tags</div>
+          <button className={"sidenav-item" + (page === "constellation" ? " active" : "")} onClick={() => setPage("constellation")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="5" cy="5" r="1.5"/><circle cx="19" cy="5" r="1.5"/><circle cx="12" cy="19" r="1.5"/><circle cx="5" cy="19" r="1.5"/><circle cx="19" cy="19" r="1.5"/><line x1="6.5" y1="5" x2="17.5" y2="5"/><line x1="5" y1="6.5" x2="5" y2="17.5"/><line x1="19" y1="6.5" x2="19" y2="17.5"/><line x1="6.5" y1="19" x2="17.5" y2="19"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>
+            Tag Constellation
+          </button>
+          <button className={"sidenav-item" + (page === "genres" ? " active" : "")} onClick={() => setPage("genres")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 2v10l6.6 3.8"/></svg>
+            Genre &amp; Moods
+          </button>
+          <button className={"sidenav-item" + (page === "coverage" ? " active" : "")} onClick={() => setPage("coverage")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+            Coverage
+          </button>
+
+          <div className="sidenav-section">Browse</div>
+          <button className={"sidenav-item" + (page === "explorer" ? " active" : "")} onClick={() => setPage("explorer")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+            Track Explorer
+          </button>
+
+          <div className="sidenav-section">Data</div>
+          <button className={"sidenav-item" + (page === "sync" ? " active" : "")} onClick={() => setPage("sync")}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+            Scrobble Sync
+          </button>
         </div>
-      </header>
+      </nav>
 
-      {/* ---------- timeframe slicer ---------- */}
-      <div className="slicer">
-        <span className="slicer-label">Timeframe</span>
-        <div className="seg" role="group" aria-label="Timeframe">
-          {TIMEFRAMES.map(([id, label]) => (
-            <button key={id} aria-pressed={timeframe === id} onClick={() => setTimeframe(id)}>{label}</button>
-          ))}
-        </div>
-        <span className="slicer-note">{timeframe === "all" ? "All recorded scrobbles" : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b> · affects play-based metrics</>}</span>
-      </div>
+      {/* ── Main content ──────────────────────────────────────────── */}
+      <div className="main-content">
 
-      {/* ---------- KPIs ---------- */}
-      <div className="kpis">
-        <Kpi label="Tracks" val={nf(filtered.length)} sub={filtered.length !== tracks.length ? <>of <b>{nf(tracks.length)}</b> total</> : "unique in library"} />
-        <Kpi label={timeframe === "all" ? "Scrobbles" : "Plays"} val={nf(agg.totalPlays)} sub={<>across <b>{nf(agg.uniqueArtists)}</b> artists</>} />
-        <Kpi label="Artists" val={nf(agg.uniqueArtists)} sub={timeframe === "all" ? "distinct performers" : "played in window"} />
-        <Kpi label="Avg plays" val={(agg.totalPlays / (filtered.length || 1)).toFixed(1)} sub="per track" />
-        <Kpi label="Enriched" val={agg.completeness + "%"} sub="field completeness" spark={agg.completeness} />
-        <Kpi label="Mood-tagged" val={Math.round((agg.withMood / (filtered.length || 1)) * 100) + "%"} sub={<>{nf(agg.withMood)} classified</>} spark={Math.round((agg.withMood / (filtered.length || 1)) * 100)} />
-      </div>
-
-      {/* ---------- Listening patterns (global) ---------- */}
-      <section className="block">
-        <div className="grid g-32">
-          <div className="card">
-            <div className="card-head">
-              <h3 className="card-title">When the music plays</h3>
-              <span className="card-meta">hour of day</span>
-            </div>
-            <HourChart data={scrobbles.byHour} />
-          </div>
-          <div className="card">
-            <div className="card-head">
-              <h3 className="card-title">Weekly rhythm</h3>
-              <span className="card-meta">day of week</span>
-            </div>
-            <DowChart data={scrobbles.byDow} />
-          </div>
-        </div>
-      </section>
-      <section className="block">
-        <div className="card">
-          <div className="card-head norule" style={{ marginBottom: 12 }}>
-            <h3 className="card-title">Seasons of listening</h3>
-            <span className="card-meta">scrobbles by season</span>
-          </div>
-          <Seasons data={scrobbles.bySeason} total={scrobbles.total} />
-        </div>
-      </section>
-
-      {/* ---------- filter bar ---------- */}
-      <FilterBar filters={filters} onRemove={removeFilter} onClear={clearFilters} sort={sort} onSort={setSort} />
-
-      {/* ---------- top artists / tracks ---------- */}
-      <section className="block">
-        <div className="grid g-2">
-          <div className="card">
-            <div className="card-head"><h3 className="card-title">Top artists</h3><span className="card-meta">{tfLabel} · click to filter</span></div>
-            <HBars items={agg.topArtists} max={agg.maxArtist} activeKey={filters.artist} onPick={(k) => setFilter("artist", k)} unit="plays" />
-          </div>
-          <div className="card">
-            <div className="card-head"><h3 className="card-title">Most played tracks</h3><span className="card-meta">{tfLabel} · top 12</span></div>
-            <TrackList items={agg.topTracks.map((t) => ({ ...t, play: t.wp }))} max={agg.maxTrack} />
-          </div>
-        </div>
-      </section>
-
-      {/* ---------- moods + genres ---------- */}
-      <section className="block">
-        <div className="grid g-2">
-          <div className="card">
-            <div className="card-head"><h3 className="card-title">Mood spectrum</h3><span className="card-meta">tracks per mood · click to filter</span></div>
-            <MoodBars items={agg.moods} max={agg.maxMood} activeKey={filters.mood} onPick={(k) => setFilter("mood", k)} />
-          </div>
-          <div className="card">
-            <div className="card-head"><h3 className="card-title">Genre balance</h3><span className="card-meta">share of library · click to filter</span></div>
-            <GenreDonut items={agg.genresTop} total={agg.genreTotal} colors={genreColors} activeKey={filters.genre} onPick={(k) => k !== "Other" && setFilter("genre", k)} />
-          </div>
-        </div>
-      </section>
-
-      {/* ---------- tags + coverage ---------- */}
-      <section className="block">
-        <div className="grid g-32">
-          <div className="card">
-            <div className="card-head"><h3 className="card-title">Tags &amp; styles</h3><span className="card-meta">Last.fm + Discogs · click to filter</span></div>
-            <TagCloud items={agg.tags} activeKey={filters.tag} onPick={(k) => setFilter("tag", k)} />
-          </div>
-          <div className="card">
-            <div className="card-head"><h3 className="card-title">Enrichment coverage</h3><span className="card-meta">{filtered.length !== tracks.length ? "filtered" : "library"}</span></div>
-            <CoverageBars rows={agg.coverageRows} total={filtered.length} />
-          </div>
-        </div>
-      </section>
-
-      {/* ---------- explorer ---------- */}
-      <section className="block">
-        <div className="card">
-          <div className="card-head">
-            <h3 className="card-title">Track explorer</h3>
-            <div className="explorer-actions">
-              <button className="icon-btn" onClick={() => { setSort("shuffle"); setShuffleSeed((s) => s + 1); }} title="Shuffle tracks">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" /></svg>
-                Shuffle
-              </button>
-              <button className="icon-btn" onClick={() => setInfoOpen(true)} title="What do these mean?" aria-label="Legend">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
-                Legend
-              </button>
-              <span className="card-meta">{nf(sorted.length)} tracks</span>
+        {/* Topbar — always visible */}
+        <header className="topbar">
+          <div className="brand">
+            <div className="brand-eyebrow"><span className="dot"></span> Music-Enrichment · Library Analytics</div>
+            <h1>Listening Atlas</h1>
+            <div className="sub">
+              <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {meta.scrobbleRange}</span>
+              <span className={"pill-live" + (meta.isSample ? "" : " real")}>{meta.isSample ? "sample data" : "live data"}</span>
             </div>
           </div>
-          <TrackTable rows={sorted} sort={sort} onSort={toggleSort} onPickArtist={(a) => setFilter("artist", a)} playOf={playOf} timeframe={timeframe} />
-        </div>
-      </section>
-
-      {/* ---------- dropzone + toast ---------- */}
-      <div className={"dropzone" + (dzShow ? " show" : "")}>
-        <div className="dz-inner">
-          <div className="dz-t">Drop your library files</div>
-          <div className="dz-s">tracks.jsonl &nbsp;·&nbsp; scrobbles.jsonl</div>
-        </div>
-      </div>
-      <div className={"toast" + (toast ? " show" : "")}>{toast}</div>
-
-      {/* ---------- legend modal ---------- */}
-      {infoOpen && (
-        <div className="modal-scrim" onClick={() => setInfoOpen(false)}>
-          <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-head">
-              <h3 className="card-title">Reading the track explorer</h3>
-              <button className="modal-x" onClick={() => setInfoOpen(false)} aria-label="Close">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6L6 18M6 6l12 12" /></svg>
-              </button>
+          <div className="topbar-actions">
+            <div className="search">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
             </div>
-            <div className="modal-body">
-              <div className="legend-group">
-                <div className="legend-gtitle">Mood source <span className="lg-note">how a track's mood tags were assigned</span></div>
-                <div className="legend-item"><span className="msrc audit">audit</span><span>Human-reviewed and corrected — highest confidence.</span></div>
-                <div className="legend-item"><span className="msrc claude_batch">claude</span><span>Classified by the Claude batch labeller from tags, lyrics &amp; audio features.</span></div>
-                <div className="legend-item"><span className="msrc centroid">centroid</span><span>Inferred from audio-feature similarity to labelled tracks — medium confidence.</span></div>
+            <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} title="Load your tracks.jsonl / scrobbles.jsonl">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0-12l-4 4m4-4l4 4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
+              Load data
+            </button>
+            <input ref={fileRef} type="file" accept=".jsonl,.json" multiple style={{ display: "none" }} onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
+          </div>
+        </header>
+
+        {/* ── PAGE: Overview ──────────────────────────────────────── */}
+        <div style={{ display: page === "overview" ? "" : "none" }}>
+          <div className="slicer">
+            <span className="slicer-label">Timeframe</span>
+            <div className="seg" role="group" aria-label="Timeframe">
+              {TIMEFRAMES.map(([id, label]) => (
+                <button key={id} aria-pressed={timeframe === id} onClick={() => setTimeframe(id)}>{label}</button>
+              ))}
+            </div>
+            <span className="slicer-note">{timeframe === "all" ? "All recorded scrobbles" : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b> · affects play-based metrics</>}</span>
+          </div>
+
+          <div className="kpis">
+            <Kpi label="Tracks" val={nf(filtered.length)} sub={filtered.length !== tracks.length ? <>of <b>{nf(tracks.length)}</b> total</> : "unique in library"} />
+            <Kpi label={timeframe === "all" ? "Scrobbles" : "Plays"} val={nf(agg.totalPlays)} sub={<>across <b>{nf(agg.uniqueArtists)}</b> artists</>} />
+            <Kpi label="Artists" val={nf(agg.uniqueArtists)} sub={timeframe === "all" ? "distinct performers" : "played in window"} />
+            <Kpi label="Avg plays" val={(agg.totalPlays / (filtered.length || 1)).toFixed(1)} sub="per track" />
+            <Kpi label="Enriched" val={agg.completeness + "%"} sub="field completeness" spark={agg.completeness} />
+            <Kpi label="Mood-tagged" val={Math.round((agg.withMood / (filtered.length || 1)) * 100) + "%"} sub={<>{nf(agg.withMood)} classified</>} spark={Math.round((agg.withMood / (filtered.length || 1)) * 100)} />
+          </div>
+
+          <section className="block">
+            <div className="grid g-32">
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">hour of day</span></div>
+                <HourChart data={scrobbles.byHour} />
               </div>
-              <div className="legend-group">
-                <div className="legend-gtitle">Data coverage <span className="lg-note">each square = one enrichment source present</span></div>
-                <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Last.fm tags</b> — community genre/style tags.</span></div>
-                <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>MusicBrainz ID</b> — canonical recording identifier.</span></div>
-                <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Discogs styles</b> — release styles from Discogs.</span></div>
-                <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Audio features</b> — danceability, energy, valence, tempo…</span></div>
-                <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Apple Music</b> — confirmed available on Apple Music.</span></div>
-                <div className="legend-item"><span className="covdots"><span className="covdot warn"></span></span><span>An <b>amber</b> square marks a mood that's present but lower-confidence (centroid-inferred).</span></div>
-                <div className="legend-item"><span className="covdots"><span className="covdot"></span></span><span>A <b>dim</b> square means that source is missing for the track.</span></div>
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">day of week</span></div>
+                <DowChart data={scrobbles.byDow} />
               </div>
             </div>
+          </section>
+          <section className="block">
+            <div className="card">
+              <div className="card-head norule" style={{ marginBottom: 12 }}>
+                <h3 className="card-title">Seasons of listening</h3>
+                <span className="card-meta">scrobbles by season</span>
+              </div>
+              <Seasons data={scrobbles.bySeason} total={scrobbles.total} />
+            </div>
+          </section>
+          <section className="block">
+            <div className="grid g-2">
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">Top artists</h3><span className="card-meta">{tfLabel} · click to filter</span></div>
+                <HBars items={agg.topArtists} max={agg.maxArtist} activeKey={filters.artist} onPick={(k) => setFilter("artist", k)} unit="plays" />
+              </div>
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">Most played tracks</h3><span className="card-meta">{tfLabel} · top 12</span></div>
+                <TrackList items={agg.topTracks.map((t) => ({ ...t, play: t.wp }))} max={agg.maxTrack} />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* ── PAGE: Timeline ──────────────────────────────────────── */}
+        <div style={{ display: page === "timeline" ? "" : "none" }}>
+          {TimelineChart && <TimelineChart active={page === "timeline"} />}
+        </div>
+
+        {/* ── PAGE: Artist Trajectory ─────────────────────────────── */}
+        <div style={{ display: page === "trajectory" ? "" : "none" }}>
+          {ArtistTrajectory && <ArtistTrajectory active={page === "trajectory"} />}
+        </div>
+
+        {/* ── PAGE: Listening Map ─────────────────────────────────── */}
+        <div style={{ display: page === "map" ? "" : "none" }}>
+          {ListeningMap && <ListeningMap active={page === "map"} />}
+        </div>
+
+        {/* ── PAGE: Audio Features ────────────────────────────────── */}
+        <div style={{ display: page === "audio" ? "" : "none" }}>
+          {AudioFeaturesChart && <AudioFeaturesChart active={page === "audio"} />}
+        </div>
+
+        {/* ── PAGE: Saturation ────────────────────────────────────── */}
+        <div style={{ display: page === "saturation" ? "" : "none" }}>
+          {SaturationChart && <SaturationChart active={page === "saturation"} />}
+        </div>
+
+        {/* ── PAGE: Tag Constellation ─────────────────────────────── */}
+        <div style={{ display: page === "constellation" ? "" : "none" }}>
+          {TagConstellation && <TagConstellation active={page === "constellation"} />}
+        </div>
+
+        {/* ── PAGE: Genre & Moods ─────────────────────────────────── */}
+        <div style={{ display: page === "genres" ? "" : "none" }}>
+          <section className="block">
+            <div className="grid g-2">
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">Mood spectrum</h3><span className="card-meta">tracks per mood · click to filter</span></div>
+                <MoodBars items={agg.moods} max={agg.maxMood} activeKey={filters.mood} onPick={(k) => setFilter("mood", k)} />
+              </div>
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">Genre balance</h3><span className="card-meta">share of library · click to filter</span></div>
+                <GenreDonut items={agg.genresTop} total={agg.genreTotal} colors={genreColors} activeKey={filters.genre} onPick={(k) => k !== "Other" && setFilter("genre", k)} />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* ── PAGE: Coverage ──────────────────────────────────────── */}
+        <div style={{ display: page === "coverage" ? "" : "none" }}>
+          <section className="block">
+            <div className="grid g-32">
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">Tags &amp; styles</h3><span className="card-meta">Last.fm + Discogs · click to filter</span></div>
+                <TagCloud items={agg.tags} activeKey={filters.tag} onPick={(k) => setFilter("tag", k)} />
+              </div>
+              <div className="card">
+                <div className="card-head"><h3 className="card-title">Enrichment coverage</h3><span className="card-meta">{filtered.length !== tracks.length ? "filtered" : "library"}</span></div>
+                <CoverageBars rows={agg.coverageRows} total={filtered.length} />
+              </div>
+            </div>
+          </section>
+        </div>
+
+        {/* ── PAGE: Track Explorer ────────────────────────────────── */}
+        <div style={{ display: page === "explorer" ? "" : "none" }}>
+          <FilterBar filters={filters} onRemove={removeFilter} onClear={clearFilters} sort={sort} onSort={setSort} />
+          <section className="block">
+            <div className="card">
+              <div className="card-head">
+                <h3 className="card-title">Track explorer</h3>
+                <div className="explorer-actions">
+                  <button className="icon-btn" onClick={() => { setSort("shuffle"); setShuffleSeed((s) => s + 1); }} title="Shuffle tracks">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M16 3h5v5" /><path d="M4 20L21 3" /><path d="M21 16v5h-5" /><path d="M15 15l6 6" /><path d="M4 4l5 5" /></svg>
+                    Shuffle
+                  </button>
+                  <button className="icon-btn" onClick={() => setInfoOpen(true)} title="What do these mean?" aria-label="Legend">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9" /><path d="M12 16v-4" /><path d="M12 8h.01" /></svg>
+                    Legend
+                  </button>
+                  <span className="card-meta">{nf(sorted.length)} tracks</span>
+                </div>
+              </div>
+              <TrackTable rows={sorted} sort={sort} onSort={toggleSort} onPickArtist={(a) => setFilter("artist", a)} playOf={playOf} timeframe={timeframe} />
+            </div>
+          </section>
+        </div>
+
+        {/* ── PAGE: Scrobble Sync ─────────────────────────────────── */}
+        <div style={{ display: page === "sync" ? "" : "none" }}>
+          <ScrobbleSync />
+        </div>
+
+        {/* ── Persistent overlays ─────────────────────────────────── */}
+        <div className={"dropzone" + (dzShow ? " show" : "")}>
+          <div className="dz-inner">
+            <div className="dz-t">Drop your library files</div>
+            <div className="dz-s">tracks.jsonl &nbsp;·&nbsp; scrobbles.jsonl</div>
           </div>
         </div>
-      )}
+        <div className={"toast" + (toast ? " show" : "")}>{toast}</div>
 
-      {/* ---------- Tweaks ---------- */}
-      <TweaksPanel title="Tweaks">
-        <TweakSection label="Accent" />
-        <TweakColor label="Accent" value={accent} options={ACCENT_OPTIONS} onChange={setAccent} />
-        <TweakSection label="Layout" />
-        <TweakRadio label="Density" value={density} options={["comfortable", "compact"]} onChange={setDensity} />
-      </TweaksPanel>
+        {infoOpen && (
+          <div className="modal-scrim" onClick={() => setInfoOpen(false)}>
+            <div className="modal" onClick={(e) => e.stopPropagation()}>
+              <div className="modal-head">
+                <h3 className="card-title">Reading the track explorer</h3>
+                <button className="modal-x" onClick={() => setInfoOpen(false)} aria-label="Close">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+                </button>
+              </div>
+              <div className="modal-body">
+                <div className="legend-group">
+                  <div className="legend-gtitle">Mood source <span className="lg-note">how a track's mood tags were assigned</span></div>
+                  <div className="legend-item"><span className="msrc audit">audit</span><span>Human-reviewed and corrected — highest confidence.</span></div>
+                  <div className="legend-item"><span className="msrc claude_batch">claude</span><span>Classified by the Claude batch labeller from tags, lyrics &amp; audio features.</span></div>
+                  <div className="legend-item"><span className="msrc centroid">centroid</span><span>Inferred from audio-feature similarity to labelled tracks — medium confidence.</span></div>
+                </div>
+                <div className="legend-group">
+                  <div className="legend-gtitle">Data coverage <span className="lg-note">each square = one enrichment source present</span></div>
+                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Last.fm tags</b> — community genre/style tags.</span></div>
+                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>MusicBrainz ID</b> — canonical recording identifier.</span></div>
+                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Discogs styles</b> — release styles from Discogs.</span></div>
+                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Audio features</b> — danceability, energy, valence, tempo…</span></div>
+                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Apple Music</b> — confirmed available on Apple Music.</span></div>
+                  <div className="legend-item"><span className="covdots"><span className="covdot warn"></span></span><span>An <b>amber</b> square marks a mood that's present but lower-confidence (centroid-inferred).</span></div>
+                  <div className="legend-item"><span className="covdots"><span className="covdot"></span></span><span>A <b>dim</b> square means that source is missing for the track.</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        <TweaksPanel title="Tweaks">
+          <TweakSection label="Accent" />
+          <TweakColor label="Accent" value={accent} options={ACCENT_OPTIONS} onChange={setAccent} />
+          <TweakSection label="Layout" />
+          <TweakRadio label="Density" value={density} options={["comfortable", "compact"]} onChange={setDensity} />
+        </TweaksPanel>
+      </div>
     </div>
+  );
+}
+
+function ScrobbleSync() {
+  const [status, setStatus] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [result, setResult] = useState(null);
+  const [error, setError] = useState(null);
+
+  const fetchStatus = useCallback(async () => {
+    try {
+      const r = await fetch("/api/lastfm/status");
+      if (r.ok) setStatus(await r.json());
+    } catch (e) { /* server not running */ }
+  }, []);
+
+  useEffect(() => { fetchStatus(); }, [fetchStatus]);
+
+  const doSync = async () => {
+    setSyncing(true);
+    setResult(null);
+    setError(null);
+    try {
+      const r = await fetch("/api/lastfm/sync", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) {
+        setError(d.detail || "Sync failed");
+      } else {
+        setResult(d);
+        await fetchStatus();
+      }
+    } catch (e) {
+      setError("Network error: " + e.message);
+    } finally {
+      setSyncing(false);
+    }
+  };
+
+  const notConfigured = status && !status.configured;
+  const range = status
+    ? (status.first_scrobbled_at ? status.first_scrobbled_at.slice(0, 4) : "—") + "–" + (status.last_scrobbled_at ? status.last_scrobbled_at.slice(0, 4) : "—")
+    : null;
+
+  return (
+    <section className="block">
+      <div className="card sync-card">
+        <div className="card-head">
+          <h3 className="card-title">Scrobble sync</h3>
+          <span className="card-meta">Last.fm API</span>
+        </div>
+        {status ? (
+          <div>
+            <div className="sync-stat">{(status.scrobble_count || 0).toLocaleString()} scrobbles</div>
+            <div className="sync-sub">{range}</div>
+            {status.username && <div className="sync-sub" style={{ marginTop: 4 }}>Account: <b>{status.username}</b></div>}
+          </div>
+        ) : (
+          <div className="sync-sub">Loading status…</div>
+        )}
+        {notConfigured && (
+          <div className="sync-hint">
+            Set <code>LASTFM_API_KEY</code> and <code>LASTFM_USERNAME</code> in your <code>.env</code> file to enable live sync.
+          </div>
+        )}
+        <button className="btn-sync" onClick={doSync} disabled={syncing || !!notConfigured}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ width: 16, height: 16 }}>
+            <path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/>
+          </svg>
+          {syncing ? "Syncing…" : "Sync from Last.fm"}
+        </button>
+        {result && (
+          <div className="sync-result">
+            {result.new} new scrobble{result.new !== 1 ? "s" : ""} added · {(result.total || 0).toLocaleString()} total
+          </div>
+        )}
+        {error && <div className="sync-result sync-error">{error}</div>}
+      </div>
+    </section>
   );
 }
 
