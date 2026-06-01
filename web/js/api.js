@@ -21,5 +21,6 @@ export const api = {
   audioFeatures:     ()         => get("/audio-features"),
   saturation:        ()         => get("/saturation"),
   tracks:            (params)   => get("/tracks", params),
+  tagGraph:          (field, minCount) => get("/tag-graph", { field, min_count: minCount }),
   reload:            ()         => fetch(BASE + "/reload", { method: "POST" }).then(r => r.json()),
 };

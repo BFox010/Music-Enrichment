@@ -39,6 +39,7 @@ _TRACK = {
         "instrumentalness": 0.1,
         "liveness": 0.1,
     },
+    "discogs_styles": ["Trip Hop", "Downtempo"],
     "saturation_tier": 1,
     "blacklisted": False,
     "playlists": [],
@@ -327,6 +328,46 @@ class TestTracks:
         assert t["artist"] == "Portishead"
         assert t["track"] == "Roads"
         assert t["play_count"] == 10
+
+
+class TestTagGraph:
+    def test_status(self, client):
+        assert client.get("/api/tag-graph").status_code == 200
+
+    def test_structure(self, client):
+        body = client.get("/api/tag-graph?field=discogs_styles&min_count=1").json()
+        assert "nodes" in body and "edges" in body
+        assert isinstance(body["nodes"], list)
+        assert isinstance(body["edges"], list)
+
+    def test_nodes_have_required_fields(self, client):
+        body = client.get("/api/tag-graph?field=discogs_styles&min_count=1").json()
+        assert len(body["nodes"]) >= 1
+        for node in body["nodes"]:
+            assert "tag" in node and "count" in node
+            assert isinstance(node["count"], int)
+
+    def test_edges_connect_known_tags(self, client):
+        body = client.get("/api/tag-graph?field=discogs_styles&min_count=1").json()
+        node_names = {n["tag"] for n in body["nodes"]}
+        # sample track has ["Trip Hop", "Downtempo"] → edge between them
+        assert len(body["edges"]) >= 1
+        e = body["edges"][0]
+        assert "source" in e and "target" in e and "weight" in e
+        assert e["source"] in node_names
+        assert e["target"] in node_names
+
+    def test_min_count_cutoff(self, client):
+        # min_count higher than any tag count in the 1-track fixture → empty
+        body = client.get("/api/tag-graph?field=discogs_styles&min_count=500").json()
+        assert body["nodes"] == []
+        assert body["edges"] == []
+
+    def test_mood_tags_field(self, client):
+        body = client.get("/api/tag-graph?field=mood_tags&min_count=1").json()
+        assert body["field"] == "mood_tags"
+        node_names = {n["tag"] for n in body["nodes"]}
+        assert "Moody" in node_names
 
 
 class TestReload:

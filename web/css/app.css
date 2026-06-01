@@ -268,6 +268,35 @@ html, body {
 .mini-bar-wrap { width: 80px; background: var(--bg); border-radius: 3px; height: 4px; }
 .mini-bar { height: 100%; background: var(--accent); border-radius: 3px; }
 
+/* ── Chart toolbar (tag-field toggle) ───────────────────────────────────── */
+
+.chart-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.toolbar-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 2px;
+}
+
+.tag-field-btn {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 4px 12px;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.tag-field-btn:hover { border-color: var(--accent); color: var(--text); }
+.tag-field-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+
 /* ── Chart containers ───────────────────────────────────────────────────── */
 
 .chart-wrap {

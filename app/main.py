@@ -101,6 +101,14 @@ def api_tracks(
     )
 
 
+@app.get("/api/tag-graph")
+def api_tag_graph(
+    field: str = Query("discogs_styles", pattern="^(discogs_styles|mood_tags|lastfm_tags)$"),
+    min_count: int = Query(15, ge=1, le=500),
+):
+    return metrics.tag_graph(field=field, min_count=min_count)
+
+
 @app.post("/api/reload")
 def api_reload():
     return data.reload()

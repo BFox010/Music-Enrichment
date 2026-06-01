@@ -31,7 +31,7 @@ function showSection(id) {
 function initSection(id) {
   switch (id) {
     case "overview":   loadOverview(); break;
-    case "genres":     genreBubbles.init("genre-bubble-chart"); break;
+    case "genres":     initGenres(); break;
     case "moods":      moods.init("moods-chart"); break;
     case "timeline":   timeline.init("timeline-chart"); break;
     case "listening":  timeMap.init("calendar-chart", "hw-chart"); break;
@@ -87,6 +87,17 @@ async function loadTopArtists() {
       <div class="mini-bar-wrap"><div class="mini-bar" style="width:${Math.round(a.plays / max * 100)}%"></div></div>
       <span class="plays">${a.plays}</span>
     </li>`).join("");
+}
+
+// ── Timeline toggles ──────────────────────────────────────────────────────────
+
+// ── Genre / tag constellation toolbar ────────────────────────────────────────
+
+function initGenres() {
+  genreBubbles.init("genre-bubble-chart");
+  document.querySelectorAll(".tag-field-btn").forEach(btn => {
+    btn.addEventListener("click", () => genreBubbles.load(btn.dataset.field));
+  });
 }
 
 // ── Timeline toggles ──────────────────────────────────────────────────────────

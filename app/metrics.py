@@ -206,3 +206,42 @@ def saturation() -> list[dict]:
         if k not in order:
             result.append({"tier": k, "count": c})
     return result
+
+
+_TAG_GRAPH_FIELDS: frozenset[str] = frozenset(
+    ["discogs_styles", "mood_tags", "lastfm_tags"]
+)
+
+
+def tag_graph(field: str = "discogs_styles", min_count: int = 15) -> dict[str, Any]:
+    """Co-occurrence graph for a tag field.
+
+    Nodes are tags whose track count >= min_count. Edges connect any two tags
+    that appear together on the same track; edge weight = number of shared tracks.
+    """
+    if field not in _TAG_GRAPH_FIELDS:
+        field = "discogs_styles"
+
+    tag_counts: Counter[str] = Counter()
+    co_occur: Counter[tuple[str, str]] = Counter()
+
+    for t in get_tracks():
+        tags = list(dict.fromkeys(v for v in (t.get(field) or []) if v))
+        for tag in tags:
+            tag_counts[tag] += 1
+        for i in range(len(tags)):
+            for j in range(i + 1, len(tags)):
+                key = (tags[i], tags[j]) if tags[i] <= tags[j] else (tags[j], tags[i])
+                co_occur[key] += 1
+
+    kept = {tag for tag, n in tag_counts.items() if n >= min_count}
+    nodes = sorted(
+        [{"tag": t, "count": tag_counts[t]} for t in kept],
+        key=lambda x: -x["count"],
+    )
+    edges = [
+        {"source": a, "target": b, "weight": w}
+        for (a, b), w in co_occur.items()
+        if a in kept and b in kept
+    ]
+    return {"nodes": nodes, "edges": edges, "field": field, "min_count": min_count}
