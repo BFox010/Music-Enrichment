@@ -32,6 +32,7 @@ from pipeline.config import (
     REPO_ROOT,
     TRACKS_WITH_AVAILABILITY_PATH,
     TRACKS_WITH_DISCOGS_PATH,
+    TRACKS_WITH_GENRE_BACKFILL_PATH,
     TRACKS_WITH_GENRES_PATH,
     TRACKS_WITH_METADATA_PATH,
     configure_logging,
@@ -41,16 +42,18 @@ from pipeline.normalize import normalize_artist, normalize_track
 
 log = get_logger(__name__)
 
-# Input preference — deepest in the chain first. Phase 4c (genres) is the
-# immediate predecessor and must come first, or its genres are dropped; fall
-# back through 4b (Discogs) and 4 if a later phase was skipped.
+# Input preference — deepest in the chain first. Phase 4d (genre backfill) is the
+# immediate predecessor and must come first, then 4c (genres); falling back
+# through 4b (Discogs) and 4 if a later phase was skipped. Reading anything but
+# the deepest available file silently drops the genres those phases produced.
 _INPUT_PRIORITY = [
+    TRACKS_WITH_GENRE_BACKFILL_PATH,
     TRACKS_WITH_GENRES_PATH,
     TRACKS_WITH_DISCOGS_PATH,
     TRACKS_WITH_METADATA_PATH,
     REPO_ROOT / "tracks_with_apple.jsonl",
 ]
-DEFAULT_INPUT = TRACKS_WITH_GENRES_PATH
+DEFAULT_INPUT = TRACKS_WITH_GENRE_BACKFILL_PATH
 
 
 def _best_match(response: Any, artist_norm: str, track_norm: str) -> dict[str, Any] | None:
