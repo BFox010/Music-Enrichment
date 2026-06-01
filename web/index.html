@@ -1,194 +1,45 @@
-<!doctype html>
-<html lang="en">
+<!DOCTYPE html>
+<html lang="en" data-theme="midnight" data-density="comfortable">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Music Dashboard</title>
-  <link rel="stylesheet" href="/css/app.css" />
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Listening Atlas — Music Library Analytics</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=Spline+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+
+  <link rel="stylesheet" href="themes.css" />
+
+  <template id="__bundler_thumbnail">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+      <rect width="100" height="100" fill="#09090c" />
+      <g transform="translate(30,22)" fill="none" stroke="#a78bfa" stroke-width="3" stroke-linecap="round">
+        <line x1="0" y1="44" x2="0" y2="30" />
+        <line x1="10" y1="44" x2="10" y2="16" />
+        <line x1="20" y1="44" x2="20" y2="24" />
+        <line x1="30" y1="44" x2="30" y2="6" />
+        <line x1="40" y1="44" x2="40" y2="20" />
+      </g>
+      <circle cx="50" cy="50" r="3" fill="#a78bfa" />
+    </svg>
+  </template>
 </head>
 <body>
-<div id="app">
+  <div id="root"></div>
 
-  <!-- ── Header ─────────────────────────────────────────────────────── -->
-  <header id="header">
-    <h1>🎵 Music Dashboard</h1>
-    <button id="btn-reload">↺ Reload data</button>
-  </header>
+  <!-- React + Babel (pinned) -->
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-  <!-- ── Sidebar ────────────────────────────────────────────────────── -->
-  <nav id="sidebar">
-    <div class="nav-section-label">Overview</div>
-    <a class="nav-link" data-section="overview">  <span class="icon">📊</span> Overview</a>
+  <!-- data (defines window.MUSIC_DATA) -->
+  <script src="data/library.js"></script>
 
-    <div class="nav-section-label">Library</div>
-    <a class="nav-link" data-section="genres">    <span class="icon">🫧</span> Genres</a>
-    <a class="nav-link" data-section="moods">     <span class="icon">🎭</span> Moods</a>
-    <a class="nav-link" data-section="saturation"><span class="icon">🍩</span> Saturation</a>
-    <a class="nav-link" data-section="audio">     <span class="icon">🎛</span> Audio Features</a>
-
-    <div class="nav-section-label">Listening</div>
-    <a class="nav-link" data-section="timeline">  <span class="icon">📈</span> Timeline</a>
-    <a class="nav-link" data-section="listening"> <span class="icon">🗓</span> Listening Map</a>
-    <a class="nav-link" data-section="artists">   <span class="icon">🌊</span> Artists</a>
-
-    <div class="nav-section-label">Browse</div>
-    <a class="nav-link" data-section="tracks">    <span class="icon">🎵</span> Tracks</a>
-  </nav>
-
-  <!-- ── Main ───────────────────────────────────────────────────────── -->
-  <main id="main">
-
-    <!-- Overview -->
-    <section id="overview" class="section">
-      <h2 class="section-title">Overview</h2>
-      <div class="stats-row">
-        <div class="card">
-          <div class="card-title">Unique Tracks</div>
-          <div class="card-value" id="stat-tracks">—</div>
-        </div>
-        <div class="card">
-          <div class="card-title">Total Scrobbles</div>
-          <div class="card-value" id="stat-plays">—</div>
-        </div>
-        <div class="card">
-          <div class="card-title">Listening Period</div>
-          <div class="card-value" style="font-size:20px" id="stat-range">—</div>
-        </div>
-      </div>
-
-      <div class="two-col">
-        <div class="card">
-          <div class="sub-title">Enrichment Coverage</div>
-          <ul id="coverage-list"></ul>
-        </div>
-        <div class="card">
-          <div class="sub-title">Top Tracks by Plays</div>
-          <ol id="top-tracks-list"></ol>
-        </div>
-      </div>
-    </section>
-
-    <!-- Genres -->
-    <section id="genres" class="section">
-      <h2 class="section-title">Tag Constellation</h2>
-      <div class="chart-toolbar">
-        <span class="toolbar-label">Tag source:</span>
-        <button class="tag-field-btn active" data-field="discogs_styles">Styles</button>
-        <button class="tag-field-btn"        data-field="mood_tags">Moods</button>
-        <button class="tag-field-btn"        data-field="lastfm_tags">Last.fm tags</button>
-      </div>
-      <div class="chart-wrap chart-tall">
-        <div id="genre-bubble-chart"></div>
-      </div>
-    </section>
-
-    <!-- Moods -->
-    <section id="moods" class="section">
-      <h2 class="section-title">Mood Distribution</h2>
-      <div class="chart-wrap chart-full">
-        <div id="moods-chart"></div>
-      </div>
-    </section>
-
-    <!-- Saturation -->
-    <section id="saturation" class="section">
-      <h2 class="section-title">Saturation Tiers</h2>
-      <div class="chart-wrap chart-med">
-        <div id="saturation-chart"></div>
-      </div>
-    </section>
-
-    <!-- Audio Features -->
-    <section id="audio" class="section">
-      <h2 class="section-title">Audio Features</h2>
-      <div class="chart-wrap chart-full">
-        <div id="scatter-chart"></div>
-      </div>
-      <div class="chart-wrap chart-med">
-        <div id="hist-chart"></div>
-      </div>
-    </section>
-
-    <!-- Timeline -->
-    <section id="timeline" class="section">
-      <h2 class="section-title">Listening Timeline</h2>
-      <div class="btn-group">
-        <button id="btn-by-year"  class="active">By Year</button>
-        <button id="btn-by-month">By Month</button>
-      </div>
-      <div class="chart-wrap chart-med">
-        <div id="timeline-chart"></div>
-      </div>
-    </section>
-
-    <!-- Listening Map -->
-    <section id="listening" class="section">
-      <h2 class="section-title">Listening Map</h2>
-      <div class="chart-wrap" style="height:280px">
-        <div id="calendar-chart" style="width:100%;height:100%"></div>
-      </div>
-      <div class="chart-wrap chart-full">
-        <div id="hw-chart" style="width:100%;height:100%"></div>
-      </div>
-    </section>
-
-    <!-- Artists -->
-    <section id="artists" class="section">
-      <h2 class="section-title">Artist Listening Trajectory</h2>
-      <div class="chart-wrap chart-full">
-        <div id="artist-traj-chart"></div>
-      </div>
-      <div class="card">
-        <div class="sub-title">Top Artists by Total Plays</div>
-        <ul id="top-artists-list"></ul>
-      </div>
-    </section>
-
-    <!-- Tracks -->
-    <section id="tracks" class="section">
-      <h2 class="section-title">Browse Tracks</h2>
-
-      <!-- Filter bar -->
-      <div class="filter-bar">
-        <label>Genre <input type="text" id="filter-genre" placeholder="e.g. electronic" /></label>
-        <label>Mood  <input type="text" id="filter-mood"  placeholder="e.g. dark" /></label>
-        <label>Artist <input type="text" id="filter-artist" placeholder="artist name" /></label>
-        <label>Year  <input type="number" id="filter-year"  placeholder="1994" style="width:80px" /></label>
-        <label>
-          Energy
-          <input type="range" id="filter-energy-min" min="0" max="1" step="0.05" value="0" />
-          <span id="lbl-energy-min">0</span>–
-          <input type="range" id="filter-energy-max" min="0" max="1" step="0.05" value="1" />
-          <span id="lbl-energy-max">1</span>
-        </label>
-        <button class="btn-sm" id="btn-clear-filters">✕ Clear</button>
-      </div>
-
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Artist</th><th>Track</th><th>Plays</th>
-              <th>Genres</th><th>Moods</th>
-              <th>Energy</th><th>Valence</th><th>Tier</th>
-            </tr>
-          </thead>
-          <tbody id="tracks-tbody"></tbody>
-        </table>
-        <div class="table-footer">
-          <span id="tracks-info">—</span>
-          <div>
-            <button id="btn-prev" disabled>← Prev</button>
-            <button id="btn-next" disabled>Next →</button>
-          </div>
-        </div>
-      </div>
-    </section>
-
-  </main>
-</div>
-
-<script type="module" src="/js/app.js"></script>
+  <!-- components -->
+  <script type="text/babel" src="tweaks-panel.jsx"></script>
+  <script type="text/babel" src="charts.jsx"></script>
+  <script type="text/babel" src="explorer.jsx"></script>
+  <script type="text/babel" src="dashboard.jsx"></script>
 </body>
 </html>

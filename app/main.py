@@ -8,9 +8,11 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pipeline.config import SCROBBLES_PATH, TRACKS_PATH
 
 import app.data as data
 import app.metrics as metrics
@@ -111,6 +113,20 @@ def api_tag_graph(
 @app.post("/api/reload")
 def api_reload():
     return data.reload()
+
+
+@app.get("/tracks.jsonl")
+def serve_tracks_jsonl():
+    if not TRACKS_PATH.exists():
+        raise HTTPException(404, "tracks.jsonl not found")
+    return FileResponse(str(TRACKS_PATH), media_type="application/x-ndjson")
+
+
+@app.get("/scrobbles.jsonl")
+def serve_scrobbles_jsonl():
+    if not SCROBBLES_PATH.exists():
+        raise HTTPException(404, "scrobbles.jsonl not found")
+    return FileResponse(str(SCROBBLES_PATH), media_type="application/x-ndjson")
 
 
 # Mount static files last so API routes take precedence.
