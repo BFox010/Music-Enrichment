@@ -101,6 +101,31 @@ def test_lastfm_artist_recovers_and_skips_mb(monkeypatch) -> None:
     assert not any(c.startswith("mbartist|") for c in FakeClient.all_calls)
 
 
+def test_primary_artist_retry_on_collab(monkeypatch) -> None:
+    # Full credit finds nothing; primary artist (first_artist) carries the genre.
+    track = _track("A$AP NAST & D33J", "asap nast & d33j")
+    responses = {
+        "artisttags|asap nast & d33j": {"toptags": {"tag": []}},      # collab: empty
+        # primary artist cache key is normalize_artist("A$AP NAST") == "a ap nast"
+        "artisttags|a ap nast": {"toptags": {"tag": [{"name": "Hip-Hop"}]}},
+    }
+    rows, stats = _run([track], responses, monkeypatch)
+    assert "Hip-Hop / Rap" in rows[0]["genres"]
+    assert stats["recovered_lastfm_artist"] == 1
+    assert stats["recovered_via_first_artist"] == 1
+
+
+def test_no_primary_retry_for_single_artist(monkeypatch) -> None:
+    # A single (non-collab) artist must not trigger a second lookup.
+    track = _track("Radiohead", "radiohead")
+    responses = {"artisttags|radiohead": {"toptags": {"tag": [{"name": "rock"}]}}}
+    rows, stats = _run([track], responses, monkeypatch)
+    assert "Rock" in rows[0]["genres"]
+    assert stats["recovered_via_first_artist"] == 0
+    # Only one artist-tag call was made.
+    assert sum(1 for c in FakeClient.all_calls if c.startswith("artisttags|")) == 1
+
+
 def test_musicbrainz_fallback_when_lastfm_empty(monkeypatch) -> None:
     track = _track("Obscure", "obscure", artist_mbid="mbid-9")
     responses = {
