@@ -63,12 +63,7 @@ function parseJSONL(text) {
 function countMap(arr) { const m = {}; for (const k of arr) m[k] = (m[k] || 0) + 1; return m; }
 function topEntries(map, n) { return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, n).map(([key, value]) => ({ key, value })); }
 
-const THEMES = [["midnight", "Midnight"], ["editorial", "Editorial"], ["terminal", "Terminal"]];
-const ACCENTS = {
-  midnight: [["#f472b6", "Pink"], ["#a78bfa", "Violet"], ["#5b9dff", "Azure"], ["#4ade80", "Spring"]],
-  editorial: [["#e3a857", "Amber"], ["#d2623a", "Rust"], ["#b6c47e", "Sage"], ["#c98a6b", "Clay"]],
-  terminal: [["#54f08a", "Green"], ["#36e0e0", "Cyan"], ["#ffb627", "Amber"], ["#ff6b6b", "Red"]]
-};
+const ACCENT_OPTIONS = ["#f472b6", "#a78bfa", "#5b9dff", "#4ade80"];
 
 // Timeframe windows for play-based metrics
 const TIMEFRAMES = [
@@ -98,9 +93,8 @@ function App() {
     return { ...s, byHour: toArr(s.byHour, 24), byDow: toArr(s.byDow, 7), bySeason: s.bySeason || {}, byYear: s.byYear || {}, total: s.total || 0 };
   }, [data]);
 
-  const [theme, setTheme] = useState(() => localStorage.getItem("ml.theme") || "midnight");
   const [density, setDensity] = useState(() => localStorage.getItem("ml.density") || "comfortable");
-  const [accents, setAccents] = useState(() => { try { return JSON.parse(localStorage.getItem("ml.accents")) || {}; } catch (e) { return {}; } });
+  const [accent, setAccent] = useState(() => localStorage.getItem("ml.accent") || "#a78bfa");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("plays");
   const [timeframe, setTimeframe] = useState("all");
@@ -112,27 +106,19 @@ function App() {
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
-  /* apply theme + accent to <html> */
+  /* apply accent + density to <html> */
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", theme);
     document.documentElement.setAttribute("data-density", density);
-    const accent = accents[theme] || ACCENTS[theme][0][0];
     document.documentElement.style.setProperty("--accent", accent);
-    localStorage.setItem("ml.theme", theme);
     localStorage.setItem("ml.density", density);
-    localStorage.setItem("ml.accents", JSON.stringify(accents));
-  }, [theme, density, accents]);
+    localStorage.setItem("ml.accent", accent);
+  }, [density, accent]);
 
   /* expose hooks for the Tweaks panel */
   useEffect(() => {
-    window.__ml = {
-      theme, setTheme, density, setDensity,
-      accent: accents[theme] || ACCENTS[theme][0][0],
-      setAccent: (c) => setAccents((a) => ({ ...a, [theme]: c })),
-      accentOptions: ACCENTS[theme].map((x) => x[0])
-    };
+    window.__ml = { density, setDensity, accent, setAccent };
     window.dispatchEvent(new CustomEvent("ml:state"));
-  }, [theme, density, accents]);
+  }, [density, accent]);
 
   const showToast = useCallback((msg) => { setToast(msg); setTimeout(() => setToast(""), 2600); }, []);
 
@@ -305,7 +291,6 @@ function App() {
   const genreColors = genreColorMap;
   const meta = data.meta;
   const nf = (x) => x.toLocaleString();
-  const curAccent = accents[theme] || ACCENTS[theme][0][0];
   const tfLabel = timeframe === "all" ? "by scrobbles" : TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase();
 
   /* mobile-friendly feedback: toast the match count whenever filters change */
@@ -329,11 +314,6 @@ function App() {
           </div>
         </div>
         <div className="topbar-actions">
-          <div className="dirswitch" role="group" aria-label="Visual direction">
-            {THEMES.map(([id, label]) => (
-              <button key={id} aria-pressed={theme === id} onClick={() => setTheme(id)}>{label}</button>
-            ))}
-          </div>
           <div className="search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
@@ -505,10 +485,8 @@ function App() {
 
       {/* ---------- Tweaks ---------- */}
       <TweaksPanel title="Tweaks">
-        <TweakSection label="Visual direction" />
-        <TweakRadio label="Direction" value={theme} options={[{ value: "midnight", label: "Midnight" }, { value: "editorial", label: "Editorial" }, { value: "terminal", label: "Terminal" }]} onChange={setTheme} />
         <TweakSection label="Accent" />
-        <TweakColor label={"Accent — " + theme} value={curAccent} options={ACCENTS[theme].map((a) => a[0])} onChange={(c) => setAccents((a) => ({ ...a, [theme]: c }))} />
+        <TweakColor label="Accent" value={accent} options={ACCENT_OPTIONS} onChange={setAccent} />
         <TweakSection label="Layout" />
         <TweakRadio label="Density" value={density} options={["comfortable", "compact"]} onChange={setDensity} />
       </TweaksPanel>

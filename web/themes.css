@@ -1,7 +1,6 @@
 /* ============================================================
-   Music Library Dashboard — theme system
-   Three dark directions: Midnight (default), Editorial, Terminal
-   Switched via [data-theme] on <html>. Accent via --accent (set by JS).
+   Music Library Dashboard — Midnight theme
+   Accent colour overridable via --accent (set by JS).
    ============================================================ */
 
 /* ---------- MIDNIGHT (default) ---------- */
@@ -43,86 +42,6 @@
   --kpi-family: var(--font-display);
   --section-rule: none;
   --bar-texture: none;
-}
-
-/* ---------- EDITORIAL ---------- */
-[data-theme="editorial"] {
-  --bg:        #14110c;
-  --bg-grad:   radial-gradient(1100px 800px at 88% -10%, #2a2114 0%, transparent 55%);
-  --panel:     #1b1610;
-  --panel-2:   #221c14;
-  --panel-hi:  #2a2218;
-  --line:      #38301f;
-  --line-soft: #2a2317;
-  --text:      #f5ede0;
-  --text-2:    #cdbfa6;
-  --muted:     #9c8c6f6e;
-  --muted-s:   #a3927440;
-  --faint:     #7a6c52;
-  --accent:    #e3a857;
-  --accent-ink:#1a1408;
-  --good:      #b6c47e;
-  --warn:      #e3a857;
-  --bad:       #d2623a;
-  --track-bg:  #2a2217;
-
-  --font-display: 'Instrument Serif', Georgia, serif;
-  --font-body:    'Spline Sans', system-ui, sans-serif;
-  --font-mono:    'Spline Sans', ui-monospace, monospace;
-  --num-feat:     "tnum" 1, "lnum" 1;
-
-  --radius:    4px;
-  --radius-sm: 3px;
-  --radius-pill: 2px;
-  --card-border: 1px solid var(--line);
-  --card-shadow: none;
-  --bar-radius: 1px;
-  --display-weight: 400;
-  --display-spacing: 0;
-  --display-transform: none;
-  --kpi-family: var(--font-display);
-  --section-rule: 1px solid var(--line);
-  --bar-texture: none;
-}
-
-/* ---------- TERMINAL ---------- */
-[data-theme="terminal"] {
-  --bg:        #000000;
-  --bg-grad:   none;
-  --panel:     #080b08;
-  --panel-2:   #0c110c;
-  --panel-hi:  #111811;
-  --line:      #1d2c1d;
-  --line-soft: #142014;
-  --text:      #cdf5cd;
-  --text-2:    #79a879;
-  --muted:     #4e6e4e66;
-  --muted-s:   #5e845e;
-  --faint:     #3a543a;
-  --accent:    #54f08a;
-  --accent-ink:#021006;
-  --good:      #54f08a;
-  --warn:      #ffd166;
-  --bad:       #ff6b6b;
-  --track-bg:  #0e160e;
-
-  --font-display: 'JetBrains Mono', ui-monospace, monospace;
-  --font-body:    'JetBrains Mono', ui-monospace, monospace;
-  --font-mono:    'JetBrains Mono', ui-monospace, monospace;
-  --num-feat:     "tnum" 1;
-
-  --radius:    2px;
-  --radius-sm: 2px;
-  --radius-pill: 2px;
-  --card-border: 1px solid var(--line);
-  --card-shadow: none;
-  --bar-radius: 0px;
-  --display-weight: 700;
-  --display-spacing: -0.01em;
-  --display-transform: uppercase;
-  --kpi-family: var(--font-mono);
-  --section-rule: 1px dashed var(--line);
-  --bar-texture: repeating-linear-gradient(90deg, transparent 0 6px, rgba(0,0,0,.55) 6px 7px);
 }
 
 /* ============================================================
@@ -176,7 +95,6 @@ a { color: inherit; }
   text-transform: var(--display-transform);
   font-size: clamp(30px, 4.6vw, 50px); line-height: 1.02; color: var(--text);
 }
-[data-theme="editorial"] .brand h1 { font-size: clamp(30px, 3.8vw, 47px); line-height: 1.05; }
 .brand .sub { color: var(--muted-s); font-size: 13.5px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .sub .pill-live {
   font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .08em; text-transform: uppercase;
@@ -235,7 +153,6 @@ a { color: inherit; }
   letter-spacing: var(--display-spacing); font-size: 30px; line-height: 1; color: var(--text);
   font-variant-numeric: tabular-nums lining-nums;
 }
-[data-theme="editorial"] .kpi .kpi-val { font-size: 38px; }
 .kpi .kpi-sub { font-size: 11.5px; color: var(--muted-s); }
 .kpi .kpi-sub b { color: var(--accent); font-weight: 700; }
 .kpi .kpi-spark { position: absolute; right: 0; bottom: 0; left: 0; height: 3px; }
@@ -258,7 +175,6 @@ section.block { margin-bottom: 16px; }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-bottom: 16px; padding-bottom: 12px; border-bottom: var(--section-rule); }
 .card-head.norule { border-bottom: 0; padding-bottom: 0; }
 .card-title { font-family: var(--font-display); font-weight: var(--display-weight); letter-spacing: var(--display-spacing); text-transform: var(--display-transform); font-size: 19px; color: var(--text); margin: 0; white-space: nowrap; }
-[data-theme="editorial"] .card-title { font-size: 21px; }
 .card-meta { font-family: var(--font-mono); font-size: 11px; color: var(--muted-s); letter-spacing: .04em; text-transform: uppercase; text-align: right; flex-shrink: 1; }
 
 /* ============================================================
