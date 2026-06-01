@@ -7,6 +7,8 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 
 from __future__ import annotations
 
+from __future__ import annotations
+
 from pathlib import Path
 
 from fastapi import FastAPI, Query
