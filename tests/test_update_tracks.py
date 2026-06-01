@@ -155,6 +155,46 @@ class TestUpdate:
             assert rows[0]["curation_state"] == "locked"
             assert rows[0]["rejected_reason"] == "kept for soak playlist"
 
+    def test_enriched_at_preserved_when_row_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads",
+                 "play_count": 47, "lastfm_tags": ["trip-hop"]},
+            ])
+            update(input_path=inp, output_path=out)
+            # Backdate the stamp on disk to simulate a prior-day run.
+            rows = self._load_jsonl(out)
+            rows[0]["enriched_at"] = "2000-01-01"
+            self._write_jsonl(out, rows)
+            # Re-run with identical input: stamp preserved → no line churn.
+            update(input_path=inp, output_path=out)
+            assert self._load_jsonl(out)[0]["enriched_at"] == "2000-01-01"
+
+    def test_enriched_at_bumped_when_row_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads",
+                 "play_count": 47, "lastfm_tags": ["trip-hop"]},
+            ])
+            update(input_path=inp, output_path=out)
+            rows = self._load_jsonl(out)
+            rows[0]["enriched_at"] = "2000-01-01"
+            self._write_jsonl(out, rows)
+            # Re-run with CHANGED data → stamp refreshes off the backdated value.
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads",
+                 "play_count": 99, "lastfm_tags": ["trip-hop"]},
+            ])
+            update(input_path=inp, output_path=out)
+            assert self._load_jsonl(out)[0]["enriched_at"] != "2000-01-01"
+
     def test_duplicate_source_key_aborts_before_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             inp = Path(tmp) / "input.jsonl"
