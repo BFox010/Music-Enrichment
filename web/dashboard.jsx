@@ -112,6 +112,7 @@ function App() {
   const TagConstellation = window.TagConstellation;
   const [dzShow, setDzShow] = useState(false);
   const [toast, setToast] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
@@ -130,6 +131,44 @@ function App() {
   }, [density, accent]);
 
   const showToast = useCallback((msg) => { setToast(msg); setTimeout(() => setToast(""), 2600); }, []);
+
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const r = await fetch("/api/refresh", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) {
+        showToast("Refresh failed: " + (d.detail || r.statusText));
+        return;
+      }
+      const newCount = d.sync?.new ?? 0;
+      const pending = d.pending_exportify ?? 0;
+      const msg = newCount > 0
+        ? `+${newCount} new scrobble${newCount !== 1 ? "s" : ""} · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`
+        : `Up to date · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`;
+      showToast(msg);
+      // Re-fetch live data so the UI reflects the updated tracks/scrobbles
+      try {
+        const [tr, sc] = await Promise.allSettled([
+          fetch("tracks.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
+          fetch("scrobbles.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
+        ]);
+        let nt = null, ns = null;
+        if (tr.status === "fulfilled") { const rows = parseJSONL(tr.value); if (rows.length) nt = rows.map(normalizeTrack); }
+        if (sc.status === "fulfilled") { const rows = parseJSONL(sc.value); if (rows.length) ns = aggregateScrobbles(rows); }
+        if (nt || ns) {
+          setData((d) => ({
+            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
+            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
+          }));
+        }
+      } catch (e) { /* live fetch optional */ }
+    } catch (e) {
+      showToast("Refresh error: " + e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [showToast]);
 
   /* ---------- file loading ---------- */
   const handleFiles = useCallback(async (fileList) => {
@@ -328,6 +367,10 @@ function App() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
           </div>
+          <button className="btn" onClick={doRefresh} disabled={refreshing} title="Sync scrobbles + re-run pipeline">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }}><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
           <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} title="Load your tracks.jsonl / scrobbles.jsonl">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0-12l-4 4m4-4l4 4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
             Load data
