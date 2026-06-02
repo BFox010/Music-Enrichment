@@ -71,6 +71,65 @@ def parse_raw_scrobble(record: dict) -> dict | None:
     }
 
 
+def ingest_from_records(
+    raw_records: list[dict],
+    output_path: Path = SCROBBLES_PATH,
+    mode: str = "replace",
+) -> int:
+    """Parse raw Last.fm API records and write to output_path.
+
+    mode="replace"  — overwrite output_path entirely.
+    mode="append"   — merge with existing rows, deduplicate by
+                      (scrobbled_at, artist_normalized, track_normalized),
+                      then sort chronologically and rewrite.
+
+    Returns total rows written (not just new rows in append mode).
+    """
+    parsed: list[dict] = []
+    skipped = 0
+    for record in raw_records:
+        row = parse_raw_scrobble(record)
+        if row is None:
+            skipped += 1
+        else:
+            parsed.append(row)
+
+    log.info("Parsed: %d  |  Skipped (nowplaying/malformed): %d", len(parsed), skipped)
+
+    if mode == "append" and output_path.exists():
+        existing: list[dict] = []
+        with open(output_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if line:
+                    try:
+                        existing.append(json.loads(line))
+                    except json.JSONDecodeError:
+                        pass
+        seen = {
+            (r["scrobbled_at"], r.get("artist_normalized", ""), r.get("track_normalized", ""))
+            for r in existing
+        }
+        new_only = [
+            r for r in parsed
+            if (r["scrobbled_at"], r.get("artist_normalized", ""), r.get("track_normalized", ""))
+            not in seen
+        ]
+        log.info(
+            "Existing: %d  |  New: %d  |  Duplicates dropped: %d",
+            len(existing), len(new_only), len(parsed) - len(new_only),
+        )
+        parsed = sorted(existing + new_only, key=lambda r: r["scrobbled_at"])
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+        for row in parsed:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    log.info("Wrote %d rows → %s", len(parsed), output_path)
+    return len(parsed)
+
+
 def ingest(
     export_path: Path = INPUT_LASTFM_EXPORT,
     output_path: Path = SCROBBLES_PATH,
@@ -93,29 +152,12 @@ def ingest(
     with open(export_path, "r", encoding="utf-8") as fh:
         raw_pages: list[list[dict]] = json.load(fh)
 
-    # Flatten paginated export (list of pages → flat list)
     raw_records = [rec for page in raw_pages for rec in page]
     log.info("Raw records across %d pages: %d", len(raw_pages), len(raw_records))
 
-    parsed: list[dict] = []
-    skipped = 0
-    for record in raw_records:
-        row = parse_raw_scrobble(record)
-        if row is None:
-            skipped += 1
-        else:
-            parsed.append(row)
-
-    log.info("Parsed: %d  |  Skipped (nowplaying/malformed): %d", len(parsed), skipped)
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
-        for row in parsed:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-    log.info("Wrote %d rows → %s", len(parsed), output_path)
+    n = ingest_from_records(raw_records, output_path=output_path, mode="replace")
     log.info("Run log: %s", run_log_path)
-    return len(parsed)
+    return n
 
 
 if __name__ == "__main__":
