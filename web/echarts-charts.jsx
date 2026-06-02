@@ -26,8 +26,20 @@ function useEChart(ref) {
     chartRef.current = echarts.init(ref.current, null, { renderer: "canvas" });
     const onResize = () => chartRef.current?.resize();
     window.addEventListener("resize", onResize);
+    // The container is often 0×0 at init time (skeleton showing, or the page
+    // hidden via display:none). Observe it and resize once it gains real size
+    // so the chart fills its card instead of rendering into a 0-height canvas.
+    let ro;
+    if (typeof ResizeObserver !== "undefined") {
+      ro = new ResizeObserver(() => {
+        const el = ref.current;
+        if (el && el.clientWidth && el.clientHeight) chartRef.current?.resize();
+      });
+      ro.observe(ref.current);
+    }
     return () => {
       window.removeEventListener("resize", onResize);
+      ro?.disconnect();
       chartRef.current?.dispose();
       chartRef.current = null;
     };
@@ -39,6 +51,12 @@ function useEChart(ref) {
 function ChartLoading({ height = 420 }) {
   return <div className="echart-loading" style={{ height }}>Loading…</div>;
 }
+
+/* ── shared bits ────────────────────────────────────────────────────────── */
+// right-aligned cluster for a card-head that also holds a control (seg) + meta
+const cardTools = { display: "flex", alignItems: "center", gap: 14, flexShrink: 0 };
+// one-line explainer that sits directly under a card-head
+const cardDesc  = { margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.55, color: "var(--muted-s)", maxWidth: 640 };
 
 /* ── Timeline chart ─────────────────────────────────────────────────────── */
 function TimelineChart({ active }) {
@@ -89,15 +107,23 @@ function TimelineChart({ active }) {
   }, [active, by]);
 
   return (
-    <div>
-      <div className="seg" role="group" style={{ marginBottom: 14 }}>
-        {[["year","By Year"],["month","By Month"]].map(([v,l]) => (
-          <button key={v} aria-pressed={by === v} onClick={() => setBy(v)}>{l}</button>
-        ))}
+    <section className="block">
+      <div className="card">
+        <div className="card-head">
+          <h3 className="card-title">Scrobble timeline</h3>
+          <div style={cardTools}>
+            <div className="seg" role="group">
+              {[["year","By Year"],["month","By Month"]].map(([v,l]) => (
+                <button key={v} aria-pressed={by === v} onClick={() => setBy(v)}>{l}</button>
+              ))}
+            </div>
+            <span className="card-meta">scrobbles over time</span>
+          </div>
+        </div>
+        <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        {loading && <ChartLoading />}
       </div>
-      <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block" }} />
-      {loading && <ChartLoading />}
-    </div>
+    </section>
   );
 }
 
@@ -141,10 +167,16 @@ function ArtistTrajectory({ active }) {
   }, [active]);
 
   return (
-    <div>
-      <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
-      {loading && <ChartLoading height={560} />}
-    </div>
+    <section className="block">
+      <div className="card">
+        <div className="card-head">
+          <h3 className="card-title">Artist trajectory</h3>
+          <span className="card-meta">listening share over time · top 12</span>
+        </div>
+        <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        {loading && <ChartLoading height={560} />}
+      </div>
+    </section>
   );
 }
 
@@ -210,20 +242,20 @@ function ListeningMap({ active }) {
   }, [active]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {loading ? <ChartLoading height={280} /> : (
+    <section className="block">
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="card">
           <div className="card-head norule"><h3 className="card-title">Listening calendar</h3><span className="card-meta">plays per day</span></div>
-          <div ref={calRef} className="echart-wrap short" />
+          {loading && <ChartLoading height={260} />}
+          <div ref={calRef} className="echart-wrap short" style={{ display: loading ? "none" : "block" }} />
         </div>
-      )}
-      {!loading && (
         <div className="card">
           <div className="card-head norule"><h3 className="card-title">Hour × weekday</h3><span className="card-meta">play density</span></div>
-          <div ref={hwRef} style={{ width: "100%", height: 320 }} />
+          {loading && <ChartLoading height={320} />}
+          <div ref={hwRef} style={{ width: "100%", height: 320, display: loading ? "none" : "block" }} />
         </div>
-      )}
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -315,20 +347,21 @@ function AudioFeaturesChart({ active }) {
   }, [active]);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {loading ? <ChartLoading /> : (
-        <>
-          <div className="card">
-            <div className="card-head norule"><h3 className="card-title">Energy × Valence</h3><span className="card-meta">bubble = play count</span></div>
-            <div ref={scRef} className="echart-wrap" />
-          </div>
-          <div className="card">
-            <div className="card-head norule"><h3 className="card-title">Feature distributions</h3><span className="card-meta">tracks per bin</span></div>
-            <div ref={histRef} style={{ width: "100%", height: 240 }} />
-          </div>
-        </>
-      )}
-    </div>
+    <section className="block">
+      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <div className="card">
+          <div className="card-head norule"><h3 className="card-title">Energy × Valence</h3><span className="card-meta">bubble = play count</span></div>
+          <p style={cardDesc}>Each bubble is a track, placed by its energy and emotional valence — bigger bubbles are the ones you play most.</p>
+          {loading && <ChartLoading />}
+          <div ref={scRef} className="echart-wrap" style={{ display: loading ? "none" : "block" }} />
+        </div>
+        <div className="card">
+          <div className="card-head norule"><h3 className="card-title">Feature distributions</h3><span className="card-meta">tracks per bin</span></div>
+          {loading && <ChartLoading height={240} />}
+          <div ref={histRef} style={{ width: "100%", height: 240, display: loading ? "none" : "block" }} />
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -372,10 +405,16 @@ function SaturationChart({ active }) {
   }, [active]);
 
   return (
-    <div>
-      <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block", height: 360 }} />
-      {loading && <ChartLoading />}
-    </div>
+    <section className="block">
+      <div className="card">
+        <div className="card-head">
+          <h3 className="card-title">Data saturation</h3>
+          <span className="card-meta">tracks by enrichment tier</span>
+        </div>
+        <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block", height: 360 }} />
+        {loading && <ChartLoading />}
+      </div>
+    </section>
   );
 }
 
@@ -445,15 +484,24 @@ function TagConstellation({ active }) {
   }, [active, field]);
 
   return (
-    <div>
-      <div className="seg" role="group" style={{ marginBottom: 14 }}>
-        {FIELDS.map(([v, l]) => (
-          <button key={v} aria-pressed={field === v} onClick={() => setField(v)}>{l}</button>
-        ))}
+    <section className="block">
+      <div className="card">
+        <div className="card-head">
+          <h3 className="card-title">Tag constellation</h3>
+          <div style={cardTools}>
+            <div className="seg" role="group">
+              {FIELDS.map(([v, l]) => (
+                <button key={v} aria-pressed={field === v} onClick={() => setField(v)}>{l}</button>
+              ))}
+            </div>
+            <span className="card-meta">force graph · shared-track connections</span>
+          </div>
+        </div>
+        <p style={cardDesc}>Each node is a tag, sized by how many tracks carry it; links connect tags that share tracks. Drag nodes to untangle, scroll to zoom.</p>
+        <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        {loading && <ChartLoading height={560} />}
       </div>
-      <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
-      {loading && <ChartLoading height={560} />}
-    </div>
+    </section>
   );
 }
 
