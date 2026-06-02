@@ -235,10 +235,23 @@ tracks_skeleton.jsonl
 tracks_with_apple.jsonl
 tracks_with_audio.jsonl
 tracks_with_metadata.jsonl
+tracks_with_discogs.jsonl
+tracks_with_genres.jsonl
+tracks_with_genre_backfill.jsonl
 tracks_with_availability.jsonl
 tracks_with_moods.jsonl
 tracks_with_taste.jsonl
 
+# Scratch / temp files
+*.tmp.txt
+
+# Per-run diagnostic artifacts (merge_exportify writes these every run)
+runs/unmatched_exportify_*.txt
+
 # Local env snapshots
 .env.local
+
+# Handoff notes — local VSCode <-> Claude Code comms only, never versioned
+HANDOFF.md
+Handoff.md
 

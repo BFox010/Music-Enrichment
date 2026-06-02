@@ -344,11 +344,17 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
     """Read JSONL. Unknown fields preserved; records without _schema_version load fine."""
     rows: list[dict[str, Any]] = []
     with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
+        for line_no, line in enumerate(fh, start=1):
             line = line.strip()
             if not line:
                 continue
-            rows.append(json.loads(line))
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"{path}:{line_no}: invalid JSONL row: {e}") from e
+            if not isinstance(row, dict):
+                raise ValueError(f"{path}:{line_no}: expected JSON object row")
+            rows.append(row)
     return rows
 
 

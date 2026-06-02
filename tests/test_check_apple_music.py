@@ -4,7 +4,39 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from pipeline.check_apple_music import _best_match, _is_stale
+from pipeline.check_apple_music import (
+    DEFAULT_INPUT,
+    _INPUT_PRIORITY,
+    _best_match,
+    _is_stale,
+)
+from pipeline.config import (
+    TRACKS_WITH_DISCOGS_PATH,
+    TRACKS_WITH_GENRE_BACKFILL_PATH,
+    TRACKS_WITH_GENRES_PATH,
+)
+
+
+class TestInputPriority:
+    """Regression guard: phase 5 must consume the deepest genre-bearing file.
+
+    The manifest declares the chain, but the orchestrator calls each phase with
+    no args, so the module's own input preference is what actually runs. If the
+    deepest predecessor is not preferred here, the genres those phases produced
+    are silently dropped from tracks.jsonl even though they succeed (the bug
+    fixed 2026-05-31 was exactly this, for phase 4c)."""
+
+    def test_deepest_genre_file_is_preferred(self) -> None:
+        # Phase 4d (backfill) is now the immediate predecessor.
+        assert _INPUT_PRIORITY[0] == TRACKS_WITH_GENRE_BACKFILL_PATH
+        assert DEFAULT_INPUT == TRACKS_WITH_GENRE_BACKFILL_PATH
+
+    def test_genre_files_outrank_discogs(self) -> None:
+        # 4b output still reachable if 4c/4d were skipped, just lower priority.
+        assert TRACKS_WITH_DISCOGS_PATH in _INPUT_PRIORITY
+        assert _INPUT_PRIORITY.index(TRACKS_WITH_GENRE_BACKFILL_PATH) < \
+            _INPUT_PRIORITY.index(TRACKS_WITH_GENRES_PATH) < \
+            _INPUT_PRIORITY.index(TRACKS_WITH_DISCOGS_PATH)
 
 
 class TestBestMatch:

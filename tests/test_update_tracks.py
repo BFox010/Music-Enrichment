@@ -6,6 +6,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from pipeline.update_tracks import (
     _enrichment_sources,
     _merge_with_existing,
@@ -56,15 +58,20 @@ class TestMergeWithExisting:
         merged = _merge_with_existing(new, existing)
         assert merged["mood_tags"] == ["Fast"]
 
-    def test_preserves_playlists_when_locked(self) -> None:
-        new = {"artist": "x", "track": "y", "playlists": [], "curation_state": None}
+    def test_playlists_always_track_phase7_output(self) -> None:
+        # Playlists are derived from taste_profile.md (Phase 7), not human-edited.
+        # Even when curation_state is locked, new Phase 7 output wins — otherwise
+        # tracks get stuck in playlist sections that no longer exist in markdown.
+        new = {"artist": "x", "track": "y", "playlists": ["sad"], "curation_state": "locked"}
         existing = {"artist": "x", "track": "y",
-                    "playlists": ["soak", "night_drive"],
+                    "playlists": ["heavy_weather", "night_drive"],
                     "curation_state": "locked"}
         merged = _merge_with_existing(new, existing)
-        assert merged["playlists"] == ["soak", "night_drive"]
+        assert merged["playlists"] == ["sad"]
 
-    def test_does_not_preserve_playlists_when_unreviewed(self) -> None:
+    def test_playlists_clear_when_track_removed_from_markdown(self) -> None:
+        # When Phase 7 emits no playlists for a track (removed from markdown),
+        # tracks.jsonl reflects that — no stale memberships preserved.
         new = {"artist": "x", "track": "y", "playlists": [], "curation_state": None}
         existing = {"artist": "x", "track": "y",
                     "playlists": ["stale_playlist"],
@@ -147,3 +154,67 @@ class TestUpdate:
             rows = self._load_jsonl(out)
             assert rows[0]["curation_state"] == "locked"
             assert rows[0]["rejected_reason"] == "kept for soak playlist"
+
+    def test_enriched_at_preserved_when_row_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads",
+                 "play_count": 47, "lastfm_tags": ["trip-hop"]},
+            ])
+            update(input_path=inp, output_path=out)
+            # Backdate the stamp on disk to simulate a prior-day run.
+            rows = self._load_jsonl(out)
+            rows[0]["enriched_at"] = "2000-01-01"
+            self._write_jsonl(out, rows)
+            # Re-run with identical input: stamp preserved → no line churn.
+            update(input_path=inp, output_path=out)
+            assert self._load_jsonl(out)[0]["enriched_at"] == "2000-01-01"
+
+    def test_enriched_at_bumped_when_row_changes(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads",
+                 "play_count": 47, "lastfm_tags": ["trip-hop"]},
+            ])
+            update(input_path=inp, output_path=out)
+            rows = self._load_jsonl(out)
+            rows[0]["enriched_at"] = "2000-01-01"
+            self._write_jsonl(out, rows)
+            # Re-run with CHANGED data → stamp refreshes off the backdated value.
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads",
+                 "play_count": 99, "lastfm_tags": ["trip-hop"]},
+            ])
+            update(input_path=inp, output_path=out)
+            assert self._load_jsonl(out)[0]["enriched_at"] != "2000-01-01"
+
+    def test_duplicate_source_key_aborts_before_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "A", "track": "T",
+                 "artist_normalized": "a", "track_normalized": "t"},
+                {"artist": "A", "track": "T",
+                 "artist_normalized": "a", "track_normalized": "t"},
+            ])
+            with pytest.raises(ValueError, match="duplicate source track key"):
+                update(input_path=inp, output_path=out)
+            assert not out.exists()
+
+    def test_missing_source_key_fails_with_context(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "A", "track": "T", "artist_normalized": "a"},
+            ])
+            with pytest.raises(ValueError, match="source row 1 missing"):
+                update(input_path=inp, output_path=out)

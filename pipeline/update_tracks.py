@@ -5,7 +5,8 @@ enrichment chain) and writes/updates ``tracks.jsonl``. On re-runs:
   - Human-edited fields (curation_state, rejected_reason) are PRESERVED
   - Higher-confidence mood data is PRESERVED over fresher centroid passes
   - All other enrichment fields are UPDATED from the new pass
-  - enriched_at + enrichment_sources are refreshed each run
+  - enrichment_sources is recomputed each run; enriched_at is bumped only for
+    rows whose data actually changed (so reruns don't churn every line)
 
 Schema is validated before write — aborts if invalid rows are present.
 
@@ -15,7 +16,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -36,7 +36,9 @@ from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
 from pipeline.schema import (
     HUMAN_EDITED_FIELDS,
     fill_defaults,
+    read_jsonl,
     validate_dataset,
+    write_jsonl,
 )
 
 log = get_logger(__name__)
@@ -57,6 +59,7 @@ _INPUT_PRIORITY: list[Path] = [
 _SOURCE_TRIGGERS: dict[str, list[str]] = {
     "lastfm_tags": ["lastfm_tags"],
     "musicbrainz_id": ["musicbrainz"],
+    "discogs_styles": ["discogs"],     # populated in Phase 4b
     "audio_features": ["exportify"],   # populated in Phase 3c
     "itunes_persistent_id": ["itunes_xml"],
     "apple_music_checked_at": ["itunes_search"],
@@ -79,17 +82,27 @@ def _pick_input(explicit: Path | None) -> Path:
 
 
 def _load_jsonl(path: Path) -> list[dict]:
-    rows: list[dict] = []
-    with open(path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
+    return read_jsonl(path)
+
+
+def _track_key(row: dict, context: str) -> str:
+    artist = row.get("artist_normalized")
+    track = row.get("track_normalized")
+    if not artist or not track:
+        raise ValueError(
+            f"{context} missing artist_normalized or track_normalized"
+        )
+    return f"{artist}|{track}"
 
 
 def _index_by_key(rows: list[dict]) -> dict[str, dict]:
-    return {f"{r['artist_normalized']}|{r['track_normalized']}": r for r in rows}
+    index: dict[str, dict] = {}
+    for i, row in enumerate(rows, start=1):
+        key = _track_key(row, f"existing row {i}")
+        if key in index:
+            raise ValueError(f"duplicate existing track key {key!r}")
+        index[key] = row
+    return index
 
 
 def _enrichment_sources(row: dict) -> list[str]:
@@ -145,12 +158,12 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         merged["mood_source"] = existing_source
         merged["mood_confidence"] = existing.get("mood_confidence")
 
-    # Playlist semantics: preserve when user has locked/approved them,
-    # but explicitly clear when curation_state is None (don't keep stale memberships).
-    if existing.get("curation_state") in ("locked", "approved") and existing.get("playlists"):
-        merged["playlists"] = existing["playlists"]
-    elif existing.get("curation_state") is None:
-        merged["playlists"] = list(new.get("playlists") or [])
+    # Playlist semantics: playlists are derived from taste_profile.md (Phase 7),
+    # not human-edited directly. Always trust the latest Phase 7 output — otherwise
+    # tracks get stuck in playlist sections that no longer exist in the markdown.
+    # Only curation_state is in HUMAN_EDITED_FIELDS; preserving playlists here
+    # was double-counting that preservation. See δ-1 in TODO.
+    merged["playlists"] = list(new.get("playlists") or [])
 
     return merged
 
@@ -182,13 +195,25 @@ def update(
     new_count = 0
     updated_count = 0
 
-    for row in new_rows:
-        key = f"{row['artist_normalized']}|{row['track_normalized']}"
+    seen_new: set[str] = set()
+    for i, row in enumerate(new_rows, start=1):
+        key = _track_key(row, f"source row {i}")
+        if key in seen_new:
+            raise ValueError(f"duplicate source track key {key!r}")
+        seen_new.add(key)
         existing = existing_index.get(key)
         merged = _merge_with_existing(row, existing)
         merged = fill_defaults(merged)
-        merged["enriched_at"] = today
         merged["enrichment_sources"] = _enrichment_sources(merged)
+        # Refresh enriched_at only when the row actually changed. A no-op regen,
+        # or one that only touched other rows, keeps each row's existing stamp —
+        # so tracks.jsonl diffs show real changes instead of churning all 2,730
+        # lines whenever a rerun crosses midnight UTC.
+        prev_stamp = existing.get("enriched_at") if existing else None
+        if existing is not None and {**merged, "enriched_at": prev_stamp} == existing:
+            merged["enriched_at"] = prev_stamp
+        else:
+            merged["enriched_at"] = today
         merged_rows.append(merged)
         if existing is None:
             new_count += 1
@@ -208,10 +233,7 @@ def update(
             f"{validation['invalid_count']} invalid rows — refusing to write tracks.jsonl"
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
-        for row in merged_rows:
-            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+    write_jsonl(merged_rows, output_path)
 
     log.info(
         "Phase 8 done: %d total (%d new, %d updated) → %s",

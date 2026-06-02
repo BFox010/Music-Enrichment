@@ -7,6 +7,7 @@ import tempfile
 from pathlib import Path
 
 from pipeline.classify_moods import (
+    CENTROID_SUPPRESSED_MOODS,
     _split_moods,
     classify_track,
     compute_centroids,
@@ -177,6 +178,51 @@ class TestClassifyTrack:
         moods, nearest = classify_track({}, {}, {})
         assert moods == []
         assert nearest is None
+
+    def test_suppressed_moods_filtered_from_output(self) -> None:
+        """Centroid predictions for CENTROID_SUPPRESSED_MOODS are dropped.
+
+        Audit / Claude-batch paths still emit these moods — only the
+        centroid path is gated. See 2026-05-25 spot-check verdict in
+        music_enrichment_todo.md.
+        """
+        stats = compute_global_stats([_features()])
+        training = [
+            (["Dark"], _features(energy=0.9, valence=0.1)),
+            (["Fast"], _features(tempo=170, energy=0.9)),
+            (["Heartbreak"], _features(valence=0.2, energy=0.4)),
+            (["Sad"], _features(valence=0.1, energy=0.2, tempo=80)),
+        ]
+        centroids = compute_centroids(training, stats)
+
+        # Pick a feature point near the Sad centroid so Sad is nearest;
+        # Dark/Fast/Heartbreak are also close enough to be within threshold
+        # but should be suppressed from output.
+        moods, _ = classify_track(
+            _features(valence=0.1, energy=0.2, tempo=80),
+            stats, centroids, threshold=10.0, max_assignments=4,
+        )
+        assert "Sad" in moods
+        assert "Dark" not in moods
+        assert "Fast" not in moods
+        assert "Heartbreak" not in moods
+
+    def test_suppression_set_is_overridable(self) -> None:
+        """Caller-supplied suppressed_moods overrides the module default."""
+        stats = compute_global_stats([_features()])
+        training = [(["Dark"], _features())]
+        centroids = compute_centroids(training, stats)
+
+        # Empty suppression: Dark should now come through
+        moods, _ = classify_track(
+            _features(), stats, centroids,
+            threshold=10.0, suppressed_moods=frozenset(),
+        )
+        assert "Dark" in moods
+
+    def test_suppressed_moods_constant_matches_spotcheck_verdict(self) -> None:
+        """Guards the canonical set so it can't drift without test update."""
+        assert CENTROID_SUPPRESSED_MOODS == frozenset({"Dark", "Fast", "Heartbreak"})
 
 
 class TestEuclidean:

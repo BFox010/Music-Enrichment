@@ -21,11 +21,14 @@ fast "where are we" pointer between sessions.
 | 3a    | TuneMyMusic export            | [pipeline/export_tunemymusic.py](pipeline/export_tunemymusic.py) | `tracks_with_apple.jsonl`                                           | `inputs/tunemymusic_upload.csv`                          | A             | DONE                            |
 | 3b    | TuneMyMusic + Exportify       | _(manual — owner)_                                        | `inputs/tunemymusic_upload.csv`                                     | `inputs/exportify.csv`                                   | 3a            | BLOCKED (owner action)          |
 | 3c    | Exportify merge               | [pipeline/merge_exportify.py](pipeline/merge_exportify.py) | `tracks_with_apple.jsonl`, `inputs/exportify.csv`                   | `tracks_with_audio.jsonl`                                | 3b            | BLOCKED on 3b (code complete)   |
-| 4     | Last.fm + MusicBrainz         | [pipeline/enrich_metadata.py](pipeline/enrich_metadata.py) | `tracks_with_audio.jsonl` _(or tracks_with_apple.jsonl if 3c skipped)_ | `tracks_with_metadata.jsonl`                          | A (3c if run) | DONE (2,165/2,730 = 79.3%)      |
-| 5     | Apple Music availability      | [pipeline/check_apple_music.py](pipeline/check_apple_music.py) | `tracks_with_metadata.jsonl`                                        | `tracks_with_availability.jsonl`                         | 4             | DONE (1,916/2,730 = 70.2%)      |
-| 6     | mood classification           | [pipeline/classify_moods.py](pipeline/classify_moods.py)  | `tracks_with_availability.jsonl`, `inputs/existing_audit.csv`        | `tracks_with_moods.jsonl`                                | 5, 3c         | PENDING (centroid → swap in β)  |
-| 7     | saturation / curation         | [pipeline/apply_taste_profile.py](pipeline/apply_taste_profile.py) | `tracks_with_moods.jsonl`, [taste_profile.md](taste_profile.md)     | `tracks_with_taste.jsonl`                                | 6             | PENDING (waits on filled profile) |
-| 8     | final merge                   | [pipeline/update_tracks.py](pipeline/update_tracks.py)    | latest per-phase JSONL                                              | `tracks.jsonl`                                           | 7             | DONE (initial — pre-mood)       |
+| 4     | Last.fm + MusicBrainz         | [pipeline/enrich_metadata.py](pipeline/enrich_metadata.py) | `tracks_with_audio.jsonl` _(or tracks_with_apple.jsonl if 3c skipped)_ | `tracks_with_metadata.jsonl`                          | A (3c if run) | DONE (2,342/2,730 = 85.8%; +177 via name-variation retry) |
+| 4b    | Discogs styles                | [pipeline/enrich_discogs.py](pipeline/enrich_discogs.py)  | `tracks_with_metadata.jsonl`                                        | `tracks_with_discogs.jsonl`                              | 4             | DONE (1,923/2,730 = 70.4%)      |
+| 4c    | genre derivation              | [pipeline/derive_genres.py](pipeline/derive_genres.py)    | `tracks_with_discogs.jsonl`                                         | `tracks_with_genres.jsonl`                              | 4b            | DONE (no-API; maps itunes/discogs/lastfm tags) |
+| 4d    | genre backfill (artist-level) | [pipeline/enrich_genre_backfill.py](pipeline/enrich_genre_backfill.py) | `tracks_with_genres.jsonl`                              | `tracks_with_genre_backfill.jsonl`                      | 4c            | DONE (Last.fm artist tags + MusicBrainz, gap only) |
+| 5     | Apple Music availability      | [pipeline/check_apple_music.py](pipeline/check_apple_music.py) | `tracks_with_genre_backfill.jsonl` _(falls back to 4c/4b output if a later phase was skipped)_ | `tracks_with_availability.jsonl`                | 4d            | DONE (1,916/2,730 = 70.2%)      |
+| 6     | mood classification           | [pipeline/classify_moods.py](pipeline/classify_moods.py)  | `tracks_with_availability.jsonl`, `inputs/existing_audit.csv`        | `tracks_with_moods.jsonl`                                | 5, 3c         | DONE (98.4%; 1,289 centroid · 876 audit · 522 claude_batch · 43 null) |
+| 7     | saturation / curation         | [pipeline/apply_taste_profile.py](pipeline/apply_taste_profile.py) | `tracks_with_moods.jsonl`, [taste_profile.md](taste_profile.md)     | `tracks_with_taste.jsonl`                                | 6             | DONE                            |
+| 8     | final merge                   | [pipeline/update_tracks.py](pipeline/update_tracks.py)    | latest per-phase JSONL                                              | `tracks.jsonl`                                           | 7             | DONE (genres 99.2%, moods 98.4%) |
 | 9     | orchestrator                  | [pipeline/run_full_pipeline.py](pipeline/run_full_pipeline.py) | all of the above                                                    | `runs/full_run_*.log`                                    | 1–8           | DONE                            |
 
 Status legend: **DONE** code committed and verified end-to-end ·
@@ -49,9 +52,12 @@ is documented here so future work doesn't drift.
 | `pipeline/schemas.py`                    | [pipeline/schema.py](pipeline/schema.py) _(singular — to evolve in Phase α Step 2)_ |
 | `foxXg_taste_profile_v4.md`              | [taste_profile.md](taste_profile.md) + [taste_profile_template.md](taste_profile_template.md) |
 
-New modules introduced by the plan (`pipeline/genre_harmonize.py`,
-`pipeline/emotion_fusion.py`, `pipeline/recency.py`,
-`pipeline/enrich_acousticbrainz.py`) will be added under those names.
+The plan's genre work (`pipeline/genre_harmonize.py`) shipped as two phases:
+[pipeline/derive_genres.py](pipeline/derive_genres.py) (4c, maps existing tags)
+and [pipeline/enrich_genre_backfill.py](pipeline/enrich_genre_backfill.py) (4d,
+artist-level Last.fm + MusicBrainz backfill for the remaining gap). The other
+planned modules (`pipeline/emotion_fusion.py`, `pipeline/recency.py`,
+`pipeline/enrich_acousticbrainz.py`) are not yet built.
 
 ---
 
@@ -71,8 +77,9 @@ New modules introduced by the plan (`pipeline/genre_harmonize.py`,
 | `models/`                           | Trained classifier artifacts, splits, calibration plots (Phase β) | mixed (artifacts yes; large blobs may be ignored) |
 | `reports/`                          | Evaluation reports (Phase β Step 9 onward)                | yes      |
 
-Required `.env` keys: `LASTFM_API_KEY`, `DISCOGS_TOKEN`, `MUSICBRAINZ_USER_AGENT`.
-See [.env.example](.env.example).
+Required `.env` key: `LASTFM_API_KEY`. `DISCOGS_TOKEN` and
+`MUSICBRAINZ_USER_AGENT` are reserved placeholders (not wired up; leave
+blank). See [.env.example](.env.example) for current status.
 
 ---
 
@@ -102,6 +109,15 @@ inputs/lastfm_export.json
    Phase 4  tracks_with_metadata.jsonl  ← Last.fm + MusicBrainz API
        │
        ▼
+   Phase 4b tracks_with_discogs.jsonl   ← Discogs API (styles)
+       │
+       ▼
+   Phase 4c tracks_with_genres.jsonl    ← map existing tags → genres (no API)
+       │
+       ▼
+   Phase 4d tracks_with_genre_backfill.jsonl ← Last.fm artist tags + MusicBrainz (gap only)
+       │
+       ▼
    Phase 5  tracks_with_availability.jsonl ← iTunes Search API
        │
        ▼
@@ -122,8 +138,6 @@ py -3.13 -m pipeline.run_full_pipeline --skip-tests
 py -3.13 -m pipeline.run_full_pipeline --skip-pause
 py -3.13 -m pipeline.run_full_pipeline --start-from 4
 ```
-
-Or the standalone overnight runner: `py -3.13 run_pipeline.py`.
 
 ---
 
@@ -222,6 +236,12 @@ py -3.13 -m pytest tests/ -q
 ```
 
 Existing suites: `test_apply_taste_profile*`, `test_check_apple_music`,
-`test_classify_moods`, `test_dedupe`, `test_enrich_apple_library`,
-`test_enrich_metadata`, `test_http`, `test_ingest_scrobbles`,
-`test_merge_exportify`, `test_normalize`, `test_schema`, `test_update_tracks`.
+`test_classify_moods`, `test_dedupe`, `test_derive_genres`,
+`test_enrich_apple_library`, `test_enrich_discogs`, `test_enrich_genre_backfill`,
+`test_enrich_metadata`, `test_enrich_metadata_variations`, `test_http`,
+`test_ingest_scrobbles`, `test_merge_exportify`, `test_name_variations`,
+`test_normalize`, `test_pipeline_manifest`, `test_schema`, `test_tag_filter`,
+`test_update_tracks`.
+
+CI runs this suite on every push to `main` and every pull request — see
+[.github/workflows/ci.yml](.github/workflows/ci.yml).
