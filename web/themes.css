@@ -75,43 +75,65 @@ a { color: inherit; }
    Layout shell
    ============================================================ */
 /* ── Multi-page layout ─────────────────────────────────────────────────── */
-.layout { display: flex; min-height: 100vh; }
+/* App shell: full-width top header bar, then sidebar + main row below */
+.shell { display: flex; flex-direction: column; min-height: 100vh; }
+
+.appbar {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; justify-content: space-between; gap: 20px;
+  height: 56px; padding: 0 18px;
+  background: color-mix(in oklab, var(--panel) 90%, black);
+  border-bottom: var(--card-border);
+  backdrop-filter: blur(8px);
+}
+.appbar-brand { display: flex; align-items: center; gap: 11px; min-width: 0; }
+.appbar-logo {
+  width: 28px; height: 28px; flex-shrink: 0;
+  display: grid; place-items: center; border-radius: 8px; font-size: 15px;
+  background: color-mix(in oklab, var(--accent) 22%, var(--panel));
+}
+.appbar-brand h1 {
+  margin: 0; font-family: var(--font-display); font-weight: var(--display-weight);
+  font-size: 16px; letter-spacing: .01em; color: var(--text); white-space: nowrap;
+}
+.appbar-meta {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  font-size: 12px; color: var(--muted-s); margin-left: 8px;
+}
+.appbar-meta .pill-live {
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid var(--line); color: var(--text-2);
+}
+.appbar-meta .pill-live.real { color: var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--line)); }
+.appbar-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+
+.layout { display: flex; flex: 1; min-height: 0; }
 
 .sidebar {
   width: 210px; flex-shrink: 0;
-  padding: 18px 0 32px;
+  padding: 14px 0 32px;
   border-right: var(--card-border);
-  position: sticky; top: 0; height: 100vh; overflow-y: auto;
+  position: sticky; top: 56px; height: calc(100vh - 56px); overflow-y: auto;
   display: flex; flex-direction: column;
 }
-.sidebar-brand {
-  padding: 0 16px 18px; border-bottom: var(--card-border); margin-bottom: 8px;
-}
-.sidebar-brand .sb-eye {
-  font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .16em;
-  text-transform: uppercase; color: var(--faint); display: flex; align-items: center; gap: 7px;
-}
-.sidebar-brand .sb-eye .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-.sidebar-brand .sb-title {
-  font-family: var(--font-display); font-size: 17px; font-weight: var(--display-weight);
-  color: var(--text); margin-top: 6px; letter-spacing: var(--display-spacing);
-}
 
-.sidenav { display: flex; flex-direction: column; gap: 1px; padding: 0 8px; flex: 1; }
+.sidenav { display: flex; flex-direction: column; gap: 1px; padding: 0; flex: 1; }
 .sidenav-section {
   font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .14em;
-  text-transform: uppercase; color: var(--faint); padding: 14px 8px 4px; font-weight: 600;
+  text-transform: uppercase; color: var(--faint); padding: 16px 16px 5px; font-weight: 600;
 }
 .sidenav-item {
-  appearance: none; background: transparent; border: 0; cursor: pointer;
+  appearance: none; background: transparent; cursor: pointer;
   font-family: var(--font-body); font-size: 13px; color: var(--text-2);
-  padding: 8px 10px; border-radius: var(--radius-sm); text-align: left; width: 100%;
+  padding: 8px 16px; border: 0; border-right: 2px solid transparent;
+  text-align: left; width: 100%;
   display: flex; align-items: center; gap: 9px;
-  transition: background .14s, color .14s;
+  transition: background .14s, color .14s, border-color .14s;
 }
 .sidenav-item:hover { background: var(--panel-2); color: var(--text); }
 .sidenav-item.active {
   background: color-mix(in oklab, var(--accent) 16%, var(--panel)); color: var(--text);
+  border-right-color: var(--accent);
 }
 .sidenav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .7; }
 .sidenav-item.active svg { opacity: 1; }
@@ -170,14 +192,17 @@ a { color: inherit; }
 
 /* ── Responsive sidebar ─────────────────────────────────────────────────── */
 @media (max-width: 768px) {
+  .appbar { height: auto; padding: 10px 14px; gap: 12px; }
+  .appbar-meta { display: none; }
   .layout { flex-direction: column; }
   .sidebar { width: 100%; height: auto; position: static; flex-direction: row;
-             padding: 10px 8px; overflow-x: auto; overflow-y: hidden;
+             padding: 8px; overflow-x: auto; overflow-y: hidden;
              border-right: 0; border-bottom: var(--card-border); }
-  .sidebar-brand { display: none; }
   .sidenav { flex-direction: row; padding: 0; gap: 2px; }
   .sidenav-section { display: none; }
-  .sidenav-item { white-space: nowrap; padding: 8px 12px; font-size: 12.5px; }
+  .sidenav-item { white-space: nowrap; padding: 8px 12px; font-size: 12.5px;
+                  border-right: 0; border-bottom: 2px solid transparent; }
+  .sidenav-item.active { border-right: 0; border-bottom-color: var(--accent); }
   .main-content { padding: 16px 16px 70px; }
 }
 

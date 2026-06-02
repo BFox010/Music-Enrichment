@@ -311,97 +311,95 @@ function App() {
   }, [filters]);
 
   return (
-    <div className="layout">
+    <div className="shell">
 
-      {/* ── Sidebar ───────────────────────────────────────────────── */}
-      <nav className="sidebar">
-        <div className="sidebar-brand">
-          <div className="brand-eyebrow"><span className="dot"></span> Music-Enrichment</div>
-        </div>
-        <div className="sidenav">
-
-          <button className={"sidenav-item" + (page === "overview" ? " active" : "")} onClick={() => setPage("overview")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-            Overview
-          </button>
-
-          <div className="sidenav-section">Listening</div>
-          <button className={"sidenav-item" + (page === "timeline" ? " active" : "")} onClick={() => setPage("timeline")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-            Timeline
-          </button>
-          <button className={"sidenav-item" + (page === "trajectory" ? " active" : "")} onClick={() => setPage("trajectory")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 18c3-8 7-10 9-5s5 3 9-5"/><path d="M3 12c2-5 5-7 8-4s5 4 10-2"/><path d="M3 6c2-3 4-4 6-2s4 4 12-2"/></svg>
-            Artist Trajectory
-          </button>
-          <button className={"sidenav-item" + (page === "map" ? " active" : "")} onClick={() => setPage("map")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
-            Listening Map
-          </button>
-
-          <div className="sidenav-section">Sound</div>
-          <button className={"sidenav-item" + (page === "audio" ? " active" : "")} onClick={() => setPage("audio")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-            Audio Features
-          </button>
-          <button className={"sidenav-item" + (page === "saturation" ? " active" : "")} onClick={() => setPage("saturation")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l4 4"/></svg>
-            Saturation
-          </button>
-
-          <div className="sidenav-section">Tags</div>
-          <button className={"sidenav-item" + (page === "constellation" ? " active" : "")} onClick={() => setPage("constellation")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="5" cy="5" r="1.5"/><circle cx="19" cy="5" r="1.5"/><circle cx="12" cy="19" r="1.5"/><circle cx="5" cy="19" r="1.5"/><circle cx="19" cy="19" r="1.5"/><line x1="6.5" y1="5" x2="17.5" y2="5"/><line x1="5" y1="6.5" x2="5" y2="17.5"/><line x1="19" y1="6.5" x2="19" y2="17.5"/><line x1="6.5" y1="19" x2="17.5" y2="19"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>
-            Tag Constellation
-          </button>
-          <button className={"sidenav-item" + (page === "genres" ? " active" : "")} onClick={() => setPage("genres")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 2v10l6.6 3.8"/></svg>
-            Genre &amp; Moods
-          </button>
-          <button className={"sidenav-item" + (page === "coverage" ? " active" : "")} onClick={() => setPage("coverage")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
-            Coverage
-          </button>
-
-          <div className="sidenav-section">Browse</div>
-          <button className={"sidenav-item" + (page === "explorer" ? " active" : "")} onClick={() => setPage("explorer")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
-            Track Explorer
-          </button>
-
-          <div className="sidenav-section">Data</div>
-          <button className={"sidenav-item" + (page === "sync" ? " active" : "")} onClick={() => setPage("sync")}>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
-            Scrobble Sync
-          </button>
-        </div>
-      </nav>
-
-      {/* ── Main content ──────────────────────────────────────────── */}
-      <div className="main-content">
-
-        {/* Topbar — always visible */}
-        <header className="topbar">
-          <div className="brand">
-            <div className="brand-eyebrow"><span className="dot"></span> Music-Enrichment · Library Analytics</div>
-            <h1>Listening Atlas</h1>
-            <div className="sub">
-              <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {meta.scrobbleRange}</span>
-              <span className={"pill-live" + (meta.isSample ? "" : " real")}>{meta.isSample ? "sample data" : "live data"}</span>
-            </div>
+      {/* ── Top app bar (Music Dashboard) ─────────────────────────── */}
+      <header className="appbar">
+        <div className="appbar-brand">
+          <span className="appbar-logo">🎵</span>
+          <h1>Music Dashboard</h1>
+          <div className="appbar-meta">
+            <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {meta.scrobbleRange}</span>
+            <span className={"pill-live" + (meta.isSample ? "" : " real")}>{meta.isSample ? "sample data" : "live data"}</span>
           </div>
-          <div className="topbar-actions">
-            <div className="search">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-              <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
-            </div>
-            <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} title="Load your tracks.jsonl / scrobbles.jsonl">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0-12l-4 4m4-4l4 4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
-              Load data
+        </div>
+        <div className="appbar-actions">
+          <div className="search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
+          </div>
+          <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} title="Load your tracks.jsonl / scrobbles.jsonl">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0-12l-4 4m4-4l4 4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
+            Load data
+          </button>
+          <input ref={fileRef} type="file" accept=".jsonl,.json" multiple style={{ display: "none" }} onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
+        </div>
+      </header>
+
+      <div className="layout">
+
+        {/* ── Sidebar ─────────────────────────────────────────────── */}
+        <nav className="sidebar">
+          <div className="sidenav">
+
+            <div className="sidenav-section">Overview</div>
+            <button className={"sidenav-item" + (page === "overview" ? " active" : "")} onClick={() => setPage("overview")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              Overview
             </button>
-            <input ref={fileRef} type="file" accept=".jsonl,.json" multiple style={{ display: "none" }} onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
+
+            <div className="sidenav-section">Library</div>
+            <button className={"sidenav-item" + (page === "genres" ? " active" : "")} onClick={() => setPage("genres")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 2v10l6.6 3.8"/></svg>
+              Genre &amp; Moods
+            </button>
+            <button className={"sidenav-item" + (page === "constellation" ? " active" : "")} onClick={() => setPage("constellation")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="5" cy="5" r="1.5"/><circle cx="19" cy="5" r="1.5"/><circle cx="12" cy="19" r="1.5"/><circle cx="5" cy="19" r="1.5"/><circle cx="19" cy="19" r="1.5"/><line x1="6.5" y1="5" x2="17.5" y2="5"/><line x1="5" y1="6.5" x2="5" y2="17.5"/><line x1="19" y1="6.5" x2="19" y2="17.5"/><line x1="6.5" y1="19" x2="17.5" y2="19"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>
+              Tag Constellation
+            </button>
+            <button className={"sidenav-item" + (page === "audio" ? " active" : "")} onClick={() => setPage("audio")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              Audio Features
+            </button>
+            <button className={"sidenav-item" + (page === "saturation" ? " active" : "")} onClick={() => setPage("saturation")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l4 4"/></svg>
+              Saturation
+            </button>
+            <button className={"sidenav-item" + (page === "coverage" ? " active" : "")} onClick={() => setPage("coverage")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
+              Coverage
+            </button>
+
+            <div className="sidenav-section">Listening</div>
+            <button className={"sidenav-item" + (page === "timeline" ? " active" : "")} onClick={() => setPage("timeline")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+              Timeline
+            </button>
+            <button className={"sidenav-item" + (page === "map" ? " active" : "")} onClick={() => setPage("map")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+              Listening Map
+            </button>
+            <button className={"sidenav-item" + (page === "trajectory" ? " active" : "")} onClick={() => setPage("trajectory")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 18c3-8 7-10 9-5s5 3 9-5"/><path d="M3 12c2-5 5-7 8-4s5 4 10-2"/><path d="M3 6c2-3 4-4 6-2s4 4 12-2"/></svg>
+              Artists
+            </button>
+
+            <div className="sidenav-section">Browse</div>
+            <button className={"sidenav-item" + (page === "explorer" ? " active" : "")} onClick={() => setPage("explorer")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+              Tracks
+            </button>
+
+            <div className="sidenav-section">Data</div>
+            <button className={"sidenav-item" + (page === "sync" ? " active" : "")} onClick={() => setPage("sync")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+              Scrobble Sync
+            </button>
           </div>
-        </header>
+        </nav>
+
+        {/* ── Main content ────────────────────────────────────────── */}
+        <div className="main-content">
 
         {/* ── PAGE: Overview ──────────────────────────────────────── */}
         <div style={{ display: page === "overview" ? "" : "none" }}>
@@ -596,6 +594,7 @@ function App() {
           <TweakSection label="Layout" />
           <TweakRadio label="Density" value={density} options={["comfortable", "compact"]} onChange={setDensity} />
         </TweaksPanel>
+        </div>
       </div>
     </div>
   );
