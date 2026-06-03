@@ -70,14 +70,19 @@ function fmt12full(h) {
   let hr = h % 12; if (hr === 0) hr = 12;
   return hr + ":00 " + ap;
 }
-function HourChart({ data }) {
+function HourChart({ data, onPick, activeKey }) {
   const max = Math.max(...data, 1);
   const peak = data.indexOf(max);
   return (
     <div>
-      <div className="hours">
+      <div className={"hours" + (onPick ? " interactive" : "")}>
         {data.map((v, h) => (
-          <div className={"hcol" + (h === peak ? " peak" : "")} key={h} title={`${fmt12full(h)} — ${v.toLocaleString()} plays`}>
+          <div
+            className={"hcol" + (h === peak ? " peak" : "") + (activeKey === h ? " sel" : "")}
+            key={h}
+            onClick={() => onPick && onPick(h)}
+            title={`${fmt12full(h)} — ${v.toLocaleString()} plays`}
+          >
             <div className="hbarv" style={{ height: (v / max) * 100 + "%" }}></div>
           </div>
         ))}
@@ -90,13 +95,17 @@ function HourChart({ data }) {
 }
 
 /* ---- Day of week ---- */
-function DowChart({ data }) {
+function DowChart({ data, onPick, activeKey }) {
   const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const max = Math.max(...data, 1);
   return (
     <div className="dow">
       {data.map((v, i) => (
-        <div className="dowrow" key={i}>
+        <div
+          className={"dowrow" + (onPick ? " clickable" : "") + (activeKey === i ? " sel" : "")}
+          key={i}
+          onClick={() => onPick && onPick(i)}
+        >
           <span className="dlabel">{labels[i]}</span>
           <div className="dtrack"><div className="dfill" style={{ width: (v / max) * 100 + "%" }}></div></div>
           <span className="dval num">{v.toLocaleString()}</span>
@@ -107,7 +116,7 @@ function DowChart({ data }) {
 }
 
 /* ---- Seasons ---- */
-function Seasons({ data, total }) {
+function Seasons({ data, total, onPick, activeKey }) {
   const order = [["winter", "❄"], ["spring", "✿"], ["summer", "☀"], ["fall", "🍂"]];
   const max = Math.max(...Object.values(data), 1);
   return (
@@ -115,7 +124,11 @@ function Seasons({ data, total }) {
       {order.map(([s, glyph]) => {
         const v = data[s] || 0;
         return (
-          <div className="season" key={s}>
+          <div
+            className={"season" + (onPick ? " clickable" : "") + (activeKey === s ? " sel" : "")}
+            key={s}
+            onClick={() => onPick && onPick(s)}
+          >
             <div className="s-top">
               <span className="s-name">{s}</span>
               <span className="s-glyph">{glyph}</span>
@@ -123,6 +136,105 @@ function Seasons({ data, total }) {
             <div className="s-val num">{v.toLocaleString()}</div>
             <div className="s-bar"><span style={{ width: (v / max) * 100 + "%" }}></span></div>
             <div className="s-pct num">{total ? Math.round((v / total) * 100) : 0}% of plays</div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/* ---- Drill-down: top genres/moods for a time slice (overview cards) ---- */
+function _topN(obj, n) {
+  return Object.entries(obj || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
+}
+function DrillRows({ items, accent }) {
+  const max = items.length ? items[0][1] : 1;
+  if (!items.length) return <div className="dr-empty">No tagged plays in this slice</div>;
+  return (
+    <div className="drill-rows">
+      {items.map(([k, v]) => (
+        <div className="drill-row" key={k}>
+          <span className="dr-name">{k}</span>
+          <div className="dr-track"><div className="dr-fill" style={{ width: (v / max) * 100 + "%", background: accent || "var(--accent)" }}></div></div>
+          <span className="dr-val num">{v.toLocaleString()}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+function DrillPanel({ label, slice, onClose }) {
+  const genres = _topN(slice && slice.genres, 6);
+  const moods = _topN(slice && slice.moods, 6);
+  return (
+    <div className="drill-panel">
+      <div className="drill-head">
+        <span className="drill-eyebrow">Drill-down</span>
+        <span className="drill-title">{label}</span>
+        <span className="drill-sub num">{((slice && slice.total) || 0).toLocaleString()} plays</span>
+        <button className="drill-x" onClick={onClose} aria-label="Close drill-down">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6L6 18M6 6l12 12" /></svg>
+        </button>
+      </div>
+      <div className="drill-cols">
+        <div className="drill-col">
+          <div className="drill-coltitle">Top genres</div>
+          <DrillRows items={genres} accent="var(--accent)" />
+        </div>
+        <div className="drill-col">
+          <div className="drill-coltitle">Top moods</div>
+          <DrillRows items={moods} accent="var(--good)" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---- Seasonal favorites: 4-up genres/moods/tracks per season ---- */
+function SeasonalFavorites({ drill }) {
+  const order = [["winter", "❄", "Winter"], ["spring", "✿", "Spring"], ["summer", "☀", "Summer"], ["fall", "🍂", "Fall"]];
+  if (!drill || !drill.season) {
+    return <div className="empty"><div className="big">No seasonal data yet</div><div>Load your library (tracks + scrobbles) to see seasonal favorites.</div></div>;
+  }
+  return (
+    <div className="grid g-2 seasonal-grid">
+      {order.map(([key, glyph, name]) => {
+        const s = drill.season[key] || { genres: {}, moods: {}, tracks: {}, total: 0 };
+        const genres = _topN(s.genres, 4), moods = _topN(s.moods, 4), tracks = _topN(s.tracks, 5);
+        const tmax = tracks.length ? tracks[0][1] : 1;
+        return (
+          <div className={"card season-card season-" + key} key={key}>
+            <div className="card-head norule">
+              <h3 className="card-title">{name} <span className="season-glyph">{glyph}</span></h3>
+              <span className="card-meta">{(s.total || 0).toLocaleString()} plays</span>
+            </div>
+            <div className="season-sub">Top genres</div>
+            <div className="season-chips">
+              {genres.length ? genres.map(([g, n]) => <span className="tagchip" key={g}>{g}<span className="tc-n num">{n}</span></span>) : <span className="dr-empty">—</span>}
+            </div>
+            <div className="season-sub">Top moods</div>
+            <div className="season-chips">
+              {moods.length ? moods.map(([m, n]) => <span className="tagchip mood-chip" key={m}>{m}<span className="tc-n num">{n}</span></span>) : <span className="dr-empty">—</span>}
+            </div>
+            <div className="season-sub">Most played</div>
+            <div className="tracklist mini-tl">
+              {tracks.length ? tracks.map(([label, plays], i) => {
+                const parts = label.split(" — ");
+                const artist = parts.shift(); const title = parts.join(" — ");
+                return (
+                  <div className="trk" key={label}>
+                    <span className="trk-rank num">{i + 1}</span>
+                    <div style={{ minWidth: 0 }}>
+                      <div className="trk-name">{title || artist}</div>
+                      <div className="trk-artist">{title ? artist : ""}</div>
+                    </div>
+                    <div className="trk-plays">
+                      <div className="mini"><span style={{ width: (plays / tmax) * 100 + "%" }}></span></div>
+                      <span className="pc num">{plays}</span>
+                    </div>
+                  </div>
+                );
+              }) : <div className="dr-empty">—</div>}
+            </div>
           </div>
         );
       })}
@@ -233,4 +345,4 @@ function CoverageBars({ rows, total }) {
   );
 }
 
-Object.assign(window, { HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, useGenreColors });
+Object.assign(window, { HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, useGenreColors, DrillPanel, SeasonalFavorites });

@@ -53,8 +53,16 @@ def api_timeline(by: str = Query("year", pattern="^(year|month)$")):
 
 
 @app.get("/api/time-of-day")
-def api_time_of_day():
-    return metrics.time_of_day()
+def api_time_of_day(year: Optional[int] = Query(None)):
+    return metrics.time_of_day(year=year)
+
+
+@app.get("/api/albums")
+def api_albums(
+    top: int = Query(50, ge=1, le=500),
+    min_tracks: int = Query(2, ge=1, le=50),
+):
+    return metrics.albums(top=top, min_tracks=min_tracks)
 
 
 @app.get("/api/artist-trajectory")

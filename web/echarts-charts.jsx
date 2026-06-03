@@ -2,7 +2,7 @@
    echarts-charts.jsx — ECharts React wrappers
    Requires echarts loaded globally via CDN (window.echarts).
    ============================================================ */
-const { useEffect, useRef, useState, useCallback } = React;
+const { useEffect, useRef, useState, useCallback, useMemo } = React;
 
 /* ── CSS-variable theme colours ────────────────────────────────────────── */
 function themeVars() {
@@ -127,51 +127,115 @@ function TimelineChart({ active }) {
   );
 }
 
-/* ── Artist Trajectory (ThemeRiver) ─────────────────────────────────────── */
+/* ── Artist Trajectory (line / stream + artist picker) ──────────────────── */
 function ArtistTrajectory({ active }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
+  const [raw, setRaw] = useState(null);
+  const [mode, setMode] = useState("lines");
+  const [selected, setSelected] = useState(null);  // Set of artist names
+  const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
 
+  // Fetch once (top 20); seed the selection with the top 8 by total plays.
   useEffect(() => {
-    if (!active) return;
+    if (!active || raw) return;
     setLoading(true);
-    fetch("/api/artist-trajectory?top=12")
+    fetch("/api/artist-trajectory?top=20")
       .then((r) => r.json())
-      .then((data) => {
+      .then((d) => {
         setLoading(false);
-        if (!chart.current || !data?.data?.length) return;
-        const c = themeVars();
-        chart.current.setOption({
-          backgroundColor: "transparent",
-          tooltip: {
-            trigger: "axis", axisPointer: { type: "line" },
-            backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
-          },
-          legend: { type: "scroll", bottom: 0, textStyle: { color: c.text2, fontSize: 11 } },
-          singleAxis: {
-            top: 50, bottom: 60, type: "time",
-            axisLabel: { color: c.muted },
-            axisLine: { lineStyle: { color: c.line } },
-            splitLine: { lineStyle: { color: c.line, type: "dashed" } },
-          },
-          series: [{
-            type: "themeRiver",
-            emphasis: { focus: "adjacency" },
-            label: { show: true, fontSize: 10, color: c.text },
-            data: data.data,
-          }],
-        });
+        const rows = (d && d.data) || [];
+        setRaw({ data: rows });
+        const totals = {};
+        rows.forEach(([, c, n]) => { totals[n] = (totals[n] || 0) + c; });
+        const ordered = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
+        setSelected(new Set(ordered.slice(0, 8)));
       })
       .catch(() => setLoading(false));
-  }, [active]);
+  }, [active, raw]);
+
+  const artists = useMemo(() => {
+    if (!raw) return [];
+    const totals = {};
+    raw.data.forEach(([, c, n]) => { totals[n] = (totals[n] || 0) + c; });
+    return Object.keys(totals).sort((a, b) => totals[b] - totals[a]).map((n) => ({ name: n, total: totals[n] }));
+  }, [raw]);
+
+  useEffect(() => {
+    if (!active || !chart.current || !raw || !selected) return;
+    chart.current.resize();
+    const c = themeVars();
+    const rows = raw.data.filter((d) => selected.has(d[2]));
+    if (!rows.length) { chart.current.clear(); return; }
+
+    if (mode === "stream") {
+      chart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: { trigger: "axis", axisPointer: { type: "line" }, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
+        legend: { type: "scroll", bottom: 0, textStyle: { color: c.text2, fontSize: 11 } },
+        singleAxis: { top: 24, bottom: 60, type: "time", axisLabel: { color: c.muted }, axisLine: { lineStyle: { color: c.line } }, splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
+        series: [{ type: "themeRiver", emphasis: { focus: "adjacency" }, label: { show: true, fontSize: 10, color: c.text }, data: rows }],
+      }, true);
+    } else {
+      const periods = [...new Set(raw.data.map((d) => d[0]))].sort();
+      const names = [...selected];
+      const series = names.map((n) => {
+        const m = {};
+        rows.forEach((d) => { if (d[2] === n) m[d[0]] = d[1]; });
+        return {
+          name: n, type: "line", smooth: true, smoothMonotone: "x",
+          showSymbol: false, connectNulls: true, emphasis: { focus: "series" },
+          lineStyle: { width: 2 }, data: periods.map((p) => m[p] || 0),
+        };
+      });
+      chart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: { trigger: "axis", axisPointer: { type: "line" }, order: "valueDesc", backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
+        legend: { type: "scroll", bottom: 0, textStyle: { color: c.text2, fontSize: 11 } },
+        grid: { top: 20, left: 54, right: 20, bottom: 56 },
+        xAxis: { type: "category", data: periods.map((p) => p.slice(0, 7)), boundaryGap: false, axisLabel: { color: c.muted, rotate: periods.length > 18 ? 45 : 0, fontSize: 10 }, axisLine: { lineStyle: { color: c.line } } },
+        yAxis: { type: "value", name: "plays / mo", nameTextStyle: { color: c.muted, fontSize: 10 }, axisLabel: { color: c.muted }, splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
+        series,
+      }, true);
+    }
+  }, [active, raw, mode, selected, chart]);
+
+  const toggleArtist = (name) => setSelected((s) => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
+  const resetTop = () => setSelected(new Set(artists.slice(0, 8).map((a) => a.name)));
+  const q = query.trim().toLowerCase();
+  const shownArtists = q ? artists.filter((a) => a.name.toLowerCase().includes(q)) : artists;
+  const selCount = selected ? selected.size : 0;
 
   return (
     <section className="block">
       <div className="card">
         <div className="card-head">
           <h3 className="card-title">Artist trajectory</h3>
-          <span className="card-meta">listening share over time · top 12</span>
+          <div style={cardTools}>
+            <div className="seg" role="group">
+              {[["lines", "Lines"], ["stream", "Stream"]].map(([v, l]) => (
+                <button key={v} aria-pressed={mode === v} onClick={() => setMode(v)}>{l}</button>
+              ))}
+            </div>
+            <span className="card-meta">monthly plays · top 20</span>
+          </div>
+        </div>
+        <p style={cardDesc}>Compare how your listening shifted month to month. <b>Lines</b> plot plays per month per artist; <b>Stream</b> stacks them into a flowing river.</p>
+        <div className="artist-picker">
+          <div className="ap-search">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter artists…" />
+            <span className="ap-count">{selCount} shown</span>
+            <button className="ap-reset" onClick={resetTop} title="Reset to top 8">Top 8</button>
+          </div>
+          <div className="ap-chips">
+            {shownArtists.map((a) => (
+              <button key={a.name} className={"ap-chip" + (selected && selected.has(a.name) ? " on" : "")} onClick={() => toggleArtist(a.name)}>
+                <span className="ap-dot"></span>{a.name}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
         {loading && <ChartLoading height={560} />}
@@ -180,43 +244,60 @@ function ArtistTrajectory({ active }) {
   );
 }
 
-/* ── Listening Map: calendar heatmap + hour×day grid ────────────────────── */
+/* ── Listening Map: calendar heatmap (per year) + hour×day grid ─────────── */
 function ListeningMap({ active }) {
   const calRef  = useRef(null);
   const hwRef   = useRef(null);
   const calChart = useEChart(calRef);
   const hwChart  = useEChart(hwRef);
+  const [years, setYears] = useState([]);
+  const [year, setYear] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     if (!active) return;
     setLoading(true);
-    fetch("/api/time-of-day")
+    const q = year != null ? `?year=${year}` : "";
+    fetch("/api/time-of-day" + q)
       .then((r) => r.json())
       .then((data) => {
+        // First pass (year unknown): learn the available years, default to the
+        // most recent, and let the effect re-run with that year filter.
+        if (year == null) {
+          if (data.years && data.years.length) { setYears(data.years); setYear(data.years[data.years.length - 1]); }
+          else setLoading(false);
+          return;
+        }
         setLoading(false);
         const c = themeVars();
-        const colorScale = ["#1a1a2e", c.accent + "88", c.accent];
+        const colorScale = ["#191527", "#4c2f95", "#7c4ddb", c.accent];
 
-        // Calendar heatmap
-        if (calChart.current && data?.calendar?.length) {
-          const dates = data.calendar.map((d) => d[0]);
-          const max   = Math.max(...data.calendar.map((d) => d[1]));
+        // Calendar heatmap — one large, legible year
+        if (calChart.current) {
+          calChart.current.resize();
+          const max = data.calendar.length ? Math.max(...data.calendar.map((d) => d[1])) : 1;
           calChart.current.setOption({
             backgroundColor: "transparent",
-            tooltip: { formatter: (p) => `${p.data[0]}: ${p.data[1]} plays`, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
-            visualMap: { min: 0, max, type: "continuous", orient: "horizontal", left: "center", bottom: 4,
-              inRange: { color: colorScale }, textStyle: { color: c.muted } },
-            calendar: [{ top: 30, left: 30, right: 10, range: [dates[0], dates[dates.length - 1]],
-              cellSize: ["auto", 13], itemStyle: { borderWidth: 0.5, borderColor: c.line },
-              yearLabel: { color: c.muted }, dayLabel: { color: c.muted, nameMap: ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"] },
-              monthLabel: { color: c.muted } }],
-            series: [{ type: "heatmap", coordinateSystem: "calendar", data: data.calendar }],
-          });
+            tooltip: { formatter: (p) => `${p.data[0]} — ${p.data[1]} plays`, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
+            visualMap: { min: 0, max, type: "continuous", orient: "horizontal", left: "center", bottom: 6,
+              itemWidth: 14, itemHeight: 120, inRange: { color: colorScale }, textStyle: { color: c.muted } },
+            calendar: [{
+              top: 30, left: 42, right: 18, range: String(year),
+              cellSize: ["auto", 18],
+              itemStyle: { color: "#14141b", borderWidth: 3, borderColor: c.panel, borderRadius: 3 },
+              splitLine: { show: false },
+              yearLabel: { show: false },
+              dayLabel: { color: c.muted, fontSize: 10, firstDay: 1, nameMap: ["Su","Mo","Tu","We","Th","Fr","Sa"] },
+              monthLabel: { color: c.text2, fontSize: 11, fontWeight: 600 },
+            }],
+            series: [{ type: "heatmap", coordinateSystem: "calendar", data: data.calendar,
+              itemStyle: { borderRadius: 3, borderWidth: 3, borderColor: c.panel } }],
+          }, true);
         }
 
-        // Hour × weekday heatmap
+        // Hour × weekday heatmap (full history — denser = cleaner pattern)
         if (hwChart.current && data?.hour_weekday?.length) {
+          hwChart.current.resize();
           const days  = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
           const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
           const max   = Math.max(...data.hour_weekday.map((d) => d[2]));
@@ -226,7 +307,7 @@ function ListeningMap({ active }) {
               formatter: (p) => { const [dow,h,n] = p.data; return `${days[dow]} ${hours[h]}: ${n} plays`; },
               backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
             },
-            grid: { top: 12, bottom: 36, left: 48, right: 12 },
+            grid: { top: 12, bottom: 40, left: 48, right: 12 },
             xAxis: { type: "category", data: days, axisLabel: { color: c.muted },
               axisLine: { lineStyle: { color: c.line } }, splitArea: { show: true } },
             yAxis: { type: "category", data: hours, axisLabel: { color: c.muted, fontSize: 9 },
@@ -234,25 +315,38 @@ function ListeningMap({ active }) {
             visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0,
               inRange: { color: colorScale }, textStyle: { color: c.muted } },
             series: [{ type: "heatmap", data: data.hour_weekday.map(([h, dow, n]) => [dow, h, n]),
+              itemStyle: { borderRadius: 2 },
               label: { show: false }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,.5)" } } }],
-          });
+          }, true);
         }
       })
       .catch(() => setLoading(false));
-  }, [active]);
+  }, [active, year]);
 
   return (
     <section className="block">
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="card">
-          <div className="card-head norule"><h3 className="card-title">Listening calendar</h3><span className="card-meta">plays per day</span></div>
-          {loading && <ChartLoading height={260} />}
-          <div ref={calRef} className="echart-wrap short" style={{ display: loading ? "none" : "block" }} />
+          <div className="card-head">
+            <h3 className="card-title">Listening calendar</h3>
+            <div style={cardTools}>
+              {years.length > 1 && (
+                <div className="seg seg-sm" role="group" aria-label="Calendar year">
+                  {years.map((y) => (
+                    <button key={y} aria-pressed={year === y} onClick={() => setYear(y)}>{y}</button>
+                  ))}
+                </div>
+              )}
+              <span className="card-meta">plays per day{year ? ` · ${year}` : ""}</span>
+            </div>
+          </div>
+          {loading && <ChartLoading height={220} />}
+          <div ref={calRef} className="echart-wrap cal" style={{ display: loading ? "none" : "block" }} />
         </div>
         <div className="card">
-          <div className="card-head norule"><h3 className="card-title">Hour × weekday</h3><span className="card-meta">play density</span></div>
+          <div className="card-head norule"><h3 className="card-title">Hour × weekday</h3><span className="card-meta">play density · all time</span></div>
           {loading && <ChartLoading height={320} />}
-          <div ref={hwRef} style={{ width: "100%", height: 320, display: loading ? "none" : "block" }} />
+          <div ref={hwRef} style={{ width: "100%", height: 360, display: loading ? "none" : "block" }} />
         </div>
       </div>
     </section>
@@ -367,10 +461,11 @@ function AudioFeaturesChart({ active }) {
   );
 }
 
-/* ── Saturation donut ────────────────────────────────────────────────────── */
+/* ── Saturation donut (folded into the Coverage page) ───────────────────── */
 function SaturationChart({ active }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
+  const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
   const TIER_LABELS = { "1": "Tier 1 — Heavy rotation", "2": "Tier 2 — Regular", "3": "Tier 3 — Deep cuts", "unranked": "Unranked" };
@@ -380,41 +475,128 @@ function SaturationChart({ active }) {
     setLoading(true);
     fetch("/api/saturation")
       .then((r) => r.json())
-      .then((data) => {
-        setLoading(false);
-        if (!chart.current || !data?.length) return;
-        const c = themeVars();
-        const COLORS = { "1": c.accent, "2": c.accent + "aa", "3": c.accent + "55", "unranked": c.line };
-        chart.current.setOption({
-          backgroundColor: "transparent",
-          tooltip: { trigger: "item", formatter: (p) => `${p.name}<br>${p.value} tracks (${p.percent}%)`,
-            backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
-          legend: { orient: "vertical", right: 10, top: "center", textStyle: { color: c.text2, fontSize: 12 } },
-          series: [{
-            type: "pie", radius: ["44%", "70%"], center: ["42%", "50%"],
-            avoidLabelOverlap: false, label: { show: false },
-            emphasis: { label: { show: true, fontSize: 14, fontWeight: "bold", color: c.text },
-              itemStyle: { shadowBlur: 10, shadowColor: "rgba(0,0,0,.5)" } },
-            data: data.map((d) => ({
-              name: TIER_LABELS[d.tier] || d.tier,
-              value: d.count,
-              itemStyle: { color: COLORS[d.tier] || c.muted },
-            })),
-          }],
-        });
-      })
+      .then((d) => { setLoading(false); setData(d); })
       .catch(() => setLoading(false));
   }, [active]);
+
+  useEffect(() => {
+    if (!active || !chart.current || !data || !data.length) return;
+    const render = () => {
+      if (!chart.current) return;
+      chart.current.resize();
+      const c = themeVars();
+      const narrow = elRef.current && elRef.current.clientWidth < 520;
+      const COLORS = { "1": c.accent, "2": c.accent + "aa", "3": c.accent + "55", "unranked": c.line };
+      chart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: { trigger: "item", formatter: (p) => `${p.name}<br>${p.value} tracks (${p.percent}%)`,
+          backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
+        legend: narrow
+          ? { orient: "horizontal", bottom: 0, left: "center", textStyle: { color: c.text2, fontSize: 11 } }
+          : { orient: "vertical", right: 12, top: "center", textStyle: { color: c.text2, fontSize: 12 } },
+        series: [{
+          type: "pie", radius: ["46%", "72%"], center: narrow ? ["50%", "42%"] : ["36%", "50%"],
+          avoidLabelOverlap: false, label: { show: false },
+          emphasis: { label: { show: true, fontSize: 14, fontWeight: "bold", color: c.text },
+            itemStyle: { shadowBlur: 10, shadowColor: "rgba(0,0,0,.5)" } },
+          data: data.map((d) => ({
+            name: TIER_LABELS[d.tier] || d.tier,
+            value: d.count,
+            itemStyle: { color: COLORS[d.tier] || c.muted },
+          })),
+        }],
+      }, true);
+    };
+    render();
+    window.addEventListener("resize", render);
+    return () => window.removeEventListener("resize", render);
+  }, [active, data, chart]);
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <h3 className="card-title">Data saturation</h3>
+        <span className="card-meta">tracks by enrichment tier</span>
+      </div>
+      <p style={cardDesc}>How thoroughly each track is enriched, weighted by how much you play it. <b>Tier 1</b> = heavy rotation, fully enriched · <b>Tier 2</b> = regular plays · <b>Tier 3</b> = deep cuts · <b>Unranked</b> = not yet scored.</p>
+      <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block", height: 320 }} />
+      {loading && <ChartLoading height={320} />}
+    </div>
+  );
+}
+
+/* ── Albums (most-played, with listening spread) ────────────────────────── */
+function _albumHue(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
+function AlbumsPage({ active }) {
+  const [data, setData] = useState(null);
+  const [sort, setSort] = useState("plays");
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!active || data) return;
+    setLoading(true);
+    fetch("/api/albums?top=60&min_tracks=3")
+      .then((r) => r.json())
+      .then((d) => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
+  }, [active, data]);
+
+  const rows = useMemo(() => {
+    if (!data) return [];
+    const a = [...data];
+    if (sort === "spread") a.sort((x, y) => y.spread - x.spread || y.plays - x.plays);
+    else if (sort === "tracks") a.sort((x, y) => y.track_count - x.track_count || y.plays - x.plays);
+    else a.sort((x, y) => y.plays - x.plays);
+    return a;
+  }, [data, sort]);
+  const maxPlays = rows.length ? Math.max(...rows.map((r) => r.plays)) : 1;
 
   return (
     <section className="block">
       <div className="card">
         <div className="card-head">
-          <h3 className="card-title">Data saturation</h3>
-          <span className="card-meta">tracks by enrichment tier</span>
+          <h3 className="card-title">Albums</h3>
+          <div style={cardTools}>
+            <div className="seg seg-sm" role="group">
+              {[["plays", "Plays"], ["spread", "Spread"], ["tracks", "Tracks"]].map(([v, l]) => (
+                <button key={v} aria-pressed={sort === v} onClick={() => setSort(v)}>{l}</button>
+              ))}
+            </div>
+            <span className="card-meta">≥3 tracks · top 60</span>
+          </div>
         </div>
-        <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block", height: 360 }} />
-        {loading && <ChartLoading />}
+        <p style={cardDesc}>Albums you actually sat with. <b>Plays</b> totals every track; <b>Spread</b> shows how evenly your listening covered the album — a full bar means you played the whole thing, a short bar means one or two tracks carried it.</p>
+        {loading && <ChartLoading height={320} />}
+        {!loading && (
+          rows.length ? (
+            <div className="album-list">
+              {rows.map((a, i) => (
+                <div className="album-row" key={a.artist + "|" + a.album}>
+                  <span className="album-rank num">{i + 1}</span>
+                  <span className="album-art" style={{ background: `linear-gradient(135deg, hsl(${_albumHue(a.album)} 52% 44%), hsl(${(_albumHue(a.album) + 42) % 360} 50% 28%))` }}>{(a.album || "?").charAt(0).toUpperCase()}</span>
+                  <div className="album-meta">
+                    <div className="album-name" title={a.album}>{a.album}</div>
+                    <div className="album-artist">{a.artist}{a.year ? ` · ${a.year}` : ""} · {a.track_count} tracks</div>
+                  </div>
+                  <div className="album-spread" title={`Spread ${Math.round(a.spread * 100)}% — how evenly plays cover the album`}>
+                    <div className="album-spread-track"><div className="album-spread-fill" style={{ width: (a.spread * 100) + "%" }}></div></div>
+                    <span className="album-spread-val num">{Math.round(a.spread * 100)}%</span>
+                  </div>
+                  <div className="album-plays">
+                    <div className="mini"><span style={{ width: (a.plays / maxPlays * 100) + "%" }}></span></div>
+                    <span className="pc num">{a.plays}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="empty"><div className="big">No albums yet</div><div>Load your library to see album rankings.</div></div>
+          )
+        )}
       </div>
     </section>
   );
@@ -514,5 +696,5 @@ function TagConstellation({ active }) {
 
 Object.assign(window, {
   TimelineChart, ArtistTrajectory, ListeningMap,
-  AudioFeaturesChart, SaturationChart, TagConstellation,
+  AudioFeaturesChart, SaturationChart, TagConstellation, AlbumsPage,
 });

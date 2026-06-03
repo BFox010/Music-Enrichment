@@ -8,8 +8,9 @@ but returns dicts instead of printing.
 
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
-from typing import Any
+from typing import Any, Optional
 
 from app.data import get_scrobbles, get_tracks
 
@@ -103,18 +104,80 @@ def timeline(by: str = "year") -> list[dict]:
     return [{"period": p, "plays": c} for p, c in sorted(counts.items())]
 
 
-def time_of_day() -> dict[str, Any]:
+def time_of_day(year: Optional[int] = None) -> dict[str, Any]:
+    """Calendar + hour×weekday heatmaps.
+
+    The hour×weekday density always spans the full history (more data = a
+    cleaner pattern). The calendar is filtered to ``year`` when given so the
+    grid can render one large, legible year at a time. ``years`` lists every
+    year present so the UI can build a picker.
+    """
     hw: Counter[tuple[int, int]] = Counter()
     cal: Counter[str] = Counter()
+    years: set[int] = set()
     for s in get_scrobbles():
+        if s.get("year") is not None:
+            years.add(s["year"])
         hw[(s["hour"], s["day_of_week"])] += 1
-        date = (s.get("scrobbled_at") or "")[:10]
-        if date:
-            cal[date] += 1
+        if year is None or s.get("year") == year:
+            date = (s.get("scrobbled_at") or "")[:10]
+            if date:
+                cal[date] += 1
     return {
         "hour_weekday": [[h, dow, n] for (h, dow), n in hw.items()],
         "calendar": [[date, n] for date, n in sorted(cal.items())],
+        "years": sorted(years),
     }
+
+
+def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
+    """Most-played albums, scored by total plays + how evenly listening
+    spreads across the album's tracks (Spotify-Wrapped style).
+
+    ``spread`` is normalized play-count entropy: 1.0 = plays perfectly even
+    across tracks, →0 = one track dominates. Single-track albums are skipped.
+    """
+    by_album: dict[tuple[str, str], dict] = defaultdict(
+        lambda: {"plays": [], "total": 0, "artist": "", "album": "", "years": set()}
+    )
+    for t in get_tracks():
+        album = (t.get("album") or "").strip()
+        if not album:
+            continue
+        key = (t["artist"].lower(), album.lower())
+        plays = int(t.get("play_count") or 0)
+        rec = by_album[key]
+        rec["plays"].append(plays)
+        rec["total"] += plays
+        rec["artist"] = t["artist"]
+        rec["album"] = album
+        if t.get("release_year"):
+            rec["years"].add(t["release_year"])
+
+    result: list[dict] = []
+    for rec in by_album.values():
+        n = len(rec["plays"])
+        if n < min_tracks:
+            continue
+        total = rec["total"]
+        if total > 0 and n > 1:
+            shares = [p / total for p in rec["plays"] if p > 0]
+            entropy = -sum(s * math.log(s) for s in shares) if shares else 0.0
+            spread = round(entropy / math.log(n), 3)
+        else:
+            spread = 0.0
+        result.append(
+            {
+                "album": rec["album"],
+                "artist": rec["artist"],
+                "track_count": n,
+                "plays": total,
+                "spread": spread,
+                "year": min(rec["years"]) if rec["years"] else None,
+            }
+        )
+    result.sort(key=lambda x: -x["plays"])
+    return result[:top]
 
 
 def artist_trajectory(top: int = 15) -> dict[str, Any]:

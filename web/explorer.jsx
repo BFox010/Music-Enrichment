@@ -3,36 +3,80 @@
    ============================================================ */
 const { useState: useStateX, useMemo: useMemoX } = React;
 
-/* ---- Active filter bar ---- */
-function FilterBar({ filters, onRemove, onClear, sort, onSort }) {
+/* ---- Active filter bar + slicers ---- */
+const FB_KIND_LABEL = { genre: "genre", mood: "mood", tag: "tag", decade: "decade", artist: "artist", firstFrom: "heard ≥", firstTo: "heard ≤" };
+function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange, decades, years, curYear }) {
   const entries = Object.entries(filters).filter(([, v]) => v);
+  const decadeList = decades || [];
+  const yearList = years || [];
+  const fmtVal = (k, v) => (k === "decade" ? v + "s" : v);
+  const newThisYear = curYear != null && String(filters.firstFrom) === String(curYear) && String(filters.firstTo) === String(curYear);
+  const toggleNew = () => {
+    if (newThisYear) { onRange("firstFrom", ""); onRange("firstTo", ""); }
+    else { onRange("firstFrom", String(curYear)); onRange("firstTo", String(curYear)); }
+  };
   return (
     <div className="filterbar">
-      <span className="fb-label">Filters</span>
-      <div className="fb-chips">
-        {entries.length === 0 && <span style={{ color: "var(--muted-s)", fontSize: 12.5 }}>None — showing the whole library. Click any chart element to filter.</span>}
-        {entries.map(([kind, val]) => (
-          <span className="fchip" key={kind}>
-            <span className="fc-kind">{kind}</span>{val}
-            <span className="x" onClick={() => onRemove(kind)} title="Remove" aria-label="Remove filter">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+      <div className="fb-row">
+        <span className="fb-label">Filters</span>
+        <div className="fb-chips">
+          {entries.length === 0 && <span style={{ color: "var(--muted-s)", fontSize: 12.5 }}>None — showing the whole library. Click any chart element to filter.</span>}
+          {entries.map(([kind, val]) => (
+            <span className="fchip" key={kind}>
+              <span className="fc-kind">{FB_KIND_LABEL[kind] || kind}</span>{fmtVal(kind, val)}
+              <span className="x" onClick={() => onRemove(kind)} title="Remove" aria-label="Remove filter">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
+              </span>
             </span>
-          </span>
-        ))}
+          ))}
+        </div>
+        {entries.length > 0 && <button className="fb-clear" onClick={onClear}>Clear all</button>}
+        <div className="fb-sort">
+          <span className="fb-label">Sort</span>
+          <select value={sort} onChange={(e) => onSort(e.target.value)}>
+            <option value="plays">Most played</option>
+            <option value="plays_asc">Least played</option>
+            <option value="artist">Artist A–Z</option>
+            <option value="track">Title A–Z</option>
+            <option value="year_desc">Newest release</option>
+            <option value="year_asc">Oldest release</option>
+            <option value="recent">Recently played</option>
+          </select>
+        </div>
       </div>
-      {entries.length > 0 && <button className="fb-clear" onClick={onClear}>Clear all</button>}
-      <div className="fb-sort">
-        <span className="fb-label">Sort</span>
-        <select value={sort} onChange={(e) => onSort(e.target.value)}>
-          <option value="plays">Most played</option>
-          <option value="plays_asc">Least played</option>
-          <option value="artist">Artist A–Z</option>
-          <option value="track">Title A–Z</option>
-          <option value="year_desc">Newest release</option>
-          <option value="year_asc">Oldest release</option>
-          <option value="recent">Recently played</option>
-        </select>
-      </div>
+      {(decadeList.length > 0 || yearList.length > 0) && (
+        <div className="fb-row fb-controls">
+          {decadeList.length > 0 && (
+            <div className="fb-control">
+              <span className="fb-label">Decade</span>
+              <div className="seg seg-sm" role="group" aria-label="Release decade">
+                {decadeList.map((d) => (
+                  <button key={d} aria-pressed={String(filters.decade) === String(d)} onClick={() => onToggle("decade", String(d))}>{String(d).slice(2)}s</button>
+                ))}
+              </div>
+            </div>
+          )}
+          {yearList.length > 0 && (
+            <div className="fb-control">
+              <span className="fb-label">First heard</span>
+              <select className="fb-yr" value={filters.firstFrom || ""} onChange={(e) => onRange("firstFrom", e.target.value)}>
+                <option value="">From…</option>
+                {yearList.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+              <span className="fb-dash">–</span>
+              <select className="fb-yr" value={filters.firstTo || ""} onChange={(e) => onRange("firstTo", e.target.value)}>
+                <option value="">To…</option>
+                {yearList.map((y) => <option key={y} value={y}>{y}</option>)}
+              </select>
+              {curYear != null && (
+                <button className={"fb-quick" + (newThisYear ? " active" : "")} onClick={toggleNew} title={`First scrobbled in ${curYear}`}>
+                  New this year
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
