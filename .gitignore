@@ -245,6 +245,12 @@ tracks_with_taste.jsonl
 # Scratch / temp files
 *.tmp.txt
 
+# Backup snapshots — git history is the backup
+*.bak
+
+# Raw Exportify dump (owner input; belongs in gitignored inputs/)
+/exportify
+
 # Per-run diagnostic artifacts (merge_exportify writes these every run)
 runs/unmatched_exportify_*.txt
 
