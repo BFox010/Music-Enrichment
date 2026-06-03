@@ -291,12 +291,14 @@ function AudioFeaturesChart({ active }) {
               formatter: (p) => `<b>${p.data.name}</b><br>Energy: ${p.data.value[0].toFixed(2)}<br>Valence: ${p.data.value[1].toFixed(2)}<br>Plays: ${p.data.value[2]}`,
               backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
             },
-            grid: { top: 20, bottom: 36, left: 44, right: 16 },
-            xAxis: { name: "Energy →", type: "value", min: 0, max: 1,
-              nameTextStyle: { color: c.muted, fontSize: 11 }, axisLabel: { color: c.muted },
+            grid: { top: 24, bottom: 52, left: 64, right: 20 },
+            xAxis: { name: "Energy", nameLocation: "middle", nameGap: 30,
+              type: "value", min: 0, max: 1,
+              nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
               splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
-            yAxis: { name: "Valence →", type: "value", min: 0, max: 1,
-              nameTextStyle: { color: c.muted, fontSize: 11 }, axisLabel: { color: c.muted },
+            yAxis: { name: "Valence", nameLocation: "middle", nameGap: 42, nameRotate: 90,
+              type: "value", min: 0, max: 1,
+              nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
               splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
             series: [{
               type: "scatter",
@@ -428,7 +430,7 @@ function TagConstellation({ active }) {
   const FIELDS = [
     ["discogs_styles", "Styles"],
     ["mood_tags",      "Moods"],
-    ["lastfm_tags",    "Last.fm"],
+    ["lastfm_tags",    "Genres"],
   ];
 
   useEffect(() => {
@@ -440,6 +442,11 @@ function TagConstellation({ active }) {
       .then(({ nodes, edges }) => {
         setLoading(false);
         if (!chart.current || !nodes?.length) return;
+        // The container flips from display:none to visible as this page
+        // activates; force the canvas to its real size BEFORE laying out the
+        // force graph, or nodes settle into a 0-width box and look chaotic
+        // until the next resize (the "only works after switching tabs" bug).
+        chart.current.resize();
         const c = themeVars();
         const maxCount  = nodes[0]?.count || 1;
         const maxWeight = edges.reduce((m, e) => Math.max(m, e.weight), 1);
