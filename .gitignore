@@ -255,3 +255,6 @@ runs/unmatched_exportify_*.txt
 HANDOFF.md
 Handoff.md
 
+# Generated dashboard snapshot — rebuild with scripts/generate_library_js.py
+web/data/library.js
+
