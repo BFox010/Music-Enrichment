@@ -276,6 +276,77 @@ _TAG_GRAPH_FIELDS: frozenset[str] = frozenset(
 )
 
 
+def forgotten_favorites(
+    top: int = 30, min_peak: int = 5, recent_years: int = 2
+) -> list[dict]:
+    """Tracks with a strong historical peak that have faded from recent listening.
+
+    Builds per-track yearly play counts from scrobbles, scores each track by
+    ``peak_plays / max(recent_plays, 1)``, and returns the most-forgotten tracks
+    sorted descending by that ratio.  Only tracks whose peak pre-dates the
+    recent window are included.
+    """
+    scrobbles = get_scrobbles()
+    tracks = get_tracks()
+    if not scrobbles:
+        return []
+
+    def _key(obj: dict) -> str:
+        a = (obj.get("artist_normalized") or obj.get("artist") or "").lower().strip()
+        t = (obj.get("track_normalized") or obj.get("track") or "").lower().strip()
+        return f"{a}\x00{t}"
+
+    yearly: dict[str, Counter] = defaultdict(Counter)
+    for s in scrobbles:
+        yr = s.get("year")
+        if yr is not None:
+            yearly[_key(s)][int(yr)] += 1
+
+    track_info: dict[str, dict] = {_key(t): t for t in tracks}
+
+    all_years = sorted({y for c in yearly.values() for y in c})
+    if not all_years:
+        return []
+    max_year = all_years[-1]
+    recent_start = max_year - recent_years + 1
+
+    result: list[dict] = []
+    for key, by_year in yearly.items():
+        peak_year = max(by_year, key=by_year.__getitem__)
+        peak_plays = by_year[peak_year]
+        if peak_plays < min_peak:
+            continue
+        if peak_year >= recent_start:
+            continue  # peaked in the recent window — not forgotten
+
+        recent_plays = sum(by_year.get(y, 0) for y in range(recent_start, max_year + 1))
+        score = round(peak_plays / max(recent_plays, 1), 2)
+        if score < 2.0:
+            continue
+
+        last_heard = max(y for y in by_year if by_year[y] > 0)
+        info = track_info.get(key, {})
+        result.append(
+            {
+                "artist": info.get("artist") or "",
+                "track": info.get("track") or "",
+                "release_year": info.get("release_year"),
+                "genres": (info.get("genres") or [])[:2],
+                "moods": (info.get("mood_tags") or [])[:2],
+                "peak_year": peak_year,
+                "peak_plays": peak_plays,
+                "recent_plays": recent_plays,
+                "total_plays": sum(by_year.values()),
+                "score": score,
+                "last_heard": last_heard,
+                "sparkline": [[y, c] for y, c in sorted(by_year.items())],
+            }
+        )
+
+    result.sort(key=lambda x: (-x["score"], -x["peak_plays"]))
+    return result[:top]
+
+
 def tag_graph(field: str = "discogs_styles", min_count: int = 15) -> dict[str, Any]:
     """Co-occurrence graph for a tag field.
 

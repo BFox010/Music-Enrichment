@@ -697,3 +697,77 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   .album-row { grid-template-columns: 22px 38px 1fr auto; gap: 10px; }
   .album-plays { width: 84px; }
 }
+
+/* ============================================================
+   Forgotten Favorites
+   ============================================================ */
+.ff-list { display: flex; flex-direction: column; }
+.ff-row {
+  display: grid;
+  grid-template-columns: 28px 46px 1fr 140px 64px;
+  align-items: center;
+  gap: 14px; padding: 10px 6px;
+  border-bottom: 1px solid var(--line-soft);
+  transition: background .12s;
+}
+.ff-row:last-child { border-bottom: 0; }
+.ff-row:hover { background: var(--panel-2); border-radius: var(--radius-sm); }
+
+.ff-rank { font-family: var(--font-mono); font-size: 11px; color: var(--faint); text-align: right; font-weight: 600; }
+
+.ff-art {
+  width: 46px; height: 46px; border-radius: 9px;
+  display: grid; place-items: center; flex-shrink: 0;
+  font-family: var(--font-display); font-weight: 700; font-size: 15px;
+  color: rgba(255,255,255,.88); text-shadow: 0 1px 4px rgba(0,0,0,.5);
+  box-shadow: 0 4px 14px -6px rgba(0,0,0,.7);
+}
+
+.ff-info { min-width: 0; }
+.ff-track { font-size: 14px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.3; }
+.ff-artist { font-size: 11.5px; color: var(--muted-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px; }
+.ff-tags { display: flex; align-items: center; gap: 5px; margin-top: 6px; flex-wrap: wrap; }
+
+.ff-badge {
+  font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
+  background: color-mix(in oklab, var(--accent) 20%, var(--panel));
+  color: var(--accent); border-radius: var(--radius-pill); padding: 2px 8px;
+  border: 1px solid color-mix(in oklab, var(--accent) 30%, transparent);
+}
+.ff-badge.ff-badge-muted {
+  background: var(--panel-2); color: var(--muted-s);
+  border: 1px solid var(--line-soft);
+}
+.ff-tag {
+  font-size: 11px; color: var(--muted-s); background: var(--panel-2);
+  border: 1px solid var(--line-soft); border-radius: var(--radius-pill);
+  padding: 2px 8px; text-transform: capitalize;
+}
+.ff-tag.ff-tag-mood {
+  border-color: color-mix(in oklab, var(--good) 35%, var(--line));
+  color: color-mix(in oklab, var(--good) 60%, var(--text-2));
+}
+
+.ff-spark-wrap { display: flex; flex-direction: column; gap: 6px; }
+.ff-spark-legend { display: flex; gap: 10px; }
+.ff-spark-legend span { font-family: var(--font-mono); font-size: 9.5px; color: var(--faint); }
+.ff-spark-legend span:first-child { color: color-mix(in oklab, var(--accent) 65%, var(--muted-s)); }
+
+.ff-score { display: flex; flex-direction: column; align-items: flex-end; gap: 3px; }
+.ff-score-val {
+  font-family: var(--font-display); font-weight: 700; font-size: 22px;
+  background: linear-gradient(135deg, var(--accent), color-mix(in oklab, var(--accent) 55%, var(--bad)));
+  -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+  letter-spacing: -.02em; line-height: 1;
+}
+.ff-score-lab { font-family: var(--font-mono); font-size: 9.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; }
+
+/* forgotten favorites responsive */
+@media (max-width: 1100px) {
+  .ff-row { grid-template-columns: 26px 42px 1fr 120px 56px; gap: 10px; }
+}
+@media (max-width: 768px) {
+  .ff-row { grid-template-columns: 22px 36px 1fr auto; gap: 10px; }
+  .ff-spark-wrap { display: none; }
+  .ff-score-val { font-size: 18px; }
+}

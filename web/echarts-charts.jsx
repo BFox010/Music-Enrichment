@@ -694,7 +694,148 @@ function TagConstellation({ active }) {
   );
 }
 
+/* ── Forgotten Favorites sparkline (pure SVG, no ECharts) ──────────────── */
+function FfSparkline({ sparkline, peakYear, recentStart }) {
+  if (!sparkline || !sparkline.length) return null;
+  const W = 120, H = 38, GAP = 2;
+  const n = sparkline.length;
+  const bw = Math.max(3, Math.floor((W - GAP * (n - 1)) / n));
+  const totalW = n * bw + (n - 1) * GAP;
+  const max = Math.max(...sparkline.map(([, v]) => v), 1);
+
+  return (
+    <svg width={totalW} height={H} style={{ display: "block", overflow: "visible" }}>
+      {sparkline.map(([yr, plays], i) => {
+        const bh = Math.max(3, (plays / max) * (H - 4));
+        const x = i * (bw + GAP);
+        const isPeak  = yr === peakYear;
+        const isRecent = yr >= recentStart;
+        const fill    = isPeak ? "var(--accent)" : isRecent ? "var(--faint)" : "var(--muted-s)";
+        const opacity = isRecent && !isPeak ? 0.5 : 1;
+        return (
+          <g key={yr}>
+            <rect x={x} y={H - bh} width={bw} height={bh} fill={fill} rx={1.5} opacity={opacity} />
+            {isPeak && (
+              <rect x={x} y={H - bh - 4} width={bw} height={3}
+                fill="var(--accent)" rx={1}
+                style={{ filter: "blur(2px)", opacity: 0.65 }} />
+            )}
+          </g>
+        );
+      })}
+    </svg>
+  );
+}
+
+/* ── Forgotten Favorites page ───────────────────────────────────────────── */
+function ForgottenFavoritesPage({ active }) {
+  const [items, setItems] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
+  const [shown, setShown] = useState(25);
+
+  useEffect(() => {
+    if (!active || items !== null) return;
+    setLoading(true);
+    fetch("/api/forgotten-favorites?top=100")
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
+      .then((d) => { setItems(d); setLoading(false); })
+      .catch((e) => { setError(String(e)); setLoading(false); });
+  }, [active]);
+
+  if (!active) return null;
+
+  if (loading) return (
+    <section className="block"><ChartLoading height={400} /></section>
+  );
+  if (error) return (
+    <section className="block">
+      <div className="card">
+        <div className="empty"><div className="big">Could not load</div><div>{error}</div></div>
+      </div>
+    </section>
+  );
+  if (!items) return null;
+  if (!items.length) return (
+    <section className="block">
+      <div className="card">
+        <div className="empty">
+          <div className="big">No forgotten favorites found</div>
+          <div>Your recent listening covers your full history, or scrobble data isn't loaded yet.</div>
+        </div>
+      </div>
+    </section>
+  );
+
+  const maxYear     = Math.max(...items.flatMap((d) => d.sparkline.map(([y]) => y)));
+  const recentStart = maxYear - 1; // 2 years: maxYear-1 .. maxYear
+  const visible     = items.slice(0, shown);
+
+  return (
+    <div>
+      <div className="page-intro">
+        <h2 className="page-title">Forgotten favorites</h2>
+        <p className="page-lede">
+          Tracks you once played constantly — then quietly set aside. Each sparkline shows
+          yearly play counts; the <span style={{ color: "var(--accent)", fontWeight: 600 }}>accent bar</span> marks
+          your peak year. Ranked by how sharply listening dropped off.
+        </p>
+      </div>
+      <section className="block">
+        <div className="card">
+          <div className="ff-list">
+            {visible.map((item, i) => {
+              const hue     = ((item.artist.charCodeAt(0) || 50) * 37 + (item.track.charCodeAt(0) || 50) * 13) % 360;
+              const initial = (item.artist || "?").slice(0, 2).toUpperCase();
+              const scoreStr = item.score >= 10 ? Math.round(item.score) + "×" : item.score.toFixed(1) + "×";
+              return (
+                <div className="ff-row" key={i}>
+                  <span className="ff-rank num">{i + 1}</span>
+                  <div
+                    className="ff-art"
+                    style={{ background: `linear-gradient(135deg, oklch(0.38 0.14 ${hue}), oklch(0.24 0.08 ${(hue + 55) % 360}))` }}
+                  >
+                    <span>{initial}</span>
+                  </div>
+                  <div className="ff-info">
+                    <div className="ff-track">{item.track}</div>
+                    <div className="ff-artist">{item.artist}</div>
+                    <div className="ff-tags">
+                      <span className="ff-badge">Peak {item.peak_year}</span>
+                      <span className="ff-badge ff-badge-muted">Last {item.last_heard}</span>
+                      {item.genres.slice(0, 1).map((g) => <span className="ff-tag" key={g}>{g}</span>)}
+                      {item.moods.slice(0, 1).map((m) => <span className="ff-tag ff-tag-mood" key={m}>{m}</span>)}
+                    </div>
+                  </div>
+                  <div className="ff-spark-wrap">
+                    <FfSparkline sparkline={item.sparkline} peakYear={item.peak_year} recentStart={recentStart} />
+                    <div className="ff-spark-legend">
+                      <span className="num">{item.peak_plays} at peak</span>
+                      <span className="num">{item.recent_plays} recent</span>
+                    </div>
+                  </div>
+                  <div className="ff-score">
+                    <span className="ff-score-val num">{scoreStr}</span>
+                    <span className="ff-score-lab">fade</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          {items.length > shown && (
+            <div className="tablefoot">
+              <span>Showing {shown} of {items.length}</span>
+              <button className="linkbtn" onClick={() => setShown((s) => s + 25)}>Show more ↓</button>
+            </div>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
 Object.assign(window, {
   TimelineChart, ArtistTrajectory, ListeningMap,
   AudioFeaturesChart, SaturationChart, TagConstellation, AlbumsPage,
+  ForgottenFavoritesPage,
 });

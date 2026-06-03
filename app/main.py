@@ -111,6 +111,15 @@ def api_tracks(
     )
 
 
+@app.get("/api/forgotten-favorites")
+def api_forgotten_favorites(
+    top: int = Query(30, ge=1, le=200),
+    min_peak: int = Query(5, ge=1, le=100),
+    recent_years: int = Query(2, ge=1, le=5),
+):
+    return metrics.forgotten_favorites(top=top, min_peak=min_peak, recent_years=recent_years)
+
+
 @app.get("/api/tag-graph")
 def api_tag_graph(
     field: str = Query("discogs_styles", pattern="^(discogs_styles|mood_tags|lastfm_tags)$"),
