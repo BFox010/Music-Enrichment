@@ -205,6 +205,9 @@ function App() {
   const [dzShow, setDzShow] = useState(false);
   const [toast, setToast] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  // Bumped after a successful refresh so API-backed pages (Albums, Forgotten
+  // Favorites) drop their cached response and re-fetch the updated data.
+  const [refreshVersion, setRefreshVersion] = useState(0);
   const [isLoadingLive, setIsLoadingLive] = useState(true);
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
@@ -257,6 +260,8 @@ function App() {
           if (nd) setDrill(nd);
         }
       } catch (e) { /* live fetch optional */ }
+      // Invalidate cached API-backed pages so they reflect the refreshed data.
+      setRefreshVersion((v) => v + 1);
     } catch (e) {
       showToast("Refresh error: " + e.message);
     } finally {
@@ -675,7 +680,7 @@ function App() {
 
         {/* ── PAGE: Albums ────────────────────────────────────────── */}
         <div style={{ display: page === "albums" ? "" : "none" }}>
-          {AlbumsPage && <AlbumsPage active={page === "albums"} />}
+          {AlbumsPage && <AlbumsPage active={page === "albums"} refreshVersion={refreshVersion} />}
         </div>
 
         {/* ── PAGE: Seasonal Favorites ────────────────────────────── */}
@@ -689,7 +694,7 @@ function App() {
 
         {/* ── PAGE: Forgotten Favorites ───────────────────────────── */}
         <div style={{ display: page === "forgotten" ? "" : "none" }}>
-          {ForgottenFavoritesPage && <ForgottenFavoritesPage active={page === "forgotten"} />}
+          {ForgottenFavoritesPage && <ForgottenFavoritesPage active={page === "forgotten"} refreshVersion={refreshVersion} />}
         </div>
 
         {/* ── PAGE: Tag Constellation ─────────────────────────────── */}

@@ -12,10 +12,10 @@ Output: inputs/tunemymusic_upload.csv
 from __future__ import annotations
 
 import csv
-import json
 from pathlib import Path
 
 from pipeline.config import INPUTS_DIR, TRACKS_PATH, TRACKS_SKELETON_PATH, configure_logging, get_logger
+from pipeline.schema import read_jsonl
 
 OUTPUT_PATH = INPUTS_DIR / "tunemymusic_upload.csv"
 PENDING_OUTPUT_PATH = INPUTS_DIR / "pending_exportify.csv"
@@ -40,12 +40,7 @@ def export(
     if not skeleton_path.exists():
         raise FileNotFoundError(f"tracks_skeleton.jsonl not found: {skeleton_path}")
 
-    tracks: list[dict] = []
-    with open(skeleton_path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                tracks.append(json.loads(line))
+    tracks = read_jsonl(skeleton_path)
 
     log.info("Read %d unique tracks", len(tracks))
 
@@ -77,14 +72,7 @@ def export_pending(
         log.warning("export_pending: tracks file not found: %s", tracks_path)
         return 0
 
-    pending: list[dict] = []
-    with open(tracks_path, "r", encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                t = json.loads(line)
-                if not t.get("audio_features"):
-                    pending.append(t)
+    pending = [t for t in read_jsonl(tracks_path) if not t.get("audio_features")]
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="") as fh:

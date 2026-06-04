@@ -380,6 +380,10 @@ class TestReload:
         assert body["tracks"] == 1
         assert body["scrobbles"] == 1
 
+    def test_reports_skipped_counts(self, client):
+        body = client.post("/api/reload").json()
+        assert body["skipped"] == {"tracks": 0, "scrobbles": 0}
+
 
 class TestLastFmStatus:
     def test_status_ok(self, client):

@@ -19,6 +19,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT   = Path(__file__).resolve().parent.parent
+# Make the repo importable when run directly: `python scripts/generate_library_js.py`
+sys.path.insert(0, str(REPO_ROOT))
+from pipeline.schema import read_jsonl
+
 TRACKS_PATH   = REPO_ROOT / "tracks.jsonl"
 SCROBBLES_PATH = REPO_ROOT / "scrobbles.jsonl"
 OUTPUT_PATH   = REPO_ROOT / "web" / "data" / "library.js"
@@ -50,23 +54,13 @@ def _aggregate_scrobbles(rows: list[dict]) -> dict:
     }
 
 
-def _read_jsonl(path: Path) -> list[dict]:
-    rows: list[dict] = []
-    with open(path, encoding="utf-8") as fh:
-        for line in fh:
-            line = line.strip()
-            if line:
-                rows.append(json.loads(line))
-    return rows
-
-
 def main() -> None:
     if not TRACKS_PATH.exists():
         print(f"ERROR: {TRACKS_PATH} not found — run the pipeline first.")
         sys.exit(1)
 
     print(f"Reading {TRACKS_PATH} …")
-    tracks = _read_jsonl(TRACKS_PATH)
+    tracks = read_jsonl(TRACKS_PATH)
 
     scrobbles_agg: dict = {
         "byHour": [0] * 24, "byDow": [0] * 7,
@@ -76,7 +70,7 @@ def main() -> None:
 
     if SCROBBLES_PATH.exists():
         print(f"Reading {SCROBBLES_PATH} …")
-        scrobble_rows = _read_jsonl(SCROBBLES_PATH)
+        scrobble_rows = read_jsonl(SCROBBLES_PATH)
         scrobbles_agg = _aggregate_scrobbles(scrobble_rows)
         dates = [r.get("scrobbled_at") for r in scrobble_rows if r.get("scrobbled_at")]
         if dates:

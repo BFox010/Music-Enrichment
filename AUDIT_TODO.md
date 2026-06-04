@@ -5,9 +5,9 @@ Findings were re-verified against the actual code before being accepted; notes
 record where this review **agreed, downgraded, deferred, or narrowed** the
 original recommendation.
 
-**Status (2026-06-04):** the P1 blockers and the cleanup pass are **merged to
-`main`** via PR #15 and PR #16. What remains below is the post-merge follow-up
-list — none are blockers.
+**Status (2026-06-04):** the P1 blockers, the cleanup pass, and the P2/P3
+follow-ups are **merged to `main`** (PR #15, #16, and the cleanup batch). The only
+open item is #7, which is intentionally deferred.
 
 ---
 
@@ -23,54 +23,35 @@ list — none are blockers.
   (PR #15)
 - **#3 Refresh concurrency guard** — process-level `asyncio.Lock`; a concurrent
   refresh raises `RefreshInProgress`, mapped to **HTTP 409**. (PR #15)
-- **#6 (loader hardening half)** — `app/data._load_jsonl()` logs and skips malformed /
-  non-object rows instead of crashing the API at import. (PR #16)
+- **#6 Loader hardening + observability** — `_load_jsonl()` logs and skips malformed /
+  non-object rows (PR #16); `reload()` and `/api/reload` now also report
+  `skipped: {tracks, scrobbles}` so dropped rows aren't invisible. (cleanup batch)
 - **#9 Session handoff docs** — `CLAUDE_DESIGN_BRIEF.md` and `Handoff.md` dropped
   before merge; not versioned in `main`. (PR #15)
 - **Cleanup pass** — untracked generated cruft (raw `exportify`, `runs/unmatched_*`,
   `.bak` snapshots), archived one-off scripts under `scripts/archive/`. (PR #16)
+- **#4 Stale dashboard cache after refresh** — `dashboard.jsx` bumps a `refreshVersion`
+  after a successful refresh; `AlbumsPage` / `ForgottenFavoritesPage` cache per-version
+  (still cached on navigation) and re-fetch when it changes. (cleanup batch)
+- **#5 Forgotten Favorites blank rows** — `forgotten_favorites()` now falls back to the
+  scrobble's own artist/track when a key isn't in `tracks.jsonl`, and skips rows with no
+  usable label at all. (cleanup batch)
+- **#8 JSONL parsing duplicated** — `export_tunemymusic` (both readers) and
+  `generate_library_js.py` now use `pipeline.schema.read_jsonl` (line-aware errors)
+  instead of raw `json.loads`. (cleanup batch)
 
-Regression coverage added: failed-phase abort, skipped-only success, concurrent 409
-(`tests/test_refresh.py`). Full suite green on merged `main` (452 passed).
+Regression coverage: failed-phase abort / concurrent 409 (`tests/test_refresh.py`);
+label fallback + skipped-row counts (`tests/test_audit_cleanups.py`). Full suite green
+(459 passed).
 
 ---
 
-## Remaining follow-ups (post-merge, non-blocking)
-
-### P2
-
-**#4 — API-backed dashboard pages cache stale data after refresh**
-- In `web/echarts-charts.jsx`, Albums (`if (!active || data) return;`) and Forgotten
-  Favorites (`if (!active || items !== null) return;`) cache the first API response;
-  no `refreshVersion` prop exists, so they stay stale until a full page reload.
-- **Fix:** add a `refreshVersion` state in `dashboard.jsx`, bump it on refresh, thread
-  it into the API-backed pages, add it to their `useEffect` deps, clear cached child
-  state on change.
-
-**#5 — Forgotten Favorites can emit blank artist/track rows**
-- `app/metrics.py` does `info = track_info.get(key, {})` then `info.get("artist") or ""`,
-  so an unmatched scrobble key yields a row with empty artist/track.
-- **Fix:** skip unmatched keys (preferred), or derive fallback labels from the scrobble row.
-
-**#6 (observability half) — surface skipped-row counts**
-- The hardened loader skips bad rows silently except in logs; `reload()` returns only
-  `{tracks, scrobbles}`.
-- **Fix:** return skipped-row counts from `reload()` and surface them in `/api/reload`.
-  Keep strict validation on the pipeline/CLI paths.
+## Open / deferred
 
 **#7 — Metrics rebuild aggregates per request — DEFERRED (no action)**
 - Data is cached in-memory at module load; no per-request JSONL re-reads. Aggregates
   recompute per request, but the library is tiny — premature optimization at current
   scale. Revisit with a future `app.cache` index layer only if the library grows.
-
-### P3
-
-**#8 — JSONL parsing duplicated (narrow scope)**
-- `pipeline/schema.py:read_jsonl()` exists with line-aware errors, but the merged
-  `pipeline/export_tunemymusic.export_pending()` and `scripts/generate_library_js.py`
-  parse with raw `json.loads`.
-- **Fix:** switch **only those two files** to `read_jsonl`. Do **not** do the broader
-  ~11-file sweep — that's unrelated churn.
 
 ---
 
