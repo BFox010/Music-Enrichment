@@ -138,7 +138,7 @@ function buildDrill(rawTracks, scrobbleRows) {
   }
   const mk = () => ({ genres: {}, moods: {}, tracks: {}, total: 0 });
   const season = {}, hour = {}, dow = {};
-  for (const s of SEASONS_LIST) season[s] = mk();
+  for (const s of SEASONS_LIST) { season[s] = mk(); season[s].byHour = new Array(24).fill(0); }
   for (let h = 0; h < 24; h++) hour[h] = mk();
   for (let d = 0; d < 7; d++) dow[d] = mk();
   const bump = (bucket, gi) => {
@@ -151,7 +151,7 @@ function buildDrill(rawTracks, scrobbleRows) {
     const gi = info.get(trackKey(sc));
     if (!gi) continue;
     const se = sc.season || (sc.month ? SEASON_BY_MONTH[sc.month] : null);
-    if (se && season[se]) bump(season[se], gi);
+    if (se && season[se]) { bump(season[se], gi); if (sc.hour != null) season[se].byHour[sc.hour]++; }
     if (sc.hour != null && hour[sc.hour]) bump(hour[sc.hour], gi);
     if (sc.day_of_week != null && dow[sc.day_of_week]) bump(dow[sc.day_of_week], gi);
   }
@@ -635,7 +635,7 @@ function App() {
           </section>
           {drill && drillSel && drillSel.type === "season" && (
             <section className="block">
-              <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} />
+              <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} views />
             </section>
           )}
           <section className="block">
