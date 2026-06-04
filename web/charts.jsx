@@ -2,7 +2,7 @@
    charts.jsx — presentational chart components (React)
    All styling via themes.css classNames + CSS vars.
    ============================================================ */
-const { useMemo } = React;
+const { useMemo, useState } = React;
 
 /* genre color ramp — derived from --accent at runtime via CSS color-mix-ish.
    We use fixed hues that read well on dark and harmonize per theme accent. */
@@ -147,14 +147,14 @@ function Seasons({ data, total, onPick, activeKey }) {
 function _topN(obj, n) {
   return Object.entries(obj || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
 }
-function DrillRows({ items, accent }) {
+function DrillRows({ items, accent, plain }) {
   const max = items.length ? items[0][1] : 1;
   if (!items.length) return <div className="dr-empty">No tagged plays in this slice</div>;
   return (
     <div className="drill-rows">
       {items.map(([k, v]) => (
         <div className="drill-row" key={k}>
-          <span className="dr-name">{k}</span>
+          <span className={"dr-name" + (plain ? " plain" : "")} title={k}>{k}</span>
           <div className="dr-track"><div className="dr-fill" style={{ width: (v / max) * 100 + "%", background: accent || "var(--accent)" }}></div></div>
           <span className="dr-val num">{v.toLocaleString()}</span>
         </div>
@@ -162,9 +162,50 @@ function DrillRows({ items, accent }) {
     </div>
   );
 }
-function DrillPanel({ label, slice, onClose }) {
+/* Radial (polar) clock of plays-by-hour for a slice — visually distinct from
+   the linear "When the music plays" bars. Pure SVG, no ECharts. */
+function RadialHours({ data, accent }) {
+  const arr = (Array.isArray(data) && data.length === 24) ? data : new Array(24).fill(0);
+  const total = arr.reduce((a, b) => a + b, 0);
+  if (!total) return <div className="dr-empty">No time-of-day data in this slice</div>;
+  const max = Math.max(...arr, 1);
+  const peak = arr.indexOf(max);
+  const cx = 108, cy = 108, innerR = 20, maxR = 86, tickR = 100;
+  const pol = (r, a) => [cx + r * Math.cos(a), cy + r * Math.sin(a)];
+  const ang = (h) => (h / 24) * 2 * Math.PI - Math.PI / 2;
+  const wedge = (h, v) => {
+    const r = innerR + (maxR - innerR) * (v / max);
+    const a0 = ang(h) + 0.014, a1 = ang(h + 1) - 0.014;
+    const [x0, y0] = pol(innerR, a0), [x1, y1] = pol(r, a0);
+    const [x2, y2] = pol(r, a1), [x3, y3] = pol(innerR, a1);
+    return `M${x0},${y0} L${x1},${y1} A${r},${r} 0 0 1 ${x2},${y2} L${x3},${y3} A${innerR},${innerR} 0 0 0 ${x0},${y0} Z`;
+  };
+  const ticks = [["12a", 0], ["6a", 6], ["12p", 12], ["6p", 18]];
+  return (
+    <div className="radial-hours">
+      <svg viewBox="0 0 216 216" role="img" aria-label="Scrobbles by time of day">
+        <circle cx={cx} cy={cy} r={maxR} className="rh-ring" />
+        <circle cx={cx} cy={cy} r={innerR} className="rh-ring" />
+        {arr.map((v, h) => (
+          <path key={h} d={wedge(h, v)} className={"rh-wedge" + (h === peak ? " peak" : "")}
+                style={{ fill: h === peak ? "var(--good)" : (accent || "var(--accent)"), fillOpacity: 0.35 + 0.6 * (v / max) }}>
+            <title>{fmt12full(h)} — {v.toLocaleString()} plays</title>
+          </path>
+        ))}
+        {ticks.map(([lab, h]) => {
+          const [tx, ty] = pol(tickR, ang(h));
+          return <text key={h} x={tx} y={ty} className="rh-tick" dominantBaseline="middle" textAnchor="middle">{lab}</text>;
+        })}
+      </svg>
+    </div>
+  );
+}
+function DrillPanel({ label, slice, onClose, views }) {
+  const [view, setView] = useState("tags"); // "tags" | "tracks"
   const genres = _topN(slice && slice.genres, 6);
   const moods = _topN(slice && slice.moods, 6);
+  const tracks = _topN(slice && slice.tracks, 8);
+  const showTracks = views && view === "tracks";
   return (
     <div className="drill-panel">
       <div className="drill-head">
@@ -175,6 +216,26 @@ function DrillPanel({ label, slice, onClose }) {
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6L6 18M6 6l12 12" /></svg>
         </button>
       </div>
+      {views && (
+        <div className="drill-views">
+          <div className="seg" role="group">
+            <button aria-pressed={view === "tags"} onClick={() => setView("tags")}>Genres &amp; moods</button>
+            <button aria-pressed={view === "tracks"} onClick={() => setView("tracks")}>Tracks &amp; time</button>
+          </div>
+        </div>
+      )}
+      {showTracks ? (
+        <div className="drill-cols">
+          <div className="drill-col">
+            <div className="drill-coltitle">Top tracks</div>
+            <DrillRows items={tracks} accent="var(--accent-2)" plain />
+          </div>
+          <div className="drill-col">
+            <div className="drill-coltitle">Scrobbles by time of day</div>
+            <RadialHours data={slice && slice.byHour} accent="var(--accent)" />
+          </div>
+        </div>
+      ) : (
       <div className="drill-cols">
         <div className="drill-col">
           <div className="drill-coltitle">Top genres</div>
@@ -185,6 +246,7 @@ function DrillPanel({ label, slice, onClose }) {
           <DrillRows items={moods} accent="var(--good)" />
         </div>
       </div>
+      )}
     </div>
   );
 }

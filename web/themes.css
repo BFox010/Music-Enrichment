@@ -643,10 +643,23 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .drill-rows { display: flex; flex-direction: column; gap: 9px; }
 .drill-row { display: grid; grid-template-columns: 104px 1fr auto; align-items: center; gap: 12px; }
 .dr-name { font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: capitalize; }
+.dr-name.plain { text-transform: none; color: var(--text); }
 .dr-track { height: 9px; background: var(--track-bg); border-radius: var(--bar-radius); overflow: hidden; }
 .dr-fill { height: 100%; border-radius: var(--bar-radius); transition: width .5s cubic-bezier(.2,.7,.2,1); }
 .dr-val { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; font-weight: 600; min-width: 30px; text-align: right; }
 .dr-empty { color: var(--faint); font-size: 12px; font-style: italic; }
+
+/* drill view toggle (Genres & moods  ·  Tracks & time) */
+.drill-views { margin-bottom: 16px; }
+.drill-views .seg { padding: 3px; }
+.drill-views .seg button { font-size: 12px; padding: 6px 13px; }
+
+/* radial (polar) clock of plays-by-hour for a slice */
+.radial-hours { display: flex; align-items: center; justify-content: center; padding: 2px 0; }
+.radial-hours svg { width: 100%; max-width: 230px; height: auto; }
+.rh-ring { fill: none; stroke: var(--line); stroke-width: 1; }
+.rh-wedge { stroke: var(--bg); stroke-width: 0.6; transition: fill-opacity .2s; }
+.rh-tick { fill: var(--muted-s); font-family: var(--font-mono); font-size: 9px; letter-spacing: .04em; }
 
 /* audio-feature extremes (top/bottom tracks per feature) */
 .afx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
