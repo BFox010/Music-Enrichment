@@ -161,9 +161,11 @@ async def lastfm_sync():
 @app.post("/api/refresh")
 async def api_refresh():
     """Full-chain refresh: sync scrobbles → pipeline → export pending → reload."""
-    from app.refresh import refresh as _refresh
+    from app.refresh import refresh as _refresh, RefreshInProgress
     try:
         return await _refresh()
+    except RefreshInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

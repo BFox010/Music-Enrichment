@@ -30,7 +30,7 @@ class TestRefresh:
             assert kwargs["start_from"] == "2"
             assert kwargs["skip_tests"] is True
             assert kwargs["skip_pause"] is True
-            return {"2": True, "3a": True}
+            return {"2": "ok", "3a": "ok"}
 
         def fake_export_pending():
             call_order.append("export_pending")
@@ -56,7 +56,7 @@ class TestRefresh:
             return {"new": 3, "fetched": 3, "total": 50, "pages_fetched": 1}
 
         def fake_pipeline(**kwargs):
-            return {"2": True}
+            return {"2": "ok"}
 
         def fake_export_pending():
             return 7
@@ -74,7 +74,7 @@ class TestRefresh:
             result = self._run(refresh())
 
         assert result["sync"]["new"] == 3
-        assert result["pipeline"] == {"2": True}
+        assert result["pipeline"] == {"2": "ok"}
         assert result["pending_exportify"] == 7
         assert result["cache"]["tracks"] == 100
 
@@ -100,6 +100,68 @@ class TestRefresh:
         assert received["start_from"] == "2"
         assert received["skip_tests"] is True
         assert received["skip_pause"] is True
+
+    def test_failed_phase_aborts_before_export_and_reload(self):
+        """A FAILED phase must raise and skip export/reload; SKIPPED is benign."""
+        side_effects = []
+
+        async def fake_sync(_path):
+            return {"new": 1, "fetched": 1, "total": 10, "pages_fetched": 1}
+
+        def fake_pipeline(**kwargs):
+            # 3c skipped (no Exportify CSV) is fine; 8 failed is not.
+            return {"2": "ok", "3c": "skipped", "8": "failed"}
+
+        def fake_export_pending():
+            side_effects.append("export_pending")
+            return 0
+
+        def fake_reload():
+            side_effects.append("reload")
+            return {}
+
+        with (
+            patch("app.refresh.lastfm_sync.sync", new=fake_sync),
+            patch("app.refresh._pipeline_run", new=fake_pipeline),
+            patch("app.refresh.export_tunemymusic.export_pending", new=fake_export_pending),
+            patch("app.refresh.data.reload", new=fake_reload),
+        ):
+            from app.refresh import refresh
+            with pytest.raises(RuntimeError, match="8"):
+                self._run(refresh())
+
+        # Neither export nor cache reload ran off the broken pipeline.
+        assert side_effects == []
+
+    def test_skipped_only_phases_do_not_abort(self):
+        """SKIPPED phases alone (e.g. no Exportify CSV) must not fail a refresh."""
+        async def fake_sync(_path):
+            return {"new": 0, "fetched": 0, "total": 0, "pages_fetched": 0}
+
+        def fake_pipeline(**kwargs):
+            return {"2": "ok", "3c": "skipped", "4b": "skipped"}
+
+        with (
+            patch("app.refresh.lastfm_sync.sync", new=fake_sync),
+            patch("app.refresh._pipeline_run", new=fake_pipeline),
+            patch("app.refresh.export_tunemymusic.export_pending", return_value=0),
+            patch("app.refresh.data.reload", return_value={"tracks": 1, "scrobbles": 1}),
+        ):
+            from app.refresh import refresh
+            result = self._run(refresh())
+
+        assert result["cache"] == {"tracks": 1, "scrobbles": 1}
+
+    def test_concurrent_refresh_raises_in_progress(self):
+        """A second refresh while one holds the lock fails fast, no work done."""
+        from app.refresh import refresh, _refresh_lock, RefreshInProgress
+
+        async def scenario():
+            async with _refresh_lock:  # simulate an in-flight refresh
+                with pytest.raises(RefreshInProgress):
+                    await refresh()
+
+        self._run(scenario())
 
 
 # ── API: POST /api/refresh ────────────────────────────────────────────────────
@@ -139,6 +201,17 @@ class TestApiRefresh:
             r = client.post("/api/refresh")
         assert r.status_code == 400
         assert "LASTFM_API_KEY" in r.json()["detail"]
+
+    def test_refresh_endpoint_returns_409_when_in_progress(self, client):
+        from app.refresh import RefreshInProgress
+
+        async def busy():
+            raise RefreshInProgress("a refresh is already running")
+
+        with patch("app.refresh.refresh", new=busy):
+            r = client.post("/api/refresh")
+        assert r.status_code == 409
+        assert "already running" in r.json()["detail"]
 
 
 # ── Unit: export_pending() ────────────────────────────────────────────────────
