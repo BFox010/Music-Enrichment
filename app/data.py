@@ -19,19 +19,23 @@ logger = logging.getLogger(__name__)
 
 _tracks: list[dict] = []
 _scrobbles: list[dict] = []
+_tracks_skipped: int = 0
+_scrobbles_skipped: int = 0
 _tracks_path: Path = TRACKS_PATH
 _scrobbles_path: Path = SCROBBLES_PATH
 
 
-def _load_jsonl(path: Path) -> list[dict]:
+def _load_jsonl(path: Path) -> tuple[list[dict], int]:
     """Load a JSONL file, skipping malformed lines instead of crashing.
 
     This module loads at import time, so a single bad line must not take down
-    the whole API. Unparseable rows are logged and skipped.
+    the whole API. Unparseable rows are logged and skipped. Returns the parsed
+    rows plus the number of rows skipped, so callers can surface corruption.
     """
     if not path.exists():
-        return []
+        return [], 0
     rows: list[dict] = []
+    skipped = 0
     with open(path, "r", encoding="utf-8") as fh:
         for line_no, line in enumerate(fh, start=1):
             line = line.strip()
@@ -41,23 +45,29 @@ def _load_jsonl(path: Path) -> list[dict]:
                 row = json.loads(line)
             except json.JSONDecodeError:
                 logger.warning("skipping malformed JSONL row %s:%d", path, line_no)
+                skipped += 1
                 continue
             if isinstance(row, dict):
                 rows.append(row)
             else:
                 logger.warning("skipping non-object JSONL row %s:%d", path, line_no)
-    return rows
+                skipped += 1
+    return rows, skipped
 
 
 def load() -> None:
-    global _tracks, _scrobbles
-    _tracks = _load_jsonl(_tracks_path)
-    _scrobbles = _load_jsonl(_scrobbles_path)
+    global _tracks, _scrobbles, _tracks_skipped, _scrobbles_skipped
+    _tracks, _tracks_skipped = _load_jsonl(_tracks_path)
+    _scrobbles, _scrobbles_skipped = _load_jsonl(_scrobbles_path)
 
 
 def reload() -> dict:
     load()
-    return {"tracks": len(_tracks), "scrobbles": len(_scrobbles)}
+    return {
+        "tracks": len(_tracks),
+        "scrobbles": len(_scrobbles),
+        "skipped": {"tracks": _tracks_skipped, "scrobbles": _scrobbles_skipped},
+    }
 
 
 def get_tracks() -> list[dict]:
@@ -74,11 +84,18 @@ def use_paths(
 ) -> Generator[None, None, None]:
     """Temporarily redirect data loading to the given paths (for tests)."""
     global _tracks_path, _scrobbles_path, _tracks, _scrobbles
-    saved = (_tracks_path, _scrobbles_path, _tracks, _scrobbles)
+    global _tracks_skipped, _scrobbles_skipped
+    saved = (
+        _tracks_path, _scrobbles_path, _tracks, _scrobbles,
+        _tracks_skipped, _scrobbles_skipped,
+    )
     _tracks_path = tracks_path
     _scrobbles_path = scrobbles_path
     load()
     try:
         yield
     finally:
-        _tracks_path, _scrobbles_path, _tracks, _scrobbles = saved
+        (
+            _tracks_path, _scrobbles_path, _tracks, _scrobbles,
+            _tracks_skipped, _scrobbles_skipped,
+        ) = saved

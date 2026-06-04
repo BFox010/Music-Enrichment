@@ -531,19 +531,22 @@ function _albumHue(s) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % 360;
 }
-function AlbumsPage({ active }) {
+function AlbumsPage({ active, refreshVersion = 0 }) {
   const [data, setData] = useState(null);
   const [sort, setSort] = useState("plays");
   const [loading, setLoading] = useState(true);
+  const loadedVer = useRef(-1);
 
   useEffect(() => {
-    if (!active || data) return;
+    if (!active) return;
+    if (loadedVer.current === refreshVersion) return;  // already loaded for this version
+    loadedVer.current = refreshVersion;                // claim up-front to avoid double-fetch
     setLoading(true);
     fetch("/api/albums?top=60&min_tracks=3")
       .then((r) => r.json())
       .then((d) => { setData(d); setLoading(false); })
-      .catch(() => setLoading(false));
-  }, [active, data]);
+      .catch(() => { loadedVer.current = -1; setLoading(false); });  // allow retry on failure
+  }, [active, refreshVersion]);
 
   const rows = useMemo(() => {
     if (!data) return [];
@@ -736,20 +739,24 @@ function FfSparkline({ sparkline, peakYear, recentStart }) {
 }
 
 /* ── Forgotten Favorites page ───────────────────────────────────────────── */
-function ForgottenFavoritesPage({ active }) {
+function ForgottenFavoritesPage({ active, refreshVersion = 0 }) {
   const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [shown, setShown] = useState(25);
+  const loadedVer = useRef(-1);
 
   useEffect(() => {
-    if (!active || items !== null) return;
+    if (!active) return;
+    if (loadedVer.current === refreshVersion) return;  // already loaded for this version
+    loadedVer.current = refreshVersion;                // claim up-front to avoid double-fetch
     setLoading(true);
+    setError(null);
     fetch("/api/forgotten-favorites?top=100")
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => { setItems(d); setLoading(false); })
-      .catch((e) => { setError(String(e)); setLoading(false); });
-  }, [active]);
+      .catch((e) => { loadedVer.current = -1; setError(String(e)); setLoading(false); });
+  }, [active, refreshVersion]);
 
   if (!active) return null;
 

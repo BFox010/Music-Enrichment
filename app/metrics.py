@@ -297,10 +297,18 @@ def forgotten_favorites(
         return f"{a}\x00{t}"
 
     yearly: dict[str, Counter] = defaultdict(Counter)
+    scrobble_labels: dict[str, dict] = {}
     for s in scrobbles:
         yr = s.get("year")
-        if yr is not None:
-            yearly[_key(s)][int(yr)] += 1
+        if yr is None:
+            continue
+        k = _key(s)
+        yearly[k][int(yr)] += 1
+        # Keep a display label from the scrobble itself as a fallback for keys
+        # that have no matching row in tracks.jsonl (avoids blank artist/track).
+        scrobble_labels.setdefault(
+            k, {"artist": s.get("artist") or "", "track": s.get("track") or ""}
+        )
 
     track_info: dict[str, dict] = {_key(t): t for t in tracks}
 
@@ -326,10 +334,15 @@ def forgotten_favorites(
 
         last_heard = max(y for y in by_year if by_year[y] > 0)
         info = track_info.get(key, {})
+        label = scrobble_labels.get(key, {})
+        artist = (info.get("artist") or label.get("artist") or "").strip()
+        track = (info.get("track") or label.get("track") or "").strip()
+        if not artist and not track:
+            continue  # no usable label in tracks or scrobbles — skip blank row
         result.append(
             {
-                "artist": info.get("artist") or "",
-                "track": info.get("track") or "",
+                "artist": artist,
+                "track": track,
                 "release_year": info.get("release_year"),
                 "genres": (info.get("genres") or [])[:2],
                 "moods": (info.get("mood_tags") or [])[:2],
