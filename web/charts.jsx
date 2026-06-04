@@ -189,6 +189,69 @@ function DrillPanel({ label, slice, onClose }) {
   );
 }
 
+/* ---- Audio-feature extremes: top/bottom tracks per feature ----
+   Front-end only: reads per-track audio features off the normalized `tracks`
+   array (t.af), so no extra fetch/endpoint is needed. Colors mirror the
+   histogram colors used by the Audio Features charts. */
+const AUDIO_FEATURES = [
+  ["energy",       "Energy",       "#e040fb"],
+  ["valence",      "Valence",      "#40c4ff"],
+  ["danceability", "Danceability", "#69f0ae"],
+  ["acousticness", "Acousticness", "#ffab40"],
+];
+function AfxRows({ items, color }) {
+  if (!items.length) return <div className="dr-empty">No tracks with this feature</div>;
+  return (
+    <div className="afx-rows">
+      {items.map((t, i) => (
+        <div className="afx-row" key={t.i}>
+          <span className="afx-rank num">{i + 1}</span>
+          <div className="afx-meta">
+            <div className="afx-track" title={t.track}>{t.track}</div>
+            <div className="afx-artist" title={t.artist}>{t.artist}</div>
+          </div>
+          <div className="afx-bar"><span style={{ width: Math.round(t._v * 100) + "%", background: color }}></span></div>
+          <span className="afx-val">{t._v.toFixed(2)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+function AudioFeatureExtremes({ tracks, n = 12 }) {
+  return (
+    <>
+      {AUDIO_FEATURES.map(([key, label, color]) => {
+        const rated = (tracks || [])
+          .filter((t) => t.af && t.af[key] != null && isFinite(+t.af[key]))
+          .map((t) => ({ ...t, _v: +t.af[key] }))
+          .sort((a, b) => b._v - a._v);
+        const top = rated.slice(0, n);
+        const bottom = rated.slice(-n).reverse(); // lowest first
+        return (
+          <section className="block" key={key}>
+            <div className="card">
+              <div className="card-head">
+                <h3 className="card-title">{label}</h3>
+                <span className="card-meta">top &amp; bottom {n} · {rated.length.toLocaleString()} rated tracks</span>
+              </div>
+              <div className="afx-grid">
+                <div>
+                  <div className="afx-col-title">Most {label.toLowerCase()}</div>
+                  <AfxRows items={top} color={color} />
+                </div>
+                <div>
+                  <div className="afx-col-title">Least {label.toLowerCase()}</div>
+                  <AfxRows items={bottom} color={color} />
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+      })}
+    </>
+  );
+}
+
 /* ---- Seasonal favorites: 4-up genres/moods/tracks per season ---- */
 function SeasonalFavorites({ drill }) {
   const order = [["winter", "❄", "Winter"], ["spring", "✿", "Spring"], ["summer", "☀", "Summer"], ["fall", "🍂", "Fall"]];

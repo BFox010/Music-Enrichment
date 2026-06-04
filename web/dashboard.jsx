@@ -660,6 +660,7 @@ function App() {
         {/* ── PAGE: Audio Features ────────────────────────────────── */}
         <div style={{ display: page === "audio" ? "" : "none" }}>
           {AudioFeaturesChart && <AudioFeaturesChart active={page === "audio"} />}
+          <AudioFeatureExtremes tracks={tracks} />
         </div>
 
         {/* ── PAGE: Albums ────────────────────────────────────────── */}

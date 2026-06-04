@@ -28,6 +28,26 @@
 <body>
   <div id="root"></div>
 
+  <!-- ngrok's free tier returns an HTML interstitial instead of JSON unless
+       this header is present; add it to same-origin requests so the SPA's
+       API fetches always receive JSON. Installed before any component runs. -->
+  <script>
+    (function () {
+      var _fetch = window.fetch.bind(window);
+      window.fetch = function (input, init) {
+        init = init || {};
+        var url = typeof input === "string" ? input : (input && input.url) || "";
+        var sameOrigin = !/^https?:\/\//i.test(url) || url.indexOf(location.origin) === 0;
+        if (sameOrigin) {
+          var h = new Headers((init && init.headers) || (input && input.headers) || {});
+          h.set("ngrok-skip-browser-warning", "true");
+          init = Object.assign({}, init, { headers: h });
+        }
+        return _fetch(input, init);
+      };
+    })();
+  </script>
+
   <!-- React + Babel (pinned) -->
   <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
