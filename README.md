@@ -143,17 +143,18 @@ py -3.13 -m pipeline.run_full_pipeline --start-from 4
 
 ## Schema version policy
 
-Canonical version lives in `SCHEMA_VERSION` ([pipeline/config.py:49](pipeline/config.py)).
-Current value: `"1.0.0"` _(target: `5`, to be migrated in Phase α Step 2)._
+Canonical version lives in `SCHEMA_VERSION` ([pipeline/config.py](pipeline/config.py)).
+Current value: `5` (integer, monotonic). The manifest pins the same value in
+[pipeline_manifest.yaml](pipeline_manifest.yaml).
 
 Rules:
 
-- Every JSONL record must emit `_schema_version` as its **first** field (target state — being introduced in Phase α Step 2).
+- Every JSONL record emits `_schema_version` as its **first** field (shipped in schema v5; `read_jsonl` also loads legacy records without it).
 - Writers emit fields in stable, documented order. [pipeline/schema.py](pipeline/schema.py) defines `FIELD_DEFAULTS` in canonical write order.
-- Readers silently ignore unknown fields. Forward-compat is preserved by `fill_defaults()` in [pipeline/schema.py:95](pipeline/schema.py).
+- Readers silently ignore unknown fields. Forward-compat is preserved by `fill_defaults()` in [pipeline/schema.py](pipeline/schema.py).
 - Minor additive fields **do not** bump the schema version.
 - Breaking renames or removals **do** bump the schema version. Migration tests required.
-- Required migration tests (target): v4 reader on v5 file · v5 roundtrip · unknown future fields ignored.
+- Migration tests live in [tests/test_schema_v5.py](tests/test_schema_v5.py): v5 roundtrip · legacy-record compat · unknown future fields preserved.
 
 Canonical track identity priority (used for all cross-phase joins):
 
