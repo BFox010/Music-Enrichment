@@ -205,6 +205,7 @@ function App() {
   const [dzShow, setDzShow] = useState(false);
   const [toast, setToast] = useState("");
   const [refreshing, setRefreshing] = useState(false);
+  const [isLoadingLive, setIsLoadingLive] = useState(true);
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
@@ -291,12 +292,20 @@ function App() {
   /* try fetching real files if served alongside (e.g. in the repo) */
   useEffect(() => {
     let cancelled = false;
+    // Yield to the browser so the app shell can paint before we run the
+    // synchronous JSONL parse + aggregation (otherwise a big main-thread block
+    // can make a freshly-loaded mobile page feel frozen).
+    const yieldToPaint = () => new Promise((resolve) => {
+      (window.requestIdleCallback || ((cb) => setTimeout(cb, 0)))(resolve);
+    });
     (async () => {
       try {
         const [tr, sc] = await Promise.allSettled([
           fetch("tracks.jsonl").then((r) => r.ok ? r.text() : Promise.reject()),
           fetch("scrobbles.jsonl").then((r) => r.ok ? r.text() : Promise.reject())
         ]);
+        if (cancelled) return;
+        await yieldToPaint();
         if (cancelled) return;
         const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
         const scRows = sc.status === "fulfilled" ? parseJSONL(sc.value) : null;
@@ -310,6 +319,7 @@ function App() {
           showToast("Loaded your live library from the repo");
         }
       } catch (e) { /* sample stays */ }
+      finally { if (!cancelled) setIsLoadingLive(false); }
     })();
     return () => { cancelled = true; };
   }, [showToast]);
@@ -483,7 +493,7 @@ function App() {
           <h1>Music Dashboard</h1>
           <div className="appbar-meta">
             <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {meta.scrobbleRange}</span>
-            <span className={"pill-live" + (meta.isSample ? "" : " real")}>{meta.isSample ? "sample data" : "live data"}</span>
+            <span className={"pill-live" + (isLoadingLive ? " loading" : meta.isSample ? "" : " real")}>{isLoadingLive ? "loading library…" : meta.isSample ? "sample data" : "live data"}</span>
           </div>
         </div>
         <div className="appbar-actions">

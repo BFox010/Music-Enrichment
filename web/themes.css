@@ -105,6 +105,8 @@ a { color: inherit; }
   padding: 2px 8px; border-radius: var(--radius-pill); border: 1px solid var(--line); color: var(--text-2);
 }
 .appbar-meta .pill-live.real { color: var(--good); border-color: color-mix(in oklab, var(--good) 40%, var(--line)); }
+.appbar-meta .pill-live.loading { color: var(--accent); border-color: color-mix(in oklab, var(--accent) 40%, var(--line)); animation: pill-pulse 1.2s ease-in-out infinite; }
+@keyframes pill-pulse { 0%, 100% { opacity: 1; } 50% { opacity: .5; } }
 .appbar-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 
 .layout { display: flex; flex: 1; min-height: 0; }

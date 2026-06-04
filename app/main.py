@@ -9,9 +9,10 @@ import os
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pipeline.config import SCROBBLES_PATH, TRACKS_PATH
 
@@ -27,6 +28,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Gzip every response above the threshold. This transparently compresses the
+# multi-MB JSONL data endpoints and all static assets (CSS/JSX), which is the
+# single biggest win for slow tunnelled mobile loads.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Load data eagerly at import time; tests override via data.use_paths().
 data.load()
@@ -170,18 +176,32 @@ async def api_refresh():
         raise HTTPException(status_code=400, detail=str(exc))
 
 
+def _conditional_file(path, request: Request, media_type: str):
+    """Serve a file with an ETag-based conditional GET.
+
+    A bare ``FileResponse`` does not handle ``304`` on its own, so repeat
+    visits would re-download megabytes. The ETag is derived from the file's
+    mtime+size, so it changes after a ``reload()``/sync and keeps data fresh
+    while making unchanged repeat loads a cheap ``304``.
+    """
+    if not path.exists():
+        raise HTTPException(404, f"{path.name} not found")
+    st = path.stat()
+    etag = f'W/"{int(st.st_mtime)}-{st.st_size}"'
+    cache_headers = {"ETag": etag, "Cache-Control": "public, max-age=0, must-revalidate"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=cache_headers)
+    return FileResponse(str(path), media_type=media_type, headers=cache_headers)
+
+
 @app.get("/tracks.jsonl")
-def serve_tracks_jsonl():
-    if not TRACKS_PATH.exists():
-        raise HTTPException(404, "tracks.jsonl not found")
-    return FileResponse(str(TRACKS_PATH), media_type="application/x-ndjson")
+def serve_tracks_jsonl(request: Request):
+    return _conditional_file(TRACKS_PATH, request, "application/x-ndjson")
 
 
 @app.get("/scrobbles.jsonl")
-def serve_scrobbles_jsonl():
-    if not SCROBBLES_PATH.exists():
-        raise HTTPException(404, "scrobbles.jsonl not found")
-    return FileResponse(str(SCROBBLES_PATH), media_type="application/x-ndjson")
+def serve_scrobbles_jsonl(request: Request):
+    return _conditional_file(SCROBBLES_PATH, request, "application/x-ndjson")
 
 
 # Mount static files last so API routes take precedence.
