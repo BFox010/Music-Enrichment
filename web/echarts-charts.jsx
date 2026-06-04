@@ -634,6 +634,12 @@ function TagConstellation({ active }) {
         const maxWeight = edges.reduce((m, e) => Math.max(m, e.weight), 1);
         const nodeColor = (i, n) =>
           `hsl(${Math.round((i / Math.max(n - 1, 1)) * 260 + 200)}, 58%, 50%)`;
+        // Seed each node on a circle so the force layout starts from a 2-D
+        // spread instead of all-zero coordinates (which spawn the nodes on one
+        // horizontal line and whip them across the screen until dragged).
+        const cw = chart.current.getWidth(), ch = chart.current.getHeight();
+        const cx = cw / 2, cy = ch / 2;
+        const R  = Math.min(cw, ch) * 0.36;
 
         chart.current.setOption({
           backgroundColor: "transparent",
@@ -646,7 +652,7 @@ function TagConstellation({ active }) {
           },
           series: [{
             type: "graph", layout: "force",
-            force: { repulsion: 420, gravity: 0.04, edgeLength: [30, 140], layoutAnimation: true, friction: 0.65 },
+            force: { repulsion: 380, gravity: 0.12, edgeLength: [40, 140], layoutAnimation: true, friction: 0.4 },
             roam: true, draggable: true,
             label: { show: false, formatter: "{b}" },
             emphasis: { scale: true, focus: "adjacency",
@@ -654,6 +660,8 @@ function TagConstellation({ active }) {
               lineStyle: { opacity: 0.85, width: 2 } },
             data: nodes.map((d, i) => ({
               name: d.tag, value: d.count,
+              x: cx + R * Math.cos((2 * Math.PI * i) / nodes.length),
+              y: cy + R * Math.sin((2 * Math.PI * i) / nodes.length),
               symbolSize: Math.max(14, Math.sqrt(d.count / maxCount) * 72),
               itemStyle: { color: nodeColor(i, nodes.length) },
               label: { show: d.count >= maxCount * 0.08, fontSize: 11, color: c.text },

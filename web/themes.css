@@ -20,6 +20,8 @@
   --faint:     #55555f;
   --accent:    #a78bfa;
   --accent-ink:#0a0a0c;
+  --accent-2:    #fbbf24;   /* amber — decorative contrast splash */
+  --accent-2-dim:#fbbf2433; /* low-alpha amber for tints/underlines */
   --good:      #4ade80;
   --warn:      #fbbf24;
   --bad:       #fb7185;
@@ -49,6 +51,7 @@
    ============================================================ */
 * { box-sizing: border-box; }
 html, body { margin: 0; padding: 0; }
+html, body { overflow-x: hidden; }
 body {
   background: var(--bg);
   background-image: var(--bg-grad);
@@ -194,8 +197,16 @@ a { color: inherit; }
 
 /* ── Responsive sidebar ─────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .appbar { height: auto; padding: 10px 14px; gap: 12px; }
+  .appbar { height: auto; padding: 10px 14px; gap: 8px 12px; flex-wrap: wrap; }
   .appbar-meta { display: none; }
+  /* keep the title on its own row; drop the search + buttons to a full-width
+     second row so the brand is no longer crushed/hidden by the actions */
+  .appbar-brand { flex: 1 1 auto; }
+  .appbar-actions { width: 100%; gap: 8px; }
+  .appbar-actions .btn { white-space: nowrap; flex-shrink: 0; }
+  .appbar-actions .search { flex: 1 1 auto; min-width: 0; }
+  .appbar-actions .search input,
+  .appbar-actions .search input:focus { width: 100%; }
   .layout { flex-direction: column; }
   .sidebar { width: 100%; height: auto; position: static; flex-direction: row;
              padding: 8px; overflow-x: auto; overflow-y: hidden;
@@ -218,7 +229,7 @@ a { color: inherit; }
 .brand-eyebrow {
   display: flex; align-items: center; gap: 10px;
   font-family: var(--font-mono); font-size: 11px; letter-spacing: .18em;
-  text-transform: uppercase; color: var(--muted-s); font-weight: 600;
+  text-transform: uppercase; color: var(--accent-2); font-weight: 600;
 }
 .brand-eyebrow .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 12px var(--accent); }
 .brand h1 {
@@ -279,7 +290,7 @@ a { color: inherit; }
   box-shadow: var(--card-shadow); padding: 16px 16px 15px;
   display: flex; flex-direction: column; gap: 9px; min-width: 0; position: relative; overflow: hidden;
 }
-.kpi .kpi-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; }
+.kpi .kpi-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent-2); font-weight: 600; }
 .kpi .kpi-val {
   font-family: var(--kpi-family); font-weight: var(--display-weight);
   letter-spacing: var(--display-spacing); font-size: 30px; line-height: 1; color: var(--text);
@@ -420,7 +431,7 @@ section.block { margin-bottom: 16px; }
    Timeframe slicer
    ============================================================ */
 .slicer { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
-.slicer-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; }
+.slicer-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent-2); font-weight: 600; }
 .seg { display: inline-flex; padding: 4px; gap: 3px; background: var(--panel); border: var(--card-border); border-radius: var(--radius-pill); flex-wrap: wrap; }
 .seg button {
   appearance: none; border: 0; background: transparent; cursor: pointer;
@@ -554,6 +565,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 @media (max-width: 720px) {
   .app { padding: 18px 16px 70px; }
   .kpis { grid-template-columns: repeat(2, 1fr); }
+  .seasons { grid-template-columns: repeat(2, 1fr); }
   .g-2 { grid-template-columns: 1fr; }
   .search input { width: 150px; }
   .search input:focus { width: 170px; }
@@ -561,6 +573,17 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   .donut-wrap { flex-direction: column; align-items: flex-start; }
   .seg button { padding: 7px 11px; font-size: 12px; }
   .legend-item { grid-template-columns: 64px 1fr; }
+}
+@media (max-width: 480px) {
+  .app  { padding: 14px 12px 64px; }
+  .kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+  .kpi  { padding: 13px 13px 12px; }
+  .kpi .kpi-val { font-size: 25px; }
+  .seasons { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+  /* full-width, evenly-shared timeframe control that wraps cleanly */
+  .slicer { gap: 10px; }
+  .seg { width: 100%; flex-wrap: wrap; justify-content: stretch; }
+  .seg button { flex: 1 1 auto; min-width: max-content; padding: 8px 12px; text-align: center; }
 }
 
 /* density (tweak) */
@@ -581,21 +604,31 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 /* page intro header (Seasonal etc.) */
 .page-intro { margin-bottom: 20px; }
 .page-title { font-family: var(--font-display); font-weight: var(--display-weight); letter-spacing: var(--display-spacing); font-size: 26px; color: var(--text); margin: 0 0 6px; }
+.page-title::before { content: ""; display: inline-block; width: 3px; height: 0.82em; margin-right: 11px; border-radius: 2px; background: var(--accent-2); vertical-align: -1px; }
 .page-lede { color: var(--muted-s); font-size: 13.5px; line-height: 1.55; max-width: 640px; margin: 0; }
 
 /* clickable overview charts */
-.hours.interactive .hcol { cursor: pointer; }
-.hours.interactive .hcol:hover .hbarv { filter: brightness(1.3); }
+.hours.interactive .hcol { cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+@media (hover: hover) {
+  .hours.interactive .hcol:hover .hbarv { filter: brightness(1.3); }
+}
+.hours.interactive .hcol:active .hbarv { filter: brightness(1.3); }
 .hours .hcol.sel .hbarv { background: var(--accent); opacity: 1; box-shadow: 0 0 16px -2px var(--accent); }
 .hours .hcol.sel::after { content: ""; position: absolute; bottom: -7px; left: 50%; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
-.dowrow.clickable { cursor: pointer; border-radius: var(--radius-sm); transition: background .14s; }
-.dowrow.clickable:hover { background: var(--panel-2); }
+.dowrow.clickable { cursor: pointer; border-radius: var(--radius-sm); transition: background .14s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.dowrow.clickable:active { background: var(--panel-hi); }
 .dowrow.sel { background: color-mix(in oklab, var(--accent) 16%, var(--panel)); }
 .dowrow.sel .dfill { box-shadow: 0 0 12px -3px var(--accent); }
-.season.clickable { cursor: pointer; transition: border-color .15s, transform .15s, background .15s; }
-.season.clickable:hover { border-color: var(--faint); transform: translateY(-2px); }
+.season.clickable { cursor: pointer; transition: border-color .15s, transform .15s, background .15s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+.season.clickable:active { border-color: var(--accent); transform: scale(0.99); }
 .season.sel { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 13%, var(--panel-2)); }
 .season.sel .s-bar > span { box-shadow: 0 0 12px -2px var(--accent); }
+/* keep lift/background hover affordances on real pointers only, so a single
+   tap activates on touch instead of being consumed applying :hover */
+@media (hover: hover) {
+  .dowrow.clickable:hover { background: var(--panel-2); }
+  .season.clickable:hover { border-color: var(--faint); transform: translateY(-2px); }
+}
 
 /* drill-down panel */
 .drill-panel { background: var(--panel); border: 1px solid color-mix(in oklab, var(--accent) 35%, var(--line)); border-radius: var(--radius); box-shadow: var(--card-shadow); padding: 16px 18px 18px; animation: drill-in .22s cubic-bezier(.2,.7,.2,1); }
@@ -616,6 +649,19 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .dr-fill { height: 100%; border-radius: var(--bar-radius); transition: width .5s cubic-bezier(.2,.7,.2,1); }
 .dr-val { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; font-weight: 600; min-width: 30px; text-align: right; }
 .dr-empty { color: var(--faint); font-size: 12px; font-style: italic; }
+
+/* audio-feature extremes (top/bottom tracks per feature) */
+.afx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+.afx-col-title { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; margin-bottom: 12px; }
+.afx-rows { display: flex; flex-direction: column; gap: 10px; }
+.afx-row { display: grid; grid-template-columns: 18px 1fr 64px auto; align-items: center; gap: 10px; }
+.afx-rank { font-family: var(--font-mono); font-size: 11px; color: var(--faint); text-align: right; font-weight: 600; }
+.afx-meta { min-width: 0; }
+.afx-track { font-size: 12.5px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.afx-artist { font-size: 11px; color: var(--muted-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.afx-bar { height: 7px; background: var(--track-bg); border-radius: var(--bar-radius); overflow: hidden; }
+.afx-bar > span { display: block; height: 100%; border-radius: var(--bar-radius); transition: width .5s cubic-bezier(.2,.7,.2,1); }
+.afx-val { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; font-weight: 600; min-width: 30px; text-align: right; }
 
 /* seasonal favorites */
 .seasonal-grid { gap: 16px; }
@@ -696,6 +742,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   .card-meta { text-align: left; }
   .echart-wrap.tall { min-height: 460px; }
   .drill-cols { grid-template-columns: 1fr; gap: 18px; }
+  .afx-grid { grid-template-columns: 1fr; gap: 18px; }
   .album-row { grid-template-columns: 22px 38px 1fr auto; gap: 10px; }
   .album-plays { width: 84px; }
 }
