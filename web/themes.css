@@ -195,8 +195,16 @@ a { color: inherit; }
 
 /* ── Responsive sidebar ─────────────────────────────────────────────────── */
 @media (max-width: 768px) {
-  .appbar { height: auto; padding: 10px 14px; gap: 12px; }
+  .appbar { height: auto; padding: 10px 14px; gap: 8px 12px; flex-wrap: wrap; }
   .appbar-meta { display: none; }
+  /* keep the title on its own row; drop the search + buttons to a full-width
+     second row so the brand is no longer crushed/hidden by the actions */
+  .appbar-brand { flex: 1 1 auto; }
+  .appbar-actions { width: 100%; gap: 8px; }
+  .appbar-actions .btn { white-space: nowrap; flex-shrink: 0; }
+  .appbar-actions .search { flex: 1 1 auto; min-width: 0; }
+  .appbar-actions .search input,
+  .appbar-actions .search input:focus { width: 100%; }
   .layout { flex-direction: column; }
   .sidebar { width: 100%; height: auto; position: static; flex-direction: row;
              padding: 8px; overflow-x: auto; overflow-y: hidden;
