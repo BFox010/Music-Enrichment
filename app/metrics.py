@@ -8,8 +8,9 @@ but returns dicts instead of printing.
 
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
-from typing import Any
+from typing import Any, Optional
 
 from app.data import get_scrobbles, get_tracks
 
@@ -103,18 +104,80 @@ def timeline(by: str = "year") -> list[dict]:
     return [{"period": p, "plays": c} for p, c in sorted(counts.items())]
 
 
-def time_of_day() -> dict[str, Any]:
+def time_of_day(year: Optional[int] = None) -> dict[str, Any]:
+    """Calendar + hour×weekday heatmaps.
+
+    The hour×weekday density always spans the full history (more data = a
+    cleaner pattern). The calendar is filtered to ``year`` when given so the
+    grid can render one large, legible year at a time. ``years`` lists every
+    year present so the UI can build a picker.
+    """
     hw: Counter[tuple[int, int]] = Counter()
     cal: Counter[str] = Counter()
+    years: set[int] = set()
     for s in get_scrobbles():
+        if s.get("year") is not None:
+            years.add(s["year"])
         hw[(s["hour"], s["day_of_week"])] += 1
-        date = (s.get("scrobbled_at") or "")[:10]
-        if date:
-            cal[date] += 1
+        if year is None or s.get("year") == year:
+            date = (s.get("scrobbled_at") or "")[:10]
+            if date:
+                cal[date] += 1
     return {
         "hour_weekday": [[h, dow, n] for (h, dow), n in hw.items()],
         "calendar": [[date, n] for date, n in sorted(cal.items())],
+        "years": sorted(years),
     }
+
+
+def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
+    """Most-played albums, scored by total plays + how evenly listening
+    spreads across the album's tracks (Spotify-Wrapped style).
+
+    ``spread`` is normalized play-count entropy: 1.0 = plays perfectly even
+    across tracks, →0 = one track dominates. Single-track albums are skipped.
+    """
+    by_album: dict[tuple[str, str], dict] = defaultdict(
+        lambda: {"plays": [], "total": 0, "artist": "", "album": "", "years": set()}
+    )
+    for t in get_tracks():
+        album = (t.get("album") or "").strip()
+        if not album:
+            continue
+        key = (t["artist"].lower(), album.lower())
+        plays = int(t.get("play_count") or 0)
+        rec = by_album[key]
+        rec["plays"].append(plays)
+        rec["total"] += plays
+        rec["artist"] = t["artist"]
+        rec["album"] = album
+        if t.get("release_year"):
+            rec["years"].add(t["release_year"])
+
+    result: list[dict] = []
+    for rec in by_album.values():
+        n = len(rec["plays"])
+        if n < min_tracks:
+            continue
+        total = rec["total"]
+        if total > 0 and n > 1:
+            shares = [p / total for p in rec["plays"] if p > 0]
+            entropy = -sum(s * math.log(s) for s in shares) if shares else 0.0
+            spread = round(entropy / math.log(n), 3)
+        else:
+            spread = 0.0
+        result.append(
+            {
+                "album": rec["album"],
+                "artist": rec["artist"],
+                "track_count": n,
+                "plays": total,
+                "spread": spread,
+                "year": min(rec["years"]) if rec["years"] else None,
+            }
+        )
+    result.sort(key=lambda x: -x["plays"])
+    return result[:top]
 
 
 def artist_trajectory(top: int = 15) -> dict[str, Any]:
@@ -211,6 +274,77 @@ def saturation() -> list[dict]:
 _TAG_GRAPH_FIELDS: frozenset[str] = frozenset(
     ["discogs_styles", "mood_tags", "lastfm_tags"]
 )
+
+
+def forgotten_favorites(
+    top: int = 30, min_peak: int = 5, recent_years: int = 2
+) -> list[dict]:
+    """Tracks with a strong historical peak that have faded from recent listening.
+
+    Builds per-track yearly play counts from scrobbles, scores each track by
+    ``peak_plays / max(recent_plays, 1)``, and returns the most-forgotten tracks
+    sorted descending by that ratio.  Only tracks whose peak pre-dates the
+    recent window are included.
+    """
+    scrobbles = get_scrobbles()
+    tracks = get_tracks()
+    if not scrobbles:
+        return []
+
+    def _key(obj: dict) -> str:
+        a = (obj.get("artist_normalized") or obj.get("artist") or "").lower().strip()
+        t = (obj.get("track_normalized") or obj.get("track") or "").lower().strip()
+        return f"{a}\x00{t}"
+
+    yearly: dict[str, Counter] = defaultdict(Counter)
+    for s in scrobbles:
+        yr = s.get("year")
+        if yr is not None:
+            yearly[_key(s)][int(yr)] += 1
+
+    track_info: dict[str, dict] = {_key(t): t for t in tracks}
+
+    all_years = sorted({y for c in yearly.values() for y in c})
+    if not all_years:
+        return []
+    max_year = all_years[-1]
+    recent_start = max_year - recent_years + 1
+
+    result: list[dict] = []
+    for key, by_year in yearly.items():
+        peak_year = max(by_year, key=by_year.__getitem__)
+        peak_plays = by_year[peak_year]
+        if peak_plays < min_peak:
+            continue
+        if peak_year >= recent_start:
+            continue  # peaked in the recent window — not forgotten
+
+        recent_plays = sum(by_year.get(y, 0) for y in range(recent_start, max_year + 1))
+        score = round(peak_plays / max(recent_plays, 1), 2)
+        if score < 2.0:
+            continue
+
+        last_heard = max(y for y in by_year if by_year[y] > 0)
+        info = track_info.get(key, {})
+        result.append(
+            {
+                "artist": info.get("artist") or "",
+                "track": info.get("track") or "",
+                "release_year": info.get("release_year"),
+                "genres": (info.get("genres") or [])[:2],
+                "moods": (info.get("mood_tags") or [])[:2],
+                "peak_year": peak_year,
+                "peak_plays": peak_plays,
+                "recent_plays": recent_plays,
+                "total_plays": sum(by_year.values()),
+                "score": score,
+                "last_heard": last_heard,
+                "sparkline": [[y, c] for y, c in sorted(by_year.items())],
+            }
+        )
+
+    result.sort(key=lambda x: (-x["score"], -x["peak_plays"]))
+    return result[:top]
 
 
 def tag_graph(field: str = "discogs_styles", min_count: int = 15) -> dict[str, Any]:

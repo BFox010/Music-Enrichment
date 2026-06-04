@@ -262,3 +262,6 @@ HANDOFF.md
 Handoff.md
 SALVAGE_HANDOFF.md
 
+# Generated dashboard snapshot — rebuild with scripts/generate_library_js.py
+web/data/library.js
+

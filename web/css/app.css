@@ -404,3 +404,5 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; color: var(--mut
 }
 .table-footer button:hover:not([disabled]) { border-color: var(--accent); color: var(--text); }
 .table-footer button[disabled] { opacity: 0.35; cursor: default; }
+
+@keyframes spin { to { transform: rotate(360deg); } }

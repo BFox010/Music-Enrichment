@@ -65,21 +65,38 @@ def _run_pytest() -> bool:
     return True
 
 
-def _phase(phase_id: str, name: str, fn, *args, **kwargs) -> bool:
-    """Run a phase function; log success/failure. Returns True on success."""
+# Phase outcome states. "skipped" is benign (missing optional input / gated
+# phase); only "failed" signals a genuine error worth aborting a refresh over.
+OK = "ok"
+SKIPPED = "skipped"
+FAILED = "failed"
+
+
+def _phase(phase_id: str, name: str, fn, *args, **kwargs) -> str:
+    """Run a phase function; log the outcome. Returns OK / SKIPPED / FAILED."""
     log.info("=" * 60)
     log.info("Phase %s: %s", phase_id, name)
     log.info("=" * 60)
     try:
         result = fn(*args, **kwargs)
         log.info("Phase %s OK: %s", phase_id, result)
-        return True
+        return OK
     except FileNotFoundError as e:
         log.warning("Phase %s SKIPPED — missing input: %s", phase_id, e)
-        return False
+        return SKIPPED
     except Exception as e:
         log.error("Phase %s FAILED: %s", phase_id, e, exc_info=True)
-        return False
+        return FAILED
+
+
+def failed_phases(results: dict[str, str]) -> list[str]:
+    """Phase IDs that genuinely failed (FAILED), excluding benign SKIPPED.
+
+    A SKIPPED phase is expected operationally — e.g. Phase 3c when no Exportify
+    CSV is present, or a phase whose optional intermediate input is missing.
+    Callers (refresh, the CLI) treat only FAILED phases as errors.
+    """
+    return [pid for pid, status in results.items() if status == FAILED]
 
 
 def _resolve_start_index(start_from: str) -> int:
@@ -119,8 +136,12 @@ def run(
     skip_pause: bool = False,
     start_from: str = "1",
     run_log_path: Path | None = None,
-) -> dict[str, bool]:
-    """Run pipeline phases in manifest order; return dict of phase_id → success."""
+) -> dict[str, str]:
+    """Run pipeline phases in manifest order; return dict of phase_id → status.
+
+    Status is one of OK / SKIPPED / FAILED. Use ``failed_phases()`` to test for
+    genuine errors — a SKIPPED phase is an expected no-op, not a failure.
+    """
     if run_log_path is None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
         run_log_path = RUNS_DIR / f"full_run_{ts}.log"
@@ -128,22 +149,22 @@ def run(
     log.info("Pipeline run started — log: %s", run_log_path)
     log.info("Execution order: %s", get_execution_order())
 
-    results: dict[str, bool] = {}
+    results: dict[str, str] = {}
 
     start_idx = _resolve_start_index(start_from)
 
     if not skip_tests and start_idx == 0:
-        results["pytest"] = _run_pytest()
-        if not results["pytest"]:
+        results["pytest"] = OK if _run_pytest() else FAILED
+        if results["pytest"] == FAILED:
             return results
     else:
-        results["pytest"] = True
+        results["pytest"] = OK
 
     for i, phase_def in enumerate(_PHASES):
         phase_id = str(phase_def["id"])
 
         if i < start_idx:
-            results[phase_id] = True  # assumed done
+            results[phase_id] = OK  # assumed done
             continue
 
         # ── Manual phase ────────────────────────────────────────────────
@@ -158,7 +179,7 @@ def run(
                         log.info("  %s", line)
                 log.info("Stopping pipeline — re-run with --start-from %s once complete.", phase_id)
                 break
-            results[phase_id] = output_exists or skip_pause
+            results[phase_id] = OK if output_exists else SKIPPED
             continue
 
         # ── Conditional: required file gate ─────────────────────────────
@@ -168,7 +189,7 @@ def run(
                 "Phase %s SKIPPED — required file missing: %s",
                 phase_id, req_file,
             )
-            results[phase_id] = False
+            results[phase_id] = SKIPPED
             continue
 
         # ── Dynamic import + execute ─────────────────────────────────────
@@ -182,10 +203,10 @@ def run(
         except (ImportError, AttributeError) as e:
             if optional:
                 log.info("Phase %s SKIPPED — not yet implemented: %s", phase_id, e)
-                results[phase_id] = False
+                results[phase_id] = SKIPPED
             else:
                 log.error("Phase %s FAILED to import %s.%s: %s", phase_id, module_path, callable_name, e)
-                results[phase_id] = False
+                results[phase_id] = FAILED
             continue
 
         results[phase_id] = _phase(phase_id, phase_def["name"], fn)
@@ -193,8 +214,8 @@ def run(
     # ── Summary ──────────────────────────────────────────────────────────
     log.info("=" * 60)
     log.info("Pipeline summary:")
-    for phase_id, ok in results.items():
-        log.info("  %s  phase %s", "OK " if ok else "-- ", phase_id)
+    for phase_id, status in results.items():
+        log.info("  %-7s phase %s", status, phase_id)
     log.info("Output: %s", TRACKS_PATH)
     log.info("Log   : %s", run_log_path)
     log.info("=" * 60)
@@ -223,4 +244,7 @@ if __name__ == "__main__":
         skip_pause=args.skip_pause,
         start_from=args.start_from,
     )
-    sys.exit(1 if any(not ok for p, ok in results.items() if p == "pytest") else 0)
+    failed = failed_phases(results)
+    if failed:
+        log.error("Pipeline finished with failed phases: %s", ", ".join(failed))
+    sys.exit(1 if failed else 0)

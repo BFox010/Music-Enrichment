@@ -15,9 +15,10 @@ import csv
 import json
 from pathlib import Path
 
-from pipeline.config import INPUTS_DIR, TRACKS_SKELETON_PATH, configure_logging, get_logger
+from pipeline.config import INPUTS_DIR, TRACKS_PATH, TRACKS_SKELETON_PATH, configure_logging, get_logger
 
 OUTPUT_PATH = INPUTS_DIR / "tunemymusic_upload.csv"
+PENDING_OUTPUT_PATH = INPUTS_DIR / "pending_exportify.csv"
 
 log = get_logger(__name__)
 
@@ -57,6 +58,43 @@ def export(
 
     log.info("Wrote %d rows → %s", len(tracks), output_path)
     return len(tracks)
+
+
+def export_pending(
+    tracks_path: Path = TRACKS_PATH,
+    output_path: Path = PENDING_OUTPUT_PATH,
+) -> int:
+    """Write a CSV of tracks that still need Exportify audio features.
+
+    Reads tracks.jsonl (the final pipeline output), filters to tracks where
+    audio_features is null/absent, and writes Artist,Track,Album CSV.
+    The user can take this file, run it through Exportify, and drop the
+    result into inputs/exportify.csv for the next pipeline run.
+
+    Returns the number of pending tracks written (0 if all tracks have features).
+    """
+    if not tracks_path.exists():
+        log.warning("export_pending: tracks file not found: %s", tracks_path)
+        return 0
+
+    pending: list[dict] = []
+    with open(tracks_path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if line:
+                t = json.loads(line)
+                if not t.get("audio_features"):
+                    pending.append(t)
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(output_path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["Artist", "Track", "Album"])
+        for t in pending:
+            writer.writerow([t["artist"], t["track"], t.get("album", "")])
+
+    log.info("export_pending: %d tracks missing audio features → %s", len(pending), output_path)
+    return len(pending)
 
 
 if __name__ == "__main__":

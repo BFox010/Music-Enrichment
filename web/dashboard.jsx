@@ -73,7 +73,15 @@ const TIMEFRAMES = [
   ["month_this", "This month"],
   ["month_last", "Last month"]
 ];
-const CUR_YEAR = 2026, LAST_YEAR = 2025;
+// Derive the calendar windows from "now" rather than hardcoding a year, so the
+// timeframe slicer keeps working as the calendar rolls over.
+const _NOW = new Date();
+const CUR_YEAR = _NOW.getFullYear(), LAST_YEAR = CUR_YEAR - 1;
+const _pad2 = (n) => String(n).padStart(2, "0");
+const CUR_MONTH_KEY = `${CUR_YEAR}-${_pad2(_NOW.getMonth() + 1)}`;
+const _lastMonth = new Date(_NOW.getFullYear(), _NOW.getMonth() - 1, 1);
+const LAST_MONTH_KEY = `${_lastMonth.getFullYear()}-${_pad2(_lastMonth.getMonth() + 1)}`;
+
 function playInWindow(t, tf) {
   if (tf === "all" || !tf) return t.play || 0;
   if (tf === "year_this") return (t.py && t.py[CUR_YEAR]) || 0;
@@ -81,6 +89,86 @@ function playInWindow(t, tf) {
   if (tf === "month_this") return t.tm || 0;
   if (tf === "month_last") return t.lm || 0;
   return t.play || 0;
+}
+
+/* Per-track windowed play counts, computed by joining scrobbles → tracks.
+   tracks.jsonl only carries a lifetime `play_count`, so without this every
+   timeframe except "All time" reads as zero. Keyed on normalized identity. */
+function trackKey(o) {
+  const a = (o.artist_normalized || o.artist || "").toLowerCase();
+  const t = (o.track_normalized || o.track || "").toLowerCase();
+  return a + "\x00" + t;
+}
+function buildPlayWindows(scrobbleRows) {
+  const map = new Map();
+  for (const s of scrobbleRows) {
+    const k = trackKey(s);
+    let e = map.get(k);
+    if (!e) { e = { py: {}, tm: 0, lm: 0 }; map.set(k, e); }
+    if (s.year != null) e.py[s.year] = (e.py[s.year] || 0) + 1;
+    const ym = (s.scrobbled_at || "").slice(0, 7);
+    if (ym === CUR_MONTH_KEY) e.tm++;
+    else if (ym === LAST_MONTH_KEY) e.lm++;
+  }
+  return map;
+}
+function attachWindows(rawTracks, scrobbleRows) {
+  if (!scrobbleRows || !scrobbleRows.length) return rawTracks;
+  const win = buildPlayWindows(scrobbleRows);
+  for (const t of rawTracks) {
+    const e = win.get(trackKey(t));
+    if (e) { t.py = e.py; t.tm = e.tm; t.lm = e.lm; }
+  }
+  return rawTracks;
+}
+
+/* Cross-join scrobbles → tracks to count genres/moods/tracks per time slice
+   (season, hour-of-day, day-of-week). Powers the overview drill-downs and the
+   Seasonal Favorites page. Computed once at load from the in-memory rows. */
+const SEASONS_LIST = ["winter", "spring", "summer", "fall"];
+function buildDrill(rawTracks, scrobbleRows) {
+  if (!rawTracks || !scrobbleRows || !scrobbleRows.length) return null;
+  const info = new Map();
+  for (const t of rawTracks) {
+    info.set(trackKey(t), {
+      genres: Array.isArray(t.genres) ? t.genres : [],
+      moods: Array.isArray(t.mood_tags) ? t.mood_tags : (Array.isArray(t.moods) ? t.moods : []),
+      label: `${t.artist || "Unknown"} — ${t.track || "Untitled"}`,
+    });
+  }
+  const mk = () => ({ genres: {}, moods: {}, tracks: {}, total: 0 });
+  const season = {}, hour = {}, dow = {};
+  for (const s of SEASONS_LIST) season[s] = mk();
+  for (let h = 0; h < 24; h++) hour[h] = mk();
+  for (let d = 0; d < 7; d++) dow[d] = mk();
+  const bump = (bucket, gi) => {
+    bucket.total++;
+    for (const g of gi.genres) bucket.genres[g] = (bucket.genres[g] || 0) + 1;
+    for (const m of gi.moods) bucket.moods[m] = (bucket.moods[m] || 0) + 1;
+    bucket.tracks[gi.label] = (bucket.tracks[gi.label] || 0) + 1;
+  };
+  for (const sc of scrobbleRows) {
+    const gi = info.get(trackKey(sc));
+    if (!gi) continue;
+    const se = sc.season || (sc.month ? SEASON_BY_MONTH[sc.month] : null);
+    if (se && season[se]) bump(season[se], gi);
+    if (sc.hour != null && hour[sc.hour]) bump(hour[sc.hour], gi);
+    if (sc.day_of_week != null && dow[sc.day_of_week]) bump(dow[sc.day_of_week], gi);
+  }
+  return { season, hour, dow };
+}
+
+/* Single entry point used by every data-load path (initial fetch, refresh,
+   manual file drop) so windowing + drill are always built consistently. */
+function processLibrary(rawTracks, scrobbleRows) {
+  const ns = (scrobbleRows && scrobbleRows.length) ? aggregateScrobbles(scrobbleRows) : null;
+  let nt = null, drill = null;
+  if (rawTracks && rawTracks.length) {
+    attachWindows(rawTracks, scrobbleRows);
+    drill = buildDrill(rawTracks, scrobbleRows);
+    nt = rawTracks.map(normalizeTrack);
+  }
+  return { nt, ns, drill };
 }
 
 /* ---------- App ---------- */
@@ -101,7 +189,9 @@ function App() {
   const [timeframe, setTimeframe] = useState("all");
   const [shuffleSeed, setShuffleSeed] = useState(1);
   const [infoOpen, setInfoOpen] = useState(false);
-  const [filters, setFilters] = useState({ genre: "", mood: "", tag: "", decade: "", artist: "" });
+  const [filters, setFilters] = useState({ genre: "", mood: "", tag: "", decade: "", artist: "", firstFrom: "", firstTo: "" });
+  const [drill, setDrill] = useState(() => window.MUSIC_DATA && window.MUSIC_DATA.drill || null);
+  const [drillSel, setDrillSel] = useState(null); // { type: 'season'|'hour'|'dow', value }
 
   // ECharts components (assigned to window by echarts-charts.jsx, which loads before this file)
   const TimelineChart    = window.TimelineChart;
@@ -110,8 +200,11 @@ function App() {
   const AudioFeaturesChart = window.AudioFeaturesChart;
   const SaturationChart  = window.SaturationChart;
   const TagConstellation = window.TagConstellation;
+  const AlbumsPage               = window.AlbumsPage;
+  const ForgottenFavoritesPage   = window.ForgottenFavoritesPage;
   const [dzShow, setDzShow] = useState(false);
   const [toast, setToast] = useState("");
+  const [refreshing, setRefreshing] = useState(false);
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
@@ -131,24 +224,67 @@ function App() {
 
   const showToast = useCallback((msg) => { setToast(msg); setTimeout(() => setToast(""), 2600); }, []);
 
+  const doRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      const r = await fetch("/api/refresh", { method: "POST" });
+      const d = await r.json();
+      if (!r.ok) {
+        showToast("Refresh failed: " + (d.detail || r.statusText));
+        return;
+      }
+      const newCount = d.sync?.new ?? 0;
+      const pending = d.pending_exportify ?? 0;
+      const msg = newCount > 0
+        ? `+${newCount} new scrobble${newCount !== 1 ? "s" : ""} · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`
+        : `Up to date · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`;
+      showToast(msg);
+      // Re-fetch live data so the UI reflects the updated tracks/scrobbles
+      try {
+        const [tr, sc] = await Promise.allSettled([
+          fetch("tracks.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
+          fetch("scrobbles.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
+        ]);
+        const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
+        const scRows = sc.status === "fulfilled" ? parseJSONL(sc.value) : null;
+        const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
+        if (nt || ns) {
+          setData((d) => ({
+            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
+            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
+          }));
+          if (nd) setDrill(nd);
+        }
+      } catch (e) { /* live fetch optional */ }
+    } catch (e) {
+      showToast("Refresh error: " + e.message);
+    } finally {
+      setRefreshing(false);
+    }
+  }, [showToast]);
+
   /* ---------- file loading ---------- */
   const handleFiles = useCallback(async (fileList) => {
     const files = Array.from(fileList);
-    let newTracks = null, newScrob = null, names = [];
+    let rawTracks = null, rawScrob = null, names = [];
     for (const f of files) {
       const text = await f.text();
       const rows = f.name.endsWith(".json") && text.trim().startsWith("[") ? JSON.parse(text) : parseJSONL(text);
       const lname = f.name.toLowerCase();
-      if (lname.includes("scrobble")) { newScrob = aggregateScrobbles(rows); names.push(f.name); }
-      else if (lname.includes("track") || rows[0]?.canonical_track_id || rows[0]?.track) { newTracks = rows.map(normalizeTrack); names.push(f.name); }
-      else if (rows[0]?.hour != null || rows[0]?.scrobbled_at) { newScrob = aggregateScrobbles(rows); names.push(f.name); }
+      if (lname.includes("scrobble")) { rawScrob = rows; names.push(f.name); }
+      else if (lname.includes("track") || rows[0]?.canonical_track_id || rows[0]?.track) { rawTracks = rows; names.push(f.name); }
+      else if (rows[0]?.hour != null || rows[0]?.scrobbled_at) { rawScrob = rows; names.push(f.name); }
     }
+    // Defer processing until all files are read so windowed plays + drill can
+    // be joined from scrobbles regardless of the order the files arrive in.
+    const { nt: newTracks, ns: newScrob, drill: nd } = processLibrary(rawTracks, rawScrob);
     if (!newTracks && !newScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     setData((d) => ({
       meta: { ...d.meta, isSample: false, trackCount: newTracks ? newTracks.length : d.meta.trackCount, scrobbleCount: newScrob ? newScrob.total : d.meta.scrobbleCount },
       tracks: newTracks || d.tracks,
       scrobbles: newScrob || d.scrobbles
     }));
+    if (nd) setDrill(nd);
     showToast(`Loaded your data — ${names.join(", ")}`);
   }, [showToast]);
 
@@ -162,14 +298,15 @@ function App() {
           fetch("scrobbles.jsonl").then((r) => r.ok ? r.text() : Promise.reject())
         ]);
         if (cancelled) return;
-        let nt = null, ns = null;
-        if (tr.status === "fulfilled") { const rows = parseJSONL(tr.value); if (rows.length) nt = rows.map(normalizeTrack); }
-        if (sc.status === "fulfilled") { const rows = parseJSONL(sc.value); if (rows.length) ns = aggregateScrobbles(rows); }
+        const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
+        const scRows = sc.status === "fulfilled" ? parseJSONL(sc.value) : null;
+        const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
         if (nt || ns) {
           setData((d) => ({
             meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
             tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
           }));
+          if (nd) setDrill(nd);
           showToast("Loaded your live library from the repo");
         }
       } catch (e) { /* sample stays */ }
@@ -192,8 +329,9 @@ function App() {
 
   /* ---------- filtering ---------- */
   const setFilter = (kind, val) => setFilters((f) => ({ ...f, [kind]: f[kind] === val ? "" : val }));
+  const setFilterValue = (kind, val) => setFilters((f) => ({ ...f, [kind]: val }));
   const removeFilter = (kind) => setFilters((f) => ({ ...f, [kind]: "" }));
-  const clearFilters = () => setFilters({ genre: "", mood: "", tag: "", decade: "", artist: "" });
+  const clearFilters = () => setFilters({ genre: "", mood: "", tag: "", decade: "", artist: "", firstFrom: "", firstTo: "" });
 
   /* windowed play count for the active timeframe */
   const playOf = useCallback((t) => playInWindow(t, timeframe), [timeframe]);
@@ -218,6 +356,12 @@ function App() {
       if (filters.tag && !t.tags.includes(filters.tag) && !t.styles.includes(filters.tag)) return false;
       if (filters.artist && t.artist !== filters.artist) return false;
       if (filters.decade) { const d = t.release_year ? Math.floor(t.release_year / 10) * 10 : null; if (String(d) !== filters.decade) return false; }
+      if (filters.firstFrom || filters.firstTo) {
+        const fy = t.first ? parseInt(String(t.first).slice(0, 4), 10) : null;
+        if (fy == null || Number.isNaN(fy)) return false;
+        if (filters.firstFrom && fy < parseInt(filters.firstFrom, 10)) return false;
+        if (filters.firstTo && fy > parseInt(filters.firstTo, 10)) return false;
+      }
       if (q && !(t.artist.toLowerCase().includes(q) || t.track.toLowerCase().includes(q))) return false;
       return true;
     });
@@ -302,6 +446,25 @@ function App() {
   const nf = (x) => x.toLocaleString();
   const tfLabel = timeframe === "all" ? "by scrobbles" : TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase();
 
+  /* ---------- overview drill-down ---------- */
+  const DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+  const pickDrill = (type, value) => setDrillSel((cur) => (cur && cur.type === type && cur.value === value) ? null : { type, value });
+  const drillSlice = (drill && drillSel) ? drill[drillSel.type][drillSel.value] : null;
+  const drillLabel = drillSel
+    ? (drillSel.type === "season" ? drillSel.value.charAt(0).toUpperCase() + drillSel.value.slice(1) + " listening"
+      : drillSel.type === "hour" ? fmt12full(drillSel.value) + " listening"
+      : DOW_NAMES[drillSel.value] + " listening")
+    : "";
+  // available decades / first-heard years for the explorer slicers
+  const explorerRanges = useMemo(() => {
+    const decs = new Set(), yrs = new Set();
+    for (const t of tracks) {
+      if (t.release_year) decs.add(Math.floor(t.release_year / 10) * 10);
+      if (t.first) { const y = parseInt(String(t.first).slice(0, 4), 10); if (!Number.isNaN(y)) yrs.add(y); }
+    }
+    return { decades: [...decs].sort((a, b) => a - b), years: [...yrs].sort((a, b) => a - b) };
+  }, [tracks]);
+
   /* mobile-friendly feedback: toast the match count whenever filters change */
   const firstFilterRun = useRef(true);
   useEffect(() => {
@@ -328,6 +491,10 @@ function App() {
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
             <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
           </div>
+          <button className="btn" onClick={doRefresh} disabled={refreshing} title="Sync scrobbles + re-run pipeline">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }}><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
+            {refreshing ? "Refreshing…" : "Refresh"}
+          </button>
           <button className="btn" onClick={() => fileRef.current && fileRef.current.click()} title="Load your tracks.jsonl / scrobbles.jsonl">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3v12m0-12l-4 4m4-4l4 4" /><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2" /></svg>
             Load data
@@ -353,6 +520,10 @@ function App() {
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 2v10l6.6 3.8"/></svg>
               Genre &amp; Moods
             </button>
+            <button className={"sidenav-item" + (page === "albums" ? " active" : "")} onClick={() => setPage("albums")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.6"/></svg>
+              Albums
+            </button>
             <button className={"sidenav-item" + (page === "constellation" ? " active" : "")} onClick={() => setPage("constellation")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="5" cy="5" r="1.5"/><circle cx="19" cy="5" r="1.5"/><circle cx="12" cy="19" r="1.5"/><circle cx="5" cy="19" r="1.5"/><circle cx="19" cy="19" r="1.5"/><line x1="6.5" y1="5" x2="17.5" y2="5"/><line x1="5" y1="6.5" x2="5" y2="17.5"/><line x1="19" y1="6.5" x2="19" y2="17.5"/><line x1="6.5" y1="19" x2="17.5" y2="19"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>
               Tag Constellation
@@ -360,10 +531,6 @@ function App() {
             <button className={"sidenav-item" + (page === "audio" ? " active" : "")} onClick={() => setPage("audio")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
               Audio Features
-            </button>
-            <button className={"sidenav-item" + (page === "saturation" ? " active" : "")} onClick={() => setPage("saturation")}>
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><path d="M12 3v9l4 4"/></svg>
-              Saturation
             </button>
             <button className={"sidenav-item" + (page === "coverage" ? " active" : "")} onClick={() => setPage("coverage")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
@@ -382,6 +549,14 @@ function App() {
             <button className={"sidenav-item" + (page === "trajectory" ? " active" : "")} onClick={() => setPage("trajectory")}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 18c3-8 7-10 9-5s5 3 9-5"/><path d="M3 12c2-5 5-7 8-4s5 4 10-2"/><path d="M3 6c2-3 4-4 6-2s4 4 12-2"/></svg>
               Artists
+            </button>
+            <button className={"sidenav-item" + (page === "seasonal" ? " active" : "")} onClick={() => setPage("seasonal")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>
+              Seasonal
+            </button>
+            <button className={"sidenav-item" + (page === "forgotten" ? " active" : "")} onClick={() => setPage("forgotten")}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z"/><path d="M12 8v4l3 3"/><path d="M8 2.5l-2.5 2.5"/><path d="M16 2.5l2.5 2.5"/></svg>
+              Forgotten
             </button>
 
             <div className="sidenav-section">Browse</div>
@@ -425,24 +600,34 @@ function App() {
           <section className="block">
             <div className="grid g-32">
               <div className="card">
-                <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">hour of day</span></div>
-                <HourChart data={scrobbles.byHour} />
+                <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">{drill ? "hour · click to explore" : "hour of day"}</span></div>
+                <HourChart data={scrobbles.byHour} onPick={drill ? (h) => pickDrill("hour", h) : undefined} activeKey={drillSel && drillSel.type === "hour" ? drillSel.value : null} />
               </div>
               <div className="card">
-                <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">day of week</span></div>
-                <DowChart data={scrobbles.byDow} />
+                <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">{drill ? "day · click to explore" : "day of week"}</span></div>
+                <DowChart data={scrobbles.byDow} onPick={drill ? (i) => pickDrill("dow", i) : undefined} activeKey={drillSel && drillSel.type === "dow" ? drillSel.value : null} />
               </div>
             </div>
           </section>
+          {drill && drillSel && (drillSel.type === "hour" || drillSel.type === "dow") && (
+            <section className="block">
+              <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} />
+            </section>
+          )}
           <section className="block">
             <div className="card">
               <div className="card-head norule" style={{ marginBottom: 12 }}>
                 <h3 className="card-title">Seasons of listening</h3>
-                <span className="card-meta">scrobbles by season</span>
+                <span className="card-meta">{drill ? "season · click to explore" : "scrobbles by season"}</span>
               </div>
-              <Seasons data={scrobbles.bySeason} total={scrobbles.total} />
+              <Seasons data={scrobbles.bySeason} total={scrobbles.total} onPick={drill ? (s) => pickDrill("season", s) : undefined} activeKey={drillSel && drillSel.type === "season" ? drillSel.value : null} />
             </div>
           </section>
+          {drill && drillSel && drillSel.type === "season" && (
+            <section className="block">
+              <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} />
+            </section>
+          )}
           <section className="block">
             <div className="grid g-2">
               <div className="card">
@@ -477,9 +662,23 @@ function App() {
           {AudioFeaturesChart && <AudioFeaturesChart active={page === "audio"} />}
         </div>
 
-        {/* ── PAGE: Saturation ────────────────────────────────────── */}
-        <div style={{ display: page === "saturation" ? "" : "none" }}>
-          {SaturationChart && <SaturationChart active={page === "saturation"} />}
+        {/* ── PAGE: Albums ────────────────────────────────────────── */}
+        <div style={{ display: page === "albums" ? "" : "none" }}>
+          {AlbumsPage && <AlbumsPage active={page === "albums"} />}
+        </div>
+
+        {/* ── PAGE: Seasonal Favorites ────────────────────────────── */}
+        <div style={{ display: page === "seasonal" ? "" : "none" }}>
+          <div className="page-intro">
+            <h2 className="page-title">Seasonal favorites</h2>
+            <p className="page-lede">What you reach for in each season — top genres, moods, and most-played tracks, from your scrobble history.</p>
+          </div>
+          <SeasonalFavorites drill={drill} />
+        </div>
+
+        {/* ── PAGE: Forgotten Favorites ───────────────────────────── */}
+        <div style={{ display: page === "forgotten" ? "" : "none" }}>
+          {ForgottenFavoritesPage && <ForgottenFavoritesPage active={page === "forgotten"} />}
         </div>
 
         {/* ── PAGE: Tag Constellation ─────────────────────────────── */}
@@ -517,11 +716,14 @@ function App() {
               </div>
             </div>
           </section>
+          <section className="block">
+            {SaturationChart && <SaturationChart active={page === "coverage"} />}
+          </section>
         </div>
 
         {/* ── PAGE: Track Explorer ────────────────────────────────── */}
         <div style={{ display: page === "explorer" ? "" : "none" }}>
-          <FilterBar filters={filters} onRemove={removeFilter} onClear={clearFilters} sort={sort} onSort={setSort} />
+          <FilterBar filters={filters} onRemove={removeFilter} onClear={clearFilters} sort={sort} onSort={setSort} onToggle={setFilter} onRange={setFilterValue} decades={explorerRanges.decades} years={explorerRanges.years} curYear={CUR_YEAR} />
           <section className="block">
             <div className="card">
               <div className="card-head">
