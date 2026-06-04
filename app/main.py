@@ -53,8 +53,16 @@ def api_timeline(by: str = Query("year", pattern="^(year|month)$")):
 
 
 @app.get("/api/time-of-day")
-def api_time_of_day():
-    return metrics.time_of_day()
+def api_time_of_day(year: Optional[int] = Query(None)):
+    return metrics.time_of_day(year=year)
+
+
+@app.get("/api/albums")
+def api_albums(
+    top: int = Query(50, ge=1, le=500),
+    min_tracks: int = Query(2, ge=1, le=50),
+):
+    return metrics.albums(top=top, min_tracks=min_tracks)
 
 
 @app.get("/api/artist-trajectory")
@@ -103,6 +111,15 @@ def api_tracks(
     )
 
 
+@app.get("/api/forgotten-favorites")
+def api_forgotten_favorites(
+    top: int = Query(30, ge=1, le=200),
+    min_peak: int = Query(5, ge=1, le=100),
+    recent_years: int = Query(2, ge=1, le=5),
+):
+    return metrics.forgotten_favorites(top=top, min_peak=min_peak, recent_years=recent_years)
+
+
 @app.get("/api/tag-graph")
 def api_tag_graph(
     field: str = Query("discogs_styles", pattern="^(discogs_styles|mood_tags|lastfm_tags)$"),
@@ -137,6 +154,18 @@ async def lastfm_sync():
         result = await _sync(SCROBBLES_PATH)
         data.reload()
         return result
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.post("/api/refresh")
+async def api_refresh():
+    """Full-chain refresh: sync scrobbles → pipeline → export pending → reload."""
+    from app.refresh import refresh as _refresh, RefreshInProgress
+    try:
+        return await _refresh()
+    except RefreshInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

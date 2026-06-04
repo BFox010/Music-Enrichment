@@ -245,6 +245,12 @@ tracks_with_taste.jsonl
 # Scratch / temp files
 *.tmp.txt
 
+# Backup snapshots — git history is the backup
+*.bak
+
+# Raw Exportify dump (owner input; belongs in gitignored inputs/)
+/exportify
+
 # Per-run diagnostic artifacts (merge_exportify writes these every run)
 runs/unmatched_exportify_*.txt
 
@@ -254,4 +260,8 @@ runs/unmatched_exportify_*.txt
 # Handoff notes — local VSCode <-> Claude Code comms only, never versioned
 HANDOFF.md
 Handoff.md
+SALVAGE_HANDOFF.md
+
+# Generated dashboard snapshot — rebuild with scripts/generate_library_js.py
+web/data/library.js
 
