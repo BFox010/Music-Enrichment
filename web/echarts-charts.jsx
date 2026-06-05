@@ -54,7 +54,7 @@ function ChartLoading({ height = 420 }) {
 
 /* ── shared bits ────────────────────────────────────────────────────────── */
 // right-aligned cluster for a card-head that also holds a control (seg) + meta
-const cardTools = { display: "flex", alignItems: "center", gap: 14, flexShrink: 0 };
+const cardTools = { display: "flex", alignItems: "center", gap: 14, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" };
 // one-line explainer that sits directly under a card-head
 const cardDesc  = { margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.55, color: "var(--muted-s)", maxWidth: 640 };
 
@@ -643,103 +643,142 @@ function TagConstellation({ active }) {
     if (!active) return;
     setLoading(true);
     let fitTimer = null;
+    let onWinResize = null;
+    let rafA = 0, rafB = 0;
+    let fitted = false;
+
+    // Read settled node positions and patch the view (zoom + center) so the
+    // bounding box of the cluster fills the canvas with margin. Layout stays
+    // "force" — physics keeps running, only the camera moves.
+    const fitView = () => {
+      const inst = chart.current;
+      if (!inst) return;
+      const cw = inst.getWidth(), ch = inst.getHeight();
+      if (cw < 10 || ch < 10) return;  // canvas not laid out yet — skip
+      const gdata = inst.getModel().getSeriesByIndex(0)?.getData();
+      if (!gdata || gdata.count() === 0) return;
+      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
+      let ok = true;
+      gdata.each((idx) => {
+        const p = gdata.getItemLayout(idx);
+        if (!p || !isFinite(p[0]) || !isFinite(p[1])) { ok = false; return; }
+        if (p[0] < xMin) xMin = p[0]; if (p[0] > xMax) xMax = p[0];
+        if (p[1] < yMin) yMin = p[1]; if (p[1] > yMax) yMax = p[1];
+      });
+      if (!ok || !isFinite(xMin)) return;
+      const bw = xMax - xMin, bh = yMax - yMin;
+      if (bw <= 0 || bh <= 0) return;
+      const cxData = (xMin + xMax) / 2, cyData = (yMin + yMax) / 2;
+      const margin = 1.2;
+      const zoom = Math.min(cw / (bw * margin), ch / (bh * margin));
+      if (!isFinite(zoom) || zoom <= 0) return;
+      inst.setOption({ series: [{ zoom, center: [cxData, cyData] }] });
+      fitted = true;
+    };
+
+    const setupChart = (nodes, edges) => {
+      if (!chart.current) return;
+      chart.current.resize();
+      const c = themeVars();
+      const maxCount  = nodes[0]?.count || 1;
+      const maxWeight = edges.reduce((m, e) => Math.max(m, e.weight), 1);
+      const nodeColor = (i, n) =>
+        `hsl(${Math.round((i / Math.max(n - 1, 1)) * 260 + 200)}, 58%, 50%)`;
+      // Seed each node on a circle so the force sim starts from a 2-D spread
+      // instead of all-zero coords (which whip them across the screen). Radius
+      // is generous so the seeded ring already approximates the equilibrium
+      // spread the sim will produce. Centered on (0,0) because ECharts force
+      // gravity pulls nodes toward the origin regardless of where we seed them —
+      // matching that center keeps the initial view aligned with where the
+      // nodes will actually settle.
+      const cw = chart.current.getWidth(), ch = chart.current.getHeight();
+      const R = Math.min(cw, ch) * 0.46;
+
+      const symSize = (d) => Math.max(14, Math.sqrt(d.count / maxCount) * 72);
+      const nodeData = nodes.map((d, i) => {
+        const x = R * Math.cos((2 * Math.PI * i) / nodes.length);
+        const y = R * Math.sin((2 * Math.PI * i) / nodes.length);
+        return {
+          name: d.tag, value: d.count, x, y,
+          symbolSize: symSize(d),
+          itemStyle: { color: nodeColor(i, nodes.length) },
+          label: { show: d.count >= maxCount * 0.08, fontSize: 11, color: c.text },
+        };
+      });
+      const edgeData = edges.map((e) => ({
+        source: e.source, target: e.target, value: e.weight,
+        lineStyle: {
+          width: Math.max(0.5, Math.log2(e.weight + 1) * 0.9),
+          opacity: 0.18 + (e.weight / maxWeight) * 0.32,
+          color: "source", curveness: 0,
+        },
+      }));
+      chart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: {
+          formatter(p) {
+            if (p.dataType === "edge") return `<b>${p.data.source}</b> ↔ <b>${p.data.target}</b><br>${p.data.value} shared tracks`;
+            return `<b>${p.data.name}</b><br>${p.data.value} tracks`;
+          },
+          backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
+        },
+        series: [{
+          type: "graph", layout: "force",
+          center: [0, 0],  // align initial view with the (0,0) gravity well
+          // Per-node repulsion scaled with symbol area so big circles push
+          // harder than small ones — keeps the large hub nodes from sliding
+          // under each other while still letting small nodes pack in close.
+          force: {
+            // Per-node repulsion scales with symbol area so big circles push
+            // much harder than small ones — keeps the large hub nodes from
+            // sliding under each other while small nodes can still pack in.
+            repulsion: nodeData.map((n) => Math.min(4000, Math.max(420, n.symbolSize * n.symbolSize / 1.4))),
+            // edgeLength min larger than the biggest-pair diameter (~72) so
+            // even strongly connected hub pairs sit edge-to-edge, not overlapping.
+            gravity: 0.13, edgeLength: [150, 240],
+            layoutAnimation: true, friction: 0.4,
+          },
+          roam: true, draggable: true,
+          label: { show: false, formatter: "{b}" },
+          emphasis: { scale: true, focus: "adjacency",
+            label: { show: true, fontSize: 12, color: c.text },
+            lineStyle: { opacity: 0.85, width: 2 } },
+          data: nodeData,
+          edges: edgeData,
+        }],
+      }, true);
+
+      // One fit ~1.5s in, after the force sim has roughly settled. Layout stays
+      // "force", so nodes keep bouncing — only the camera moves.
+      fitTimer = setTimeout(fitView, 1500);
+      // Re-fit on window resize so framing follows the new canvas size.
+      onWinResize = () => { if (fitted) fitView(); };
+      window.addEventListener("resize", onWinResize);
+    };
+
     const minCount = field === "mood_tags" ? 1 : 15;
     fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
       .then((r) => r.json())
       .then(({ nodes, edges }) => {
         setLoading(false);
         if (!chart.current || !nodes?.length) return;
-        // The container flips from display:none to visible as this page
-        // activates; force the canvas to its real size BEFORE laying out the
-        // force graph, or nodes settle into a 0-width box and look chaotic
-        // until the next resize (the "only works after switching tabs" bug).
-        chart.current.resize();
-        const c = themeVars();
-        const maxCount  = nodes[0]?.count || 1;
-        const maxWeight = edges.reduce((m, e) => Math.max(m, e.weight), 1);
-        const nodeColor = (i, n) =>
-          `hsl(${Math.round((i / Math.max(n - 1, 1)) * 260 + 200)}, 58%, 50%)`;
-        // Seed each node on a circle so the force layout starts from a 2-D
-        // spread instead of all-zero coordinates (which spawn the nodes on one
-        // horizontal line and whip them across the screen until dragged).
-        const cw = chart.current.getWidth(), ch = chart.current.getHeight();
-        const cx = cw / 2, cy = ch / 2;
-        const R  = Math.min(cw, ch) * 0.36;
-
-        const symSize = (d) => Math.max(14, Math.sqrt(d.count / maxCount) * 72);
-        // `pos` is an optional (x,y) provider; default seeds on a circle.
-        const buildNodes = (pos) => nodes.map((d, i) => {
-          const p = pos ? pos(i) : [cx + R * Math.cos((2 * Math.PI * i) / nodes.length),
-                                    cy + R * Math.sin((2 * Math.PI * i) / nodes.length)];
-          return {
-            name: d.tag, value: d.count, x: p[0], y: p[1],
-            symbolSize: symSize(d),
-            itemStyle: { color: nodeColor(i, nodes.length) },
-            label: { show: d.count >= maxCount * 0.08, fontSize: 11, color: c.text },
-          };
+        // setLoading(false) flips the wrap from display:none to block, but the
+        // DOM update is async (React hasn't painted yet). Wait two animation
+        // frames so the wrap has real dimensions before we seed the layout —
+        // otherwise every node spawns at (0,0) and the view computes against
+        // a 0×0 canvas, producing zoom=0 and a blank chart.
+        rafA = requestAnimationFrame(() => {
+          rafB = requestAnimationFrame(() => setupChart(nodes, edges));
         });
-        const edgeData = edges.map((e) => ({
-          source: e.source, target: e.target, value: e.weight,
-          lineStyle: {
-            width: Math.max(0.5, Math.log2(e.weight + 1) * 0.9),
-            opacity: 0.18 + (e.weight / maxWeight) * 0.32,
-            color: "source", curveness: 0,
-          },
-        }));
-
-        chart.current.setOption({
-          backgroundColor: "transparent",
-          tooltip: {
-            formatter(p) {
-              if (p.dataType === "edge") return `<b>${p.data.source}</b> ↔ <b>${p.data.target}</b><br>${p.data.value} shared tracks`;
-              return `<b>${p.data.name}</b><br>${p.data.value} tracks`;
-            },
-            backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
-          },
-          series: [{
-            type: "graph", layout: "force",
-            force: { repulsion: 380, gravity: 0.12, edgeLength: [40, 140], layoutAnimation: true, friction: 0.4 },
-            roam: true, draggable: true,
-            label: { show: false, formatter: "{b}" },
-            emphasis: { scale: true, focus: "adjacency",
-              label: { show: true, fontSize: 12, color: c.text },
-              lineStyle: { opacity: 0.85, width: 2 } },
-            data: buildNodes(null),
-            edges: edgeData,
-          }],
-        }, true);
-
-        // Once the force sim settles, freeze the layout: read the settled node
-        // positions and re-apply with layout:"none". A force graph's view never
-        // re-fits as nodes expand past the seeded circle (that's the "starts
-        // zoomed way in" bug — only edges cross the frame). Switching to a static
-        // layout makes ECharts map the *actual* node bounding box to the view, so
-        // the whole constellation is framed. Nodes stay draggable.
-        const freezeAndFit = () => {
-          const inst = chart.current;
-          if (!inst) return;
-          const gdata = inst.getModel().getSeriesByIndex(0)?.getData();
-          if (!gdata) return;
-          const settled = [];
-          let ok = true;
-          gdata.each((idx) => {
-            const p = gdata.getItemLayout(idx);
-            if (!p || !isFinite(p[0]) || !isFinite(p[1])) { ok = false; return; }
-            settled[idx] = [p[0], p[1]];
-          });
-          if (!ok) return;
-          inst.setOption({
-            series: [{
-              layout: "none",
-              data: buildNodes((i) => settled[i] || [cx, cy]),
-              edges: edgeData,
-            }],
-          });
-        };
-        fitTimer = setTimeout(freezeAndFit, 2600);
       })
       .catch(() => setLoading(false));
-    return () => { if (fitTimer) clearTimeout(fitTimer); };
+
+    return () => {
+      if (fitTimer) clearTimeout(fitTimer);
+      if (rafA) cancelAnimationFrame(rafA);
+      if (rafB) cancelAnimationFrame(rafB);
+      if (onWinResize) window.removeEventListener("resize", onWinResize);
+    };
   }, [active, field]);
 
   return (
@@ -753,7 +792,7 @@ function TagConstellation({ active }) {
                 <button key={v} aria-pressed={field === v} onClick={() => setField(v)}>{l}</button>
               ))}
             </div>
-            <span className="card-meta">force graph · shared-track connections</span>
+            <span className="card-meta">force graph</span>
           </div>
         </div>
         <p style={cardDesc}>Each node is a tag, sized by how many tracks carry it; links connect tags that share tracks. Drag nodes to untangle, scroll to zoom.</p>
