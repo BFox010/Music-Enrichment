@@ -14,7 +14,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pipeline.config import SCROBBLES_PATH, TRACKS_PATH
+from dotenv import load_dotenv
+from pipeline.config import REPO_ROOT, SCROBBLES_PATH, TRACKS_PATH
+
+# Load .env so LASTFM_USERNAME / LASTFM_API_KEY (used by the live scrobble sync
+# at POST /api/lastfm/sync) reach the server process. The server reads them via
+# os.getenv(...) and nothing else loads .env here.
+load_dotenv(REPO_ROOT / ".env")
 
 import app.data as data
 import app.metrics as metrics
