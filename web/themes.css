@@ -643,9 +643,14 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .drill-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
 .drill-coltitle { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; margin-bottom: 12px; }
 .drill-rows { display: flex; flex-direction: column; gap: 9px; }
+.drill-rows.wide { gap: 12px; }
 .drill-row { display: grid; grid-template-columns: 104px 1fr auto; align-items: center; gap: 12px; }
+.drill-rows.wide .drill-row { grid-template-columns: minmax(0, 1fr) 110px auto; }
 .dr-name { font-size: 12.5px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-transform: capitalize; }
 .dr-name.plain { text-transform: none; color: var(--text); }
+.dr-name.wide { display: flex; flex-direction: column; gap: 1px; min-width: 0; white-space: normal; line-height: 1.25; }
+.dr-name.wide .dr-title { font-size: 13px; font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.dr-name.wide .dr-artist { font-size: 11.5px; color: var(--muted-s); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .dr-track { height: 9px; background: var(--track-bg); border-radius: var(--bar-radius); overflow: hidden; }
 .dr-fill { height: 100%; border-radius: var(--bar-radius); transition: width .5s cubic-bezier(.2,.7,.2,1); }
 .dr-val { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; font-weight: 600; min-width: 30px; text-align: right; }
@@ -666,6 +671,10 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 /* audio-feature extremes (top/bottom tracks per feature) */
 .afx-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
 .afx-col-title { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; margin-bottom: 12px; }
+.afx-scroll { max-height: 560px; overflow-y: auto; padding-right: 8px; scrollbar-width: thin; scrollbar-color: var(--line) transparent; }
+.afx-scroll::-webkit-scrollbar { width: 8px; }
+.afx-scroll::-webkit-scrollbar-thumb { background: var(--line); border-radius: 4px; }
+.afx-scroll::-webkit-scrollbar-track { background: transparent; }
 .afx-rows { display: flex; flex-direction: column; gap: 10px; }
 .afx-row { display: grid; grid-template-columns: 18px 1fr 64px auto; align-items: center; gap: 10px; }
 .afx-rank { font-family: var(--font-mono); font-size: 11px; color: var(--faint); text-align: right; font-weight: 600; }

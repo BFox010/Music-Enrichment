@@ -531,25 +531,47 @@ function _albumHue(s) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % 360;
 }
-function AlbumsPage({ active, refreshVersion = 0 }) {
-  const [data, setData] = useState(null);
+// Most-played albums, scored by total plays + how evenly listening spreads
+// across the album's tracks. Computed in-browser from the already-loaded
+// `tracks` (no /api/albums round-trip) — mirrors app/metrics.py::albums.
+function computeAlbums(tracks, { top = 60, minTracks = 3 } = {}) {
+  if (!tracks || !tracks.length) return [];
+  const byAlbum = new Map();
+  for (const t of tracks) {
+    const album = (t.album || "").trim();
+    if (!album) continue;
+    const key = (t.artist || "").toLowerCase() + "\x00" + album.toLowerCase();
+    let rec = byAlbum.get(key);
+    if (!rec) { rec = { plays: [], total: 0, artist: t.artist, album, years: new Set() }; byAlbum.set(key, rec); }
+    const p = t.play || 0;
+    rec.plays.push(p);
+    rec.total += p;
+    if (t.release_year) rec.years.add(t.release_year);
+  }
+  const out = [];
+  for (const rec of byAlbum.values()) {
+    const n = rec.plays.length;
+    if (n < minTracks) continue;
+    let spread = 0;
+    if (rec.total > 0 && n > 1) {
+      // normalized play-count entropy: 1 = perfectly even, →0 = one track dominates
+      let entropy = 0;
+      for (const p of rec.plays) { if (p > 0) { const s = p / rec.total; entropy -= s * Math.log(s); } }
+      spread = Math.round((entropy / Math.log(n)) * 1000) / 1000;
+    }
+    out.push({
+      album: rec.album, artist: rec.artist, track_count: n, plays: rec.total,
+      spread, year: rec.years.size ? Math.min(...rec.years) : null,
+    });
+  }
+  out.sort((a, b) => b.plays - a.plays);
+  return out.slice(0, top);
+}
+function AlbumsPage({ active, tracks }) {
   const [sort, setSort] = useState("plays");
-  const [loading, setLoading] = useState(true);
-  const loadedVer = useRef(-1);
-
-  useEffect(() => {
-    if (!active) return;
-    if (loadedVer.current === refreshVersion) return;  // already loaded for this version
-    loadedVer.current = refreshVersion;                // claim up-front to avoid double-fetch
-    setLoading(true);
-    fetch("/api/albums?top=60&min_tracks=3")
-      .then((r) => r.json())
-      .then((d) => { setData(d); setLoading(false); })
-      .catch(() => { loadedVer.current = -1; setLoading(false); });  // allow retry on failure
-  }, [active, refreshVersion]);
+  const data = useMemo(() => computeAlbums(tracks), [tracks]);
 
   const rows = useMemo(() => {
-    if (!data) return [];
     const a = [...data];
     if (sort === "spread") a.sort((x, y) => y.spread - x.spread || y.plays - x.plays);
     else if (sort === "tracks") a.sort((x, y) => y.track_count - x.track_count || y.plays - x.plays);
@@ -573,8 +595,7 @@ function AlbumsPage({ active, refreshVersion = 0 }) {
           </div>
         </div>
         <p style={cardDesc}>Albums you actually sat with. <b>Plays</b> totals every track; <b>Spread</b> shows how evenly your listening covered the album — a full bar means you played the whole thing, a short bar means one or two tracks carried it.</p>
-        {loading && <ChartLoading height={320} />}
-        {!loading && (
+        {
           rows.length ? (
             <div className="album-list">
               {rows.map((a, i) => (
@@ -599,7 +620,7 @@ function AlbumsPage({ active, refreshVersion = 0 }) {
           ) : (
             <div className="empty"><div className="big">No albums yet</div><div>Load your library to see album rankings.</div></div>
           )
-        )}
+        }
       </div>
     </section>
   );
@@ -621,6 +642,7 @@ function TagConstellation({ active }) {
   useEffect(() => {
     if (!active) return;
     setLoading(true);
+    let fitTimer = null;
     const minCount = field === "mood_tags" ? 1 : 15;
     fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
       .then((r) => r.json())
@@ -644,6 +666,27 @@ function TagConstellation({ active }) {
         const cx = cw / 2, cy = ch / 2;
         const R  = Math.min(cw, ch) * 0.36;
 
+        const symSize = (d) => Math.max(14, Math.sqrt(d.count / maxCount) * 72);
+        // `pos` is an optional (x,y) provider; default seeds on a circle.
+        const buildNodes = (pos) => nodes.map((d, i) => {
+          const p = pos ? pos(i) : [cx + R * Math.cos((2 * Math.PI * i) / nodes.length),
+                                    cy + R * Math.sin((2 * Math.PI * i) / nodes.length)];
+          return {
+            name: d.tag, value: d.count, x: p[0], y: p[1],
+            symbolSize: symSize(d),
+            itemStyle: { color: nodeColor(i, nodes.length) },
+            label: { show: d.count >= maxCount * 0.08, fontSize: 11, color: c.text },
+          };
+        });
+        const edgeData = edges.map((e) => ({
+          source: e.source, target: e.target, value: e.weight,
+          lineStyle: {
+            width: Math.max(0.5, Math.log2(e.weight + 1) * 0.9),
+            opacity: 0.18 + (e.weight / maxWeight) * 0.32,
+            color: "source", curveness: 0,
+          },
+        }));
+
         chart.current.setOption({
           backgroundColor: "transparent",
           tooltip: {
@@ -661,26 +704,42 @@ function TagConstellation({ active }) {
             emphasis: { scale: true, focus: "adjacency",
               label: { show: true, fontSize: 12, color: c.text },
               lineStyle: { opacity: 0.85, width: 2 } },
-            data: nodes.map((d, i) => ({
-              name: d.tag, value: d.count,
-              x: cx + R * Math.cos((2 * Math.PI * i) / nodes.length),
-              y: cy + R * Math.sin((2 * Math.PI * i) / nodes.length),
-              symbolSize: Math.max(14, Math.sqrt(d.count / maxCount) * 72),
-              itemStyle: { color: nodeColor(i, nodes.length) },
-              label: { show: d.count >= maxCount * 0.08, fontSize: 11, color: c.text },
-            })),
-            edges: edges.map((e) => ({
-              source: e.source, target: e.target, value: e.weight,
-              lineStyle: {
-                width: Math.max(0.5, Math.log2(e.weight + 1) * 0.9),
-                opacity: 0.18 + (e.weight / maxWeight) * 0.32,
-                color: "source", curveness: 0,
-              },
-            })),
+            data: buildNodes(null),
+            edges: edgeData,
           }],
         }, true);
+
+        // Once the force sim settles, freeze the layout: read the settled node
+        // positions and re-apply with layout:"none". A force graph's view never
+        // re-fits as nodes expand past the seeded circle (that's the "starts
+        // zoomed way in" bug — only edges cross the frame). Switching to a static
+        // layout makes ECharts map the *actual* node bounding box to the view, so
+        // the whole constellation is framed. Nodes stay draggable.
+        const freezeAndFit = () => {
+          const inst = chart.current;
+          if (!inst) return;
+          const gdata = inst.getModel().getSeriesByIndex(0)?.getData();
+          if (!gdata) return;
+          const settled = [];
+          let ok = true;
+          gdata.each((idx) => {
+            const p = gdata.getItemLayout(idx);
+            if (!p || !isFinite(p[0]) || !isFinite(p[1])) { ok = false; return; }
+            settled[idx] = [p[0], p[1]];
+          });
+          if (!ok) return;
+          inst.setOption({
+            series: [{
+              layout: "none",
+              data: buildNodes((i) => settled[i] || [cx, cy]),
+              edges: edgeData,
+            }],
+          });
+        };
+        fitTimer = setTimeout(freezeAndFit, 2600);
       })
       .catch(() => setLoading(false));
+    return () => { if (fitTimer) clearTimeout(fitTimer); };
   }, [active, field]);
 
   return (
