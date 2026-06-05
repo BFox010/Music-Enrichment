@@ -680,7 +680,7 @@ function App() {
 
         {/* ── PAGE: Albums ────────────────────────────────────────── */}
         <div style={{ display: page === "albums" ? "" : "none" }}>
-          {AlbumsPage && <AlbumsPage active={page === "albums"} refreshVersion={refreshVersion} />}
+          {AlbumsPage && <AlbumsPage active={page === "albums"} tracks={tracks} />}
         </div>
 
         {/* ── PAGE: Seasonal Favorites ────────────────────────────── */}

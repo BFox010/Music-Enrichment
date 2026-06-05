@@ -147,18 +147,35 @@ function Seasons({ data, total, onPick, activeKey }) {
 function _topN(obj, n) {
   return Object.entries(obj || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
 }
-function DrillRows({ items, accent, plain }) {
+function DrillRows({ items, accent, plain, wide }) {
   const max = items.length ? items[0][1] : 1;
   if (!items.length) return <div className="dr-empty">No tagged plays in this slice</div>;
   return (
-    <div className="drill-rows">
-      {items.map(([k, v]) => (
-        <div className="drill-row" key={k}>
-          <span className={"dr-name" + (plain ? " plain" : "")} title={k}>{k}</span>
-          <div className="dr-track"><div className="dr-fill" style={{ width: (v / max) * 100 + "%", background: accent || "var(--accent)" }}></div></div>
-          <span className="dr-val num">{v.toLocaleString()}</span>
-        </div>
-      ))}
+    <div className={"drill-rows" + (wide ? " wide" : "")}>
+      {items.map(([k, v]) => {
+        // For tracks (wide+plain), split "Artist — Track" onto two lines so neither gets truncated to nothing.
+        let nameNode = k;
+        if (wide && plain) {
+          const idx = k.indexOf(" — ");
+          if (idx > 0) {
+            const artist = k.slice(0, idx);
+            const title = k.slice(idx + 3);
+            nameNode = (
+              <>
+                <span className="dr-title">{title}</span>
+                <span className="dr-artist">{artist}</span>
+              </>
+            );
+          }
+        }
+        return (
+          <div className="drill-row" key={k}>
+            <span className={"dr-name" + (plain ? " plain" : "") + (wide ? " wide" : "")} title={k}>{nameNode}</span>
+            <div className="dr-track"><div className="dr-fill" style={{ width: (v / max) * 100 + "%", background: accent || "var(--accent)" }}></div></div>
+            <span className="dr-val num">{v.toLocaleString()}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -228,7 +245,7 @@ function DrillPanel({ label, slice, onClose, views }) {
         <div className="drill-cols">
           <div className="drill-col">
             <div className="drill-coltitle">Top tracks</div>
-            <DrillRows items={tracks} accent="var(--accent-2)" plain />
+            <DrillRows items={tracks} accent="var(--accent-2)" plain wide />
           </div>
           <div className="drill-col">
             <div className="drill-coltitle">Scrobbles by time of day</div>
@@ -256,10 +273,10 @@ function DrillPanel({ label, slice, onClose, views }) {
    array (t.af), so no extra fetch/endpoint is needed. Colors mirror the
    histogram colors used by the Audio Features charts. */
 const AUDIO_FEATURES = [
-  ["energy",       "Energy",       "#e040fb"],
-  ["valence",      "Valence",      "#40c4ff"],
-  ["danceability", "Danceability", "#69f0ae"],
-  ["acousticness", "Acousticness", "#ffab40"],
+  ["energy",       "Energy",       "#e040fb", "How intense and active a track feels — loud, fast, and noisy scores high; calm and mellow scores low."],
+  ["valence",      "Valence",      "#40c4ff", "The musical positivity a track conveys — cheerful and upbeat scores high; sad or moody scores low."],
+  ["danceability", "Danceability", "#69f0ae", "How suited a track is for dancing, based on tempo, rhythm steadiness, and beat strength."],
+  ["acousticness", "Acousticness", "#ffab40", "Confidence that a track is acoustic — organic, unplugged recordings score high; electronic ones score low."],
 ];
 function AfxRows({ items, color }) {
   if (!items.length) return <div className="dr-empty">No tracks with this feature</div>;
@@ -279,38 +296,48 @@ function AfxRows({ items, color }) {
     </div>
   );
 }
-function AudioFeatureExtremes({ tracks, n = 12 }) {
+function AudioFeatureExtremes({ tracks, n = 100 }) {
+  const [feat, setFeat] = useState("energy");
+  const [key, label, color, desc] = AUDIO_FEATURES.find(([k]) => k === feat) || AUDIO_FEATURES[0];
+  const { top, bottom, count } = useMemo(() => {
+    const rated = (tracks || [])
+      .filter((t) => t.af && t.af[key] != null && isFinite(+t.af[key]))
+      .map((t) => ({ ...t, _v: +t.af[key] }))
+      .sort((a, b) => b._v - a._v);
+    return {
+      top: rated.slice(0, n),
+      bottom: rated.slice(-n).reverse(), // lowest first
+      count: rated.length,
+    };
+  }, [tracks, key, n]);
+
   return (
-    <>
-      {AUDIO_FEATURES.map(([key, label, color]) => {
-        const rated = (tracks || [])
-          .filter((t) => t.af && t.af[key] != null && isFinite(+t.af[key]))
-          .map((t) => ({ ...t, _v: +t.af[key] }))
-          .sort((a, b) => b._v - a._v);
-        const top = rated.slice(0, n);
-        const bottom = rated.slice(-n).reverse(); // lowest first
-        return (
-          <section className="block" key={key}>
-            <div className="card">
-              <div className="card-head">
-                <h3 className="card-title">{label}</h3>
-                <span className="card-meta">top &amp; bottom {n} · {rated.length.toLocaleString()} rated tracks</span>
-              </div>
-              <div className="afx-grid">
-                <div>
-                  <div className="afx-col-title">Most {label.toLowerCase()}</div>
-                  <AfxRows items={top} color={color} />
-                </div>
-                <div>
-                  <div className="afx-col-title">Least {label.toLowerCase()}</div>
-                  <AfxRows items={bottom} color={color} />
-                </div>
-              </div>
+    <section className="block">
+      <div className="card">
+        <div className="card-head">
+          <h3 className="card-title">Audio-feature extremes</h3>
+          <div style={{ display: "flex", alignItems: "center", gap: 14, flexShrink: 0 }}>
+            <div className="seg seg-sm" role="group">
+              {AUDIO_FEATURES.map(([k, l]) => (
+                <button key={k} aria-pressed={feat === k} onClick={() => setFeat(k)}>{l}</button>
+              ))}
             </div>
-          </section>
-        );
-      })}
-    </>
+            <span className="card-meta">top &amp; bottom {n} · {count.toLocaleString()} rated tracks</span>
+          </div>
+        </div>
+        <p style={{ margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.55, color: "var(--muted-s)", maxWidth: 640 }}>{desc}</p>
+        <div className="afx-grid">
+          <div>
+            <div className="afx-col-title">Most {label.toLowerCase()}</div>
+            <div className="afx-scroll"><AfxRows items={top} color={color} /></div>
+          </div>
+          <div>
+            <div className="afx-col-title">Least {label.toLowerCase()}</div>
+            <div className="afx-scroll"><AfxRows items={bottom} color={color} /></div>
+          </div>
+        </div>
+      </div>
+    </section>
   );
 }
 
