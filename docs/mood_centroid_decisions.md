@@ -87,3 +87,63 @@ cleanup becomes a no-op (idempotent).
   / Love / Dance / Groove / Hype / Sad as centroid-inflated. Some of this is the sparse-human
   -labeling confound (they over-apply *uniformly* across genres rather than inverting like
   Heavy Bass), so it needs the genre-inversion check before acting. Left for a future pass.
+
+## Roadmap: reproducible bass detection & human-label coverage
+
+Recorded 2026-06-05 in response to: *"Would more human tags help? How are we calculating /
+creating reproducibility in the bass category?"* No code changes yet — this is the documented
+plan for when we revisit.
+
+### Data-limited vs feature-limited — the key distinction
+
+A mood's centroid can fail for two fundamentally different reasons, and the fix differs:
+
+- **Data-limited** (Slow, Moody, Fast): the feature space *can* express the mood (tempo,
+  valence), the centroid is just under-trained or loosely thresholded. **More human/Claude
+  tags directly improve these** — tighter centroids, and enough coverage could justify
+  loosening a gate or lifting Fast's suppression.
+- **Feature-limited** (Heavy Bass): the 9 Spotify/ReccoBeats features contain **no bass
+  descriptor**, so the centroid degenerates to loud+energetic+low-acousticness. **More
+  training data cannot fix this** — even perfect labels can't make a bass-blind vector
+  separate bass-heavy trap from loud rock. The limitation is the *inputs*, not the volume.
+
+### So: would more human tags help Heavy Bass? Yes — for *coverage*, not for the model
+
+- As of 2026-06-05, **50% of the library (1,371 tracks) has no human mood label** (1,285
+  centroid-only + 86 none). Since the Heavy Bass centroid is suppressed, **Heavy Bass is now
+  impossible to assign to any of them** — every genuinely bass-heavy track in that half is a
+  silent false-negative.
+- More human/Claude labels recover exactly that population. The cheapest scalable route is the
+  existing **Claude-batch pipeline** (`claude_mood_batch.jsonl` → `claude_mood_results.jsonl`,
+  `mood_source="claude_batch"`), the same mechanism that produced the current 522 high-conf
+  tags. It helps Heavy Bass *coverage* AND the data-limited moods' *accuracy*.
+
+### What "reproducibility in the bass category" currently means
+
+Two different things share the name; for bass we only have the first:
+
+| | Status |
+|---|---|
+| Reproducible **measurement of the centroid's failure + suppression decision** | ✅ `eval_mood_centroids.py` re-derives the 8–14x genre over-tag deterministically (no randomness/network); `apply_centroid_policy()` enforces it identically across classifier, cleanup, and future re-runs. |
+| Reproducible **detection of bass itself** | ❌ None. We suppressed the only automated path because it was wrong. Heavy Bass is now 100% human/Claude labels — version-controlled, but not *calculated*. |
+
+### Options for a reproducible bass *signal* (measured 2026-06-05)
+
+1. **Genre/tag heuristic** (`808`, `trap`, `dubstep`, `dnb`, `phonk`, `drill`, …). High-precision
+   tags hit **~65% precision but only ~6% recall**, because only **32% of tracks have Last.fm
+   tags** at all. Viable as a high-confidence *booster* on top of human labels, not a standalone
+   detector. Its value scales with Last.fm tag coverage.
+2. **A real bass-aware audio feature** — low-frequency / sub-bass energy from spectral analysis.
+   The *correct* fix, but a heavy lift (needs audio files or an analysis API). **ReccoBeats does
+   NOT help** despite being listed in `AUDIO_FEATURE_SOURCES` — it returns the same Spotify-style
+   features with no bass descriptor.
+3. **Human/Claude labels** — current approach; reproducible as version-controlled data.
+
+### Recommendation
+
+Highest-leverage, lowest-effort: **grow human coverage via the Claude batch** (recovers Heavy
+Bass on the unlabeled 50% and sharpens the data-limited moods). A tag-based bass booster
+(option 1) is a reasonable reproducible secondary signal but is capped by the 32% tag-coverage
+ceiling, so it's best done after/alongside more Last.fm enrichment. A true bass feature
+(option 2) is the only path to genuine reproducible bass *detection* and should be scoped
+separately if it becomes a priority.
