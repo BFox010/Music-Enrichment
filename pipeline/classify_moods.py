@@ -30,7 +30,7 @@ import math
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 from pipeline.config import (
     INPUT_CLAUDE_MOOD_RESULTS,
@@ -66,14 +66,99 @@ ALL_KEYS: tuple[str, ...] = LINEAR_KEYS + SCALED_KEYS
 # Above this, the track is queued for Claude review.
 CENTROID_THRESHOLD: float = 1.6
 
-# Moods whose centroid predictions are suppressed from output. Per the
-# 2026-05-25 spot-check (Group B verdict in music_enrichment_todo.md),
-# the audio-feature centroid hallucinates these tags at high rates (0-2 of 5
-# centroid predictions matched the owner's mood judgement). Audit-source
-# and Claude-batch hits for these moods are still emitted — only the
-# centroid path is suppressed. Remove a mood from this set once it has
-# been re-curated with enough audit coverage to trust again.
-CENTROID_SUPPRESSED_MOODS: frozenset[str] = frozenset({"Dark", "Fast", "Heartbreak"})
+# ── Centroid reliability policy ──────────────────────────────────────────
+# The audio-feature centroid is medium-confidence and systematically misfires
+# on some moods. Each such mood gets one of two treatments, declared once here
+# (the single source of truth) and enforced by apply_centroid_policy():
+#
+#   "suppress" — drop the centroid prediction entirely. Used when the feature
+#       set CANNOT express the mood, so no threshold can rescue it. Audit- and
+#       Claude-batch hits for the mood are still emitted; only the centroid
+#       path is dropped.
+#   "gate" — emit the centroid prediction only when a per-mood predicate over
+#       the raw audio_features holds. Used when the mood IS feature-correlated
+#       but the global distance threshold is too loose (e.g. Slow ~ tempo).
+#
+# Verdict ledger with the quantitative evidence lives in
+# docs/mood_centroid_decisions.md; re-derive any time with
+# `python scripts/eval_mood_centroids.py`.
+CENTROID_MOOD_TREATMENTS: dict[str, dict[str, str]] = {
+    "Heavy Bass": {
+        "treatment": "suppress",
+        "reason": "feature-inadequate: Spotify's 9 features carry no bass descriptor, so "
+                  "the centroid degenerates to loud+energetic+low-acousticness and over-tags "
+                  "Rock/Indie/Metal ~10x vs human labels.",
+        "evidence": "2026-06-05 eval_mood_centroids trigger A",
+    },
+    "Dark": {
+        "treatment": "suppress",
+        "reason": "feature-inadequate: centroid hallucinates in the hip-hop-moody cluster.",
+        "evidence": "2026-05-25 Group B (revalidated 2026-06-05)",
+    },
+    "Heartbreak": {
+        "treatment": "suppress",
+        "reason": "feature-inadequate: 0/5 centroid predictions matched owner judgement.",
+        "evidence": "2026-05-25 Group B",
+    },
+    "Fast": {
+        "treatment": "suppress",
+        "reason": "Group B verdict (0/5 centroid match). Tempo-correlated, so a future "
+                  "tempo>140 gate could recover it — revisit via the eval report.",
+        "evidence": "2026-05-25 Group B",
+    },
+    "Moody": {
+        "treatment": "gate",
+        "reason": "feature-weak: keys on low valence and ignores tempo, dragging in fast "
+                  "intense tracks (centroid avg 138 BPM vs human 128, 100% >105 BPM). "
+                  "Gated to tempo < MOODY_TEMPO_MAX.",
+        "evidence": "2026-06-05 eval_mood_centroids trigger B",
+    },
+    "Slow": {
+        "treatment": "gate",
+        "reason": "feature-correlated (tempo) but threshold-loose: ~30% of centroid-Slow is "
+                  ">105 BPM. Gated to tempo < SLOW_TEMPO_MAX.",
+        "evidence": "2026-05-25 Group C + 2026-06-05 eval_mood_centroids",
+    },
+}
+
+# Tempo ceilings (BPM) for gated moods — human-readable thresholds applied to
+# the RAW audio_features (not the normalized vector).
+SLOW_TEMPO_MAX: float = 105.0
+MOODY_TEMPO_MAX: float = 125.0
+
+# Per-mood gate predicates over the raw audio_features dict. A gated mood's
+# centroid prediction is emitted only when its predicate returns True. Missing
+# tempo → predicate False → mood dropped (conservative: better to under-emit a
+# gated guess than emit an ungated one).
+CENTROID_MOOD_GATES: dict[str, Callable[[dict], bool]] = {
+    "Slow": lambda af: af.get("tempo") is not None and af["tempo"] < SLOW_TEMPO_MAX,
+    "Moody": lambda af: af.get("tempo") is not None and af["tempo"] < MOODY_TEMPO_MAX,
+}
+
+# Derived from the treatment table so the two can never drift apart. Centroid
+# predictions for these moods are dropped outright (see "suppress" above).
+CENTROID_SUPPRESSED_MOODS: frozenset[str] = frozenset(
+    m for m, meta in CENTROID_MOOD_TREATMENTS.items() if meta["treatment"] == "suppress"
+)
+
+
+def apply_centroid_policy(
+    moods: list[str],
+    features: dict,
+    *,
+    suppressed_moods: frozenset[str] = CENTROID_SUPPRESSED_MOODS,
+    gates: dict[str, Callable[[dict], bool]] = CENTROID_MOOD_GATES,
+) -> list[str]:
+    """Filter a centroid-derived mood list through suppression + per-mood gates.
+
+    Single source of truth shared by classify_track() (live classification) and
+    the retroactive cleanup migration (scripts/cleanup_centroid_moods.py), so the
+    two paths can never diverge. Order within ``moods`` is preserved.
+
+    ``features`` is the raw ``audio_features`` dict (tempo in BPM, etc.).
+    """
+    kept = [m for m in moods if m not in suppressed_moods]
+    return [m for m in kept if m not in gates or gates[m](features)]
 
 # Output for tracks that need Claude classification
 CLAUDE_BATCH_PATH: Path = INPUTS_DIR / "claude_mood_batch.jsonl"
@@ -168,13 +253,16 @@ def classify_track(
     threshold: float = CENTROID_THRESHOLD,
     max_assignments: int = 3,
     suppressed_moods: frozenset[str] = CENTROID_SUPPRESSED_MOODS,
+    gates: dict[str, Callable[[dict], bool]] = CENTROID_MOOD_GATES,
 ) -> tuple[list[str], float | None]:
     """Return (assigned_moods, distance_of_nearest).
 
     Picks up to ``max_assignments`` moods whose distance is within
-    ``threshold`` of the track's normalized vector. ``suppressed_moods``
-    are filtered out of the output even when their centroid is nearest —
-    see the module-level ``CENTROID_SUPPRESSED_MOODS`` docstring.
+    ``threshold`` of the track's normalized vector, then runs them through
+    ``apply_centroid_policy`` (suppression + per-mood gates) — see the
+    module-level ``CENTROID_MOOD_TREATMENTS`` docstring. Policy is applied
+    BEFORE the ``max_assignments`` truncation, so a suppressed/gated-out mood
+    frees a slot for the next-nearest valid mood.
     """
     if not features or not centroids:
         return [], None
@@ -182,7 +270,10 @@ def classify_track(
     distances = [(mood, euclidean(vec, c)) for mood, c in centroids.items()]
     distances.sort(key=lambda x: x[1])
     nearest = distances[0][1] if distances else None
-    chosen = [m for m, d in distances if d <= threshold and m not in suppressed_moods]
+    within = [m for m, d in distances if d <= threshold]
+    chosen = apply_centroid_policy(
+        within, features, suppressed_moods=suppressed_moods, gates=gates
+    )
     chosen = chosen[:max_assignments]
     return chosen, nearest
 

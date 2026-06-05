@@ -7,8 +7,13 @@ import tempfile
 from pathlib import Path
 
 from pipeline.classify_moods import (
+    CENTROID_MOOD_GATES,
+    CENTROID_MOOD_TREATMENTS,
     CENTROID_SUPPRESSED_MOODS,
+    MOODY_TEMPO_MAX,
+    SLOW_TEMPO_MAX,
     _split_moods,
+    apply_centroid_policy,
     classify_track,
     compute_centroids,
     compute_global_stats,
@@ -191,21 +196,23 @@ class TestClassifyTrack:
             (["Dark"], _features(energy=0.9, valence=0.1)),
             (["Fast"], _features(tempo=170, energy=0.9)),
             (["Heartbreak"], _features(valence=0.2, energy=0.4)),
+            (["Heavy Bass"], _features(energy=0.95, acousticness=0.05)),
             (["Sad"], _features(valence=0.1, energy=0.2, tempo=80)),
         ]
         centroids = compute_centroids(training, stats)
 
         # Pick a feature point near the Sad centroid so Sad is nearest;
-        # Dark/Fast/Heartbreak are also close enough to be within threshold
-        # but should be suppressed from output.
+        # the suppressed moods are also close enough to be within threshold
+        # but should be filtered from output.
         moods, _ = classify_track(
             _features(valence=0.1, energy=0.2, tempo=80),
-            stats, centroids, threshold=10.0, max_assignments=4,
+            stats, centroids, threshold=10.0, max_assignments=5,
         )
         assert "Sad" in moods
         assert "Dark" not in moods
         assert "Fast" not in moods
         assert "Heartbreak" not in moods
+        assert "Heavy Bass" not in moods
 
     def test_suppression_set_is_overridable(self) -> None:
         """Caller-supplied suppressed_moods overrides the module default."""
@@ -221,8 +228,80 @@ class TestClassifyTrack:
         assert "Dark" in moods
 
     def test_suppressed_moods_constant_matches_spotcheck_verdict(self) -> None:
-        """Guards the canonical set so it can't drift without test update."""
-        assert CENTROID_SUPPRESSED_MOODS == frozenset({"Dark", "Fast", "Heartbreak"})
+        """Guards the canonical set so it can't drift without test update.
+
+        Heavy Bass added 2026-06-05 (feature-inadequate, ~10x over-tag in
+        Rock/Indie/Metal vs human). See docs/mood_centroid_decisions.md.
+        """
+        assert CENTROID_SUPPRESSED_MOODS == frozenset(
+            {"Dark", "Fast", "Heartbreak", "Heavy Bass"}
+        )
+
+
+class TestCentroidPolicy:
+    """Suppress / gate framework — CENTROID_MOOD_TREATMENTS + apply_centroid_policy."""
+
+    def test_treatments_dict_consistent(self) -> None:
+        # Every treatment is one of the two known kinds.
+        for mood, meta in CENTROID_MOOD_TREATMENTS.items():
+            assert meta["treatment"] in ("suppress", "gate")
+            assert meta.get("reason")
+            assert meta.get("evidence")
+        # Suppressed set is exactly the suppress-treatment moods.
+        assert CENTROID_SUPPRESSED_MOODS == frozenset(
+            m for m, v in CENTROID_MOOD_TREATMENTS.items() if v["treatment"] == "suppress"
+        )
+        # Gates are exactly the gate-treatment moods.
+        gated = {m for m, v in CENTROID_MOOD_TREATMENTS.items() if v["treatment"] == "gate"}
+        assert set(CENTROID_MOOD_GATES) == gated
+        # A mood is gated XOR suppressed, never both.
+        assert CENTROID_SUPPRESSED_MOODS.isdisjoint(set(CENTROID_MOOD_GATES))
+
+    def test_policy_suppresses(self) -> None:
+        out = apply_centroid_policy(["Heavy Bass", "Dance"], _features())
+        assert out == ["Dance"]
+
+    def test_policy_preserves_order(self) -> None:
+        out = apply_centroid_policy(["Dance", "Groove", "Hype"], _features())
+        assert out == ["Dance", "Groove", "Hype"]
+
+    def test_slow_gate_emits_when_slow_tempo(self) -> None:
+        out = apply_centroid_policy(["Slow"], _features(tempo=SLOW_TEMPO_MAX - 10))
+        assert out == ["Slow"]
+
+    def test_slow_gate_drops_fast_tempo(self) -> None:
+        out = apply_centroid_policy(["Slow"], _features(tempo=SLOW_TEMPO_MAX + 20))
+        assert out == []
+
+    def test_moody_gate_keeps_slow_drops_fast(self) -> None:
+        assert apply_centroid_policy(["Moody"], _features(tempo=110)) == ["Moody"]
+        # Blinding Lights case: 171 BPM should not be Moody.
+        assert apply_centroid_policy(["Moody"], _features(tempo=171)) == []
+
+    def test_gate_missing_tempo_drops(self) -> None:
+        af = _features()
+        af.pop("tempo")
+        assert apply_centroid_policy(["Slow"], af) == []
+        assert apply_centroid_policy(["Moody"], af) == []
+
+    def test_gate_runs_before_truncation(self) -> None:
+        """A gated-out mood must not consume a max_assignments slot."""
+        stats = compute_global_stats([_features()])
+        # Four distinct centroids; the nearest happens to be a fast 'Slow'.
+        training = [
+            (["Slow"], _features(tempo=150, energy=0.5)),   # nearest, but fast → gated out
+            (["Dance"], _features(tempo=150, energy=0.51)),
+            (["Groove"], _features(tempo=150, energy=0.52)),
+            (["Hype"], _features(tempo=150, energy=0.53)),
+        ]
+        centroids = compute_centroids(training, stats)
+        moods, _ = classify_track(
+            _features(tempo=150, energy=0.5), stats, centroids,
+            threshold=10.0, max_assignments=3,
+        )
+        # Slow gated out (tempo 150 > 105); slot freed → 3 real moods returned.
+        assert "Slow" not in moods
+        assert len(moods) == 3
 
 
 class TestEuclidean:
