@@ -36,18 +36,39 @@ function normalizeTrack(raw, i) {
   };
 }
 
+/* Which timeframe windows a single scrobble belongs to. "all" always; the
+   calendar windows are derived from "now" (see CUR_YEAR/CUR_MONTH_KEY below) so
+   the overview charts track the slicer the same way the play-based metrics do. */
+function scrobbleTimeframes(s) {
+  const tfs = ["all"];
+  if (s.year === CUR_YEAR) tfs.push("year_this");
+  else if (s.year === LAST_YEAR) tfs.push("year_last");
+  const ym = (s.scrobbled_at || "").slice(0, 7);
+  if (ym === CUR_MONTH_KEY) tfs.push("month_this");
+  else if (ym === LAST_MONTH_KEY) tfs.push("month_last");
+  return tfs;
+}
+
 function aggregateScrobbles(rows) {
-  const byHour = Array(24).fill(0), byDow = Array(7).fill(0), bySeason = { winter: 0, spring: 0, summer: 0, fall: 0 }, byYear = {};
-  let total = 0;
+  const mkBucket = () => ({ byHour: Array(24).fill(0), byDow: Array(7).fill(0), bySeason: { winter: 0, spring: 0, summer: 0, fall: 0 }, byYear: {}, total: 0 });
+  // One bucket per timeframe so the slicer can filter the hour/day/season charts
+  // without re-scanning the (large) scrobble list on every selection change.
+  const byTimeframe = {};
+  for (const [id] of TIMEFRAMES) byTimeframe[id] = mkBucket();
   for (const s of rows) {
-    total++;
-    if (s.hour != null) byHour[s.hour]++;
-    if (s.day_of_week != null) byDow[s.day_of_week]++;
     const season = s.season || (s.month ? SEASON_BY_MONTH[s.month] : null);
-    if (season) bySeason[season] = (bySeason[season] || 0) + 1;
-    if (s.year != null) byYear[s.year] = (byYear[s.year] || 0) + 1;
+    for (const tf of scrobbleTimeframes(s)) {
+      const b = byTimeframe[tf];
+      b.total++;
+      if (s.hour != null) b.byHour[s.hour]++;
+      if (s.day_of_week != null) b.byDow[s.day_of_week]++;
+      if (season) b.bySeason[season] = (b.bySeason[season] || 0) + 1;
+      if (s.year != null) b.byYear[s.year] = (b.byYear[s.year] || 0) + 1;
+    }
   }
-  return { byHour, byDow, bySeason, byYear, total };
+  // Keep the all-time aggregate at the top level for backward compatibility
+  // (appbar total, sample data) and expose the per-timeframe buckets alongside.
+  return { ...byTimeframe.all, byTimeframe };
 }
 
 function parseJSONL(text) {
@@ -351,6 +372,17 @@ function App() {
   /* windowed play count for the active timeframe */
   const playOf = useCallback((t) => playInWindow(t, timeframe), [timeframe]);
 
+  /* Scrobble aggregates for the active timeframe — drives the overview's
+     hour / weekly / seasons charts so they track the slicer alongside the
+     play-based metrics. Falls back to the all-time top-level shape when the
+     per-timeframe buckets aren't available (e.g. pre-aggregated sample data). */
+  const scrobblesView = useMemo(() => {
+    const bt = scrobbles.byTimeframe;
+    if (timeframe === "all" || !bt || !bt[timeframe]) return scrobbles;
+    const b = bt[timeframe];
+    return { ...scrobbles, byHour: b.byHour, byDow: b.byDow, bySeason: b.bySeason, byYear: b.byYear, total: b.total };
+  }, [scrobbles, timeframe]);
+
   /* stable genre→color map computed once from the WHOLE library (survives filtering/selection) */
   const genreColorMap = useMemo(() => {
     const count = {};
@@ -616,11 +648,11 @@ function App() {
             <div className="grid g-32">
               <div className="card">
                 <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">{drill ? "hour · click to explore" : "hour of day"}</span></div>
-                <HourChart data={scrobbles.byHour} onPick={drill ? (h) => pickDrill("hour", h) : undefined} activeKey={drillSel && drillSel.type === "hour" ? drillSel.value : null} />
+                <HourChart data={scrobblesView.byHour} onPick={drill ? (h) => pickDrill("hour", h) : undefined} activeKey={drillSel && drillSel.type === "hour" ? drillSel.value : null} />
               </div>
               <div className="card">
                 <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">{drill ? "day · click to explore" : "day of week"}</span></div>
-                <DowChart data={scrobbles.byDow} onPick={drill ? (i) => pickDrill("dow", i) : undefined} activeKey={drillSel && drillSel.type === "dow" ? drillSel.value : null} />
+                <DowChart data={scrobblesView.byDow} onPick={drill ? (i) => pickDrill("dow", i) : undefined} activeKey={drillSel && drillSel.type === "dow" ? drillSel.value : null} />
               </div>
             </div>
           </section>
@@ -635,7 +667,7 @@ function App() {
                 <h3 className="card-title">Seasons of listening</h3>
                 <span className="card-meta">{drill ? "season · click to explore" : "scrobbles by season"}</span>
               </div>
-              <Seasons data={scrobbles.bySeason} total={scrobbles.total} onPick={drill ? (s) => pickDrill("season", s) : undefined} activeKey={drillSel && drillSel.type === "season" ? drillSel.value : null} />
+              <Seasons data={scrobblesView.bySeason} total={scrobblesView.total} onPick={drill ? (s) => pickDrill("season", s) : undefined} activeKey={drillSel && drillSel.type === "season" ? drillSel.value : null} />
             </div>
           </section>
           {drill && drillSel && drillSel.type === "season" && (
