@@ -1,0 +1,4 @@
+# Profiling scratch artifacts not worth committing (regenerable from harnesses)
+node_modules/
+package*.json
+out_*.jsonl
