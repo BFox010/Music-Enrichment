@@ -2,3 +2,5 @@
 node_modules/
 package*.json
 out_*.jsonl
+mirror/
+*.log

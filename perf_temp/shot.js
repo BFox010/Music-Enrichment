@@ -1,0 +1,17 @@
+const puppeteer=require('puppeteer'); const fs=require('fs'); const path=require('path');
+const BASE=process.argv[2]; const MIRROR=path.join(__dirname,'mirror');
+const map=u=>{if(u.includes('react-dom.production'))return'react-dom.production.min.js';if(u.includes('react.production'))return'react.production.min.js';if(u.includes('echarts'))return'echarts.min.js';return null;};
+(async()=>{const b=await puppeteer.launch({headless:'new',args:['--no-sandbox','--disable-dev-shm-usage','--use-gl=swiftshader']});const p=await b.newPage();
+await p.setViewport({width:1440,height:900});
+await p.setRequestInterception(true);
+p.on('request',r=>{const f=map(r.url());if(f){r.respond({status:200,headers:{'access-control-allow-origin':'*'},contentType:'application/javascript',body:fs.readFileSync(path.join(MIRROR,f))});}else if(r.url().includes('fonts.goog')||r.url().includes('gstatic')){r.abort();}else r.continue();});
+await p.goto(BASE+'/',{waitUntil:'load',timeout:60000});
+await p.waitForFunction(()=>{const e=document.querySelector('.pill-live');return e&&/live data/i.test(e.textContent);},{timeout:30000});
+await p.waitForFunction(()=>typeof window.echarts!=='undefined',{timeout:10000}).catch(()=>{});
+await p.evaluate(()=>{const b=[...document.querySelectorAll('.sidenav-item')].find(x=>x.textContent.trim().toLowerCase().startsWith('timeline'));b&&b.click();});
+await new Promise(r=>setTimeout(r,2000));
+const inst=await p.evaluate(()=>{let n=0;document.querySelectorAll('div').forEach(d=>{try{if(window.echarts&&window.echarts.getInstanceByDom(d))n++;}catch(e){}});return n;});
+console.log('active echarts instances:',inst);
+await p.screenshot({path:'perf_temp/timeline_after.png'});
+console.log('screenshot saved');
+await b.close();})().catch(e=>console.error('ERR',e.message));

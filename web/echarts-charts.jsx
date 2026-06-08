@@ -22,22 +22,32 @@ function themeVars() {
 function useEChart(ref) {
   const chartRef = useRef(null);
   useEffect(() => {
-    if (!ref.current || !window.echarts) return;
-    chartRef.current = echarts.init(ref.current, null, { renderer: "canvas" });
-    const onResize = () => chartRef.current?.resize();
-    window.addEventListener("resize", onResize);
-    // The container is often 0×0 at init time (skeleton showing, or the page
-    // hidden via display:none). Observe it and resize once it gains real size
-    // so the chart fills its card instead of rendering into a 0-height canvas.
+    let cancelled = false;
     let ro;
-    if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(() => {
-        const el = ref.current;
-        if (el && el.clientWidth && el.clientHeight) chartRef.current?.resize();
-      });
-      ro.observe(ref.current);
+    let pollId;
+    const onResize = () => chartRef.current?.resize();
+    // ECharts is loaded lazily (deferred, off the first-paint critical path), so it
+    // may not exist yet when this runs. Wait for it instead of giving up once.
+    function init() {
+      if (cancelled || chartRef.current || !ref.current) return;
+      if (!window.echarts) { pollId = setTimeout(init, 50); return; }
+      chartRef.current = echarts.init(ref.current, null, { renderer: "canvas" });
+      window.addEventListener("resize", onResize);
+      // The container is often 0×0 at init time (skeleton showing, or the page
+      // hidden via display:none). Observe it and resize once it gains real size
+      // so the chart fills its card instead of rendering into a 0-height canvas.
+      if (typeof ResizeObserver !== "undefined") {
+        ro = new ResizeObserver(() => {
+          const el = ref.current;
+          if (el && el.clientWidth && el.clientHeight) chartRef.current?.resize();
+        });
+        ro.observe(ref.current);
+      }
     }
+    init();
     return () => {
+      cancelled = true;
+      clearTimeout(pollId);
       window.removeEventListener("resize", onResize);
       ro?.disconnect();
       chartRef.current?.dispose();

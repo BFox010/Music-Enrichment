@@ -7,6 +7,56 @@
 **Confidence legend:** ✅ measured (real run) · ⚠️ estimated / derived (static or
 extrapolated) · 🔴 could not measure (reason given).
 
+> **Update (2026-06-08): a frontend load-time optimization sweep was implemented after
+> the initial profiling.** The original report below documents the *pre-optimization*
+> state. See [Frontend load optimization](#frontend-load-optimization-implemented) for
+> the before/after results — this section supersedes the frontend observations below.
+
+## Frontend load optimization (implemented)
+
+**Goal:** reduce "time to see page". Measured with headless Chrome (Puppeteer) against
+a uvicorn-served instance; CDN assets served from local mirrors so CPU costs (transpile,
+mount, parse, render) are faithful — network download time (~0 on localhost) is reported
+separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_frontend.mjs`.
+
+### What changed
+1. **Dropped in-browser Babel; added an esbuild build step** (`scripts/build_frontend.mjs`,
+   `npm run build` / `npm run dev` watch). The 5 `.jsx` are pre-compiled to one minified
+   `web/app.bundle.js` (101 KB / 27 KB gz). Removes the ~3 MB Babel download + 373 ms
+   per-load transpile.
+2. **Production React builds** (`react.production.min.js` / `react-dom.production.min.js`):
+   dev 1.16 MB → prod 138 KB raw (228 KB → 41 KB gz for ReactDOM).
+3. **ECharts off the first-paint path** — deferred after the app bundle and `useEChart`
+   made resilient (waits for `window.echarts` instead of a one-shot init), so charts still
+   render but the 1 MB library no longer gates first paint.
+4. All scripts `defer`; data transfer was already gzipped (see correction in Observations).
+
+### Results (headless, instant local network — CPU-bound costs)
+
+| Metric | Before (Babel) | After (esbuild + prod React) | Change | Conf |
+|---|---|---|---|---|
+| First Contentful Paint | **~5,000 ms** | **~155 ms** | **~32× faster** | ✅ |
+| Library data visible | ~5,650 ms | ~880 ms | ~6.4× faster | ✅ |
+| Chart tab open ("click load") | n/a (broke in headless) | ~64 ms | renders correctly | ✅ |
+| Page navigation (view switch) | ~45 ms | ~45 ms | unchanged (already instant) | ✅ |
+| Critical-path JS, gzipped | **~1,273 KB** (react-dom-dev 228 + babel 649 + echarts 327 + jsx ~42 + react-dev 27) | **~72 KB** (react 4 + react-dom 41 + app 27) | **~18× smaller** + 373 ms transpile gone; ECharts 327 KB gz now lazy | ✅ |
+
+> Headless CPU differs from a real device, but the before/after is a consistent yardstick.
+> On a real network the *additional* win is larger: the before-state also paid CDN
+> download of ~1.3 MB gz of render-blocking JS before anything appeared.
+
+### Files changed by the sweep
+`web/index.html` (script tags), `web/echarts-charts.jsx` (`useEChart` resilient init),
+`web/app.bundle.js` + `.map` (generated), `package.json` + `scripts/build_frontend.mjs`
+(new build tooling), `.gitignore` (`node_modules/`). Build: `npm install && npm run build`.
+
+### Further optional wins (not done)
+- **Truly lazy ECharts** (inject the script only on first chart-tab open) to save its
+  327 KB gz entirely for users who never open a chart. The resilient `useEChart` already
+  supports a late-arriving `window.echarts`, so this is now low-risk.
+- Self-host / subset Google Fonts (currently 5 render-blocking families).
+- Code-split per view if the bundle grows.
+
 ## Measurement environment
 
 | Item | Value |
@@ -73,7 +123,7 @@ number, for larger libraries.
 | Google Fonts (5 families) | frontend | ⚠️ render-blocking CSS + WOFF2 | — | fonts.googleapis | — | — | ⚠️ |
 | **In-browser Babel transform of 5 `.jsx`** (147 KB) | frontend | **373 ms** (V8): dashboard 204, echarts 90, charts 38, tweaks 24, explorer 18 | on every page load | — | — | O(source size) | ✅ (Node V8; browser comparable) |
 | Local JSX/JS/CSS source | frontend | 244 KB total: `themes.css` 56K, `dashboard.jsx` 51K, `echarts-charts.jsx` 44K, `tweaks-panel.jsx` 24K, `charts.jsx` 21K, `app.css` 11K, `app.js` 9.3K, `explorer.jsx` 8K, `js/charts/*` ≤3.8K | — | same-origin | — | — | ✅ bytes |
-| Dataset fetch `tracks.jsonl`+`scrobbles.jsonl` | frontend | **8.17 MB raw on wire** / ⚠️ **~975 KB gzip** (8.0–8.4×) if compression enabled | — | 2 same-origin fetches (or `/api`) | — | O(N+S) | ✅ bytes |
+| Dataset fetch `tracks.jsonl`+`scrobbles.jsonl` | frontend | **~975 KB gzip on wire** (511 KB + 450 KB; 8.17 MB raw, 8.4×) — GZipMiddleware active, verified | — | 2 same-origin fetches (or `/api`) | — | O(N+S) | ✅ measured |
 | Client JSONL parse (`parseJSONL`) | frontend | — | **~80–100 ms** (V8) | — | heap ~34 MB | O(N+S) | ✅ |
 | Client aggregation (`buildPlayWindows`+`buildDrill`) | frontend | — | **~36 ms** (V8) | — | included above | `buildDrill` ≈ O(scrobbles × tracks) cross-tab | ✅ (drill is the heaviest client path) |
 | `web/data/library.js` | frontend | 474 B placeholder | — | — | — | — | ✅ |
@@ -181,9 +231,12 @@ FRONTEND LOAD  (web/index.html)
    (~1.35 MB) and `@babel/standalone` (~1.5 MB) are downloaded on every load, and 5
    `.jsx` files are transformed in-browser (373 ms measured). This is the dominant TTI
    cost alongside the ~3.85 MB CDN payload. (Observation only.)
-3. **Dataset served uncompressed-on-wire is 8.17 MB**, compressible ~8× to ~975 KB.
-   FastAPI's GZip middleware covers `/api/*`, but the raw `tracks.jsonl`/`scrobbles.jsonl`
-   the dashboard fetches are the bulk of the transfer. (Observation only.)
+3. **Dataset transfer is already gzipped.** *(Correction — an earlier draft wrongly
+   implied the raw files were uncompressed.)* FastAPI's `GZipMiddleware` compresses the
+   raw `/tracks.jsonl` and `/scrobbles.jsonl` routes too — verified on the wire:
+   `tracks.jsonl` ships as **511 KB** (vs 4.32 MB raw, 8.4×) with
+   `content-encoding: gzip`. ✅ measured. So data transfer is **not** the load-time
+   bottleneck; the JS/CDN bootstrap is.
 4. **`buildDrill` is an O(scrobbles × tracks) client-side cross-tab** — cheap at this
    dataset (~36 ms) but the steepest-scaling client path. (Observation only.)
 5. **Pipeline per-run cost is ~99% rate-limit wait** (P4/P4b/P5), not CPU. The

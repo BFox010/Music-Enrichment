@@ -246,3 +246,20 @@ Existing suites: `test_apply_taste_profile*`, `test_check_apple_music`,
 
 CI runs this suite on every push to `main` and every pull request — see
 [.github/workflows/ci.yml](.github/workflows/ci.yml).
+
+## Frontend dashboard (`web/`)
+
+The dashboard is a React SPA. The `.jsx` sources are **pre-compiled** into a single
+minified bundle (`web/app.bundle.js`) by [scripts/build_frontend.mjs](scripts/build_frontend.mjs)
+using esbuild — there is no in-browser Babel transpile.
+
+```bash
+npm install          # one-time (installs esbuild)
+npm run build        # compile web/*.jsx -> web/app.bundle.js (+ .map)
+npm run dev          # same, but rebuilds on save (watch mode)
+```
+
+**After editing any `web/*.jsx`, run `npm run build`** (or keep `npm run dev` running)
+and commit the regenerated `web/app.bundle.js`. The dashboard is served by the FastAPI
+app (`uvicorn app.main:app`), which also gzip-compresses the dataset and `/api/*`
+responses. See [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md) for the load-time profile.
