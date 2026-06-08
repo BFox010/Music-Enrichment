@@ -1,0 +1,142 @@
+{
+  "base": "http://127.0.0.1:8172",
+  "paint": {
+    "firstPaint": 92,
+    "firstContentfulPaint": 212,
+    "domContentLoaded": 79,
+    "loadEvent": 79,
+    "resources": [
+      {
+        "name": "tracks.jsonl",
+        "dur": 561,
+        "start": 170
+      },
+      {
+        "name": "scrobbles.jsonl",
+        "dur": 528,
+        "start": 171
+      },
+      {
+        "name": "echarts.min.js",
+        "dur": 82,
+        "start": 178
+      },
+      {
+        "name": "app.bundle.js",
+        "dur": 37,
+        "start": 30
+      },
+      {
+        "name": "library.js",
+        "dur": 33,
+        "start": 29
+      },
+      {
+        "name": "favicon.ico",
+        "dur": 29,
+        "start": 177
+      },
+      {
+        "name": "themes.css",
+        "dur": 27,
+        "start": 29
+      },
+      {
+        "name": "react-dom.production.min.js",
+        "dur": 26,
+        "start": 29
+      }
+    ]
+  },
+  "libraryDataLoadedMs": 1049,
+  "chartTabRenderMs": 105,
+  "pageNavMs": [
+    {
+      "view": "genres",
+      "ms": 51
+    },
+    {
+      "view": "albums",
+      "ms": 47
+    },
+    {
+      "view": "overview",
+      "ms": 45
+    }
+  ],
+  "criticalCdnBytes": 1176688,
+  "requests": [
+    {
+      "url": "https://unpkg.com/react@18.3.1/umd/react.production.min.js",
+      "bytes": 10751,
+      "src": "mirror",
+      "kb": 10.5
+    },
+    {
+      "url": "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
+      "bytes": 131835,
+      "src": "mirror",
+      "kb": 128.7
+    },
+    {
+      "url": "/",
+      "bytes": 2953,
+      "src": "local",
+      "kb": 2.9
+    },
+    {
+      "url": "/themes.css",
+      "bytes": 55755,
+      "src": "local",
+      "kb": 54.4
+    },
+    {
+      "url": "/data/library.js",
+      "bytes": 474,
+      "src": "local",
+      "kb": 0.5
+    },
+    {
+      "url": "/app.bundle.js",
+      "bytes": 104012,
+      "src": "local",
+      "kb": 101.6
+    },
+    {
+      "url": "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js",
+      "bytes": 1034102,
+      "src": "mirror",
+      "kb": 1009.9
+    },
+    {
+      "url": "/api/lastfm/status",
+      "bytes": 146,
+      "src": "local",
+      "kb": 0.1
+    },
+    {
+      "url": "/favicon.ico",
+      "bytes": 22,
+      "src": "local",
+      "kb": 0
+    },
+    {
+      "url": "/scrobbles.jsonl",
+      "bytes": 3859608,
+      "src": "local",
+      "kb": 3769.1
+    },
+    {
+      "url": "/tracks.jsonl",
+      "bytes": 4316147,
+      "src": "local",
+      "kb": 4215
+    },
+    {
+      "url": "/api/timeline?by=year",
+      "bytes": 246,
+      "src": "local",
+      "kb": 0.2
+    }
+  ]
+}

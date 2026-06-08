@@ -59,8 +59,7 @@
        Run `npm run build` (or `npm run dev` to rebuild on save) after editing any .jsx. -->
   <script defer src="app.bundle.js"></script>
 
-  <!-- ECharts: only needed once a chart tab is opened, so it loads after the app
-       bundle and stays off the first-paint critical path. -->
-  <script defer src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <!-- ECharts is loaded lazily by the app (prefetched on idle, or on first chart-view
+       open) via ensureECharts() — see web/echarts-charts.jsx. Not loaded up front. -->
 </body>
 </html>

@@ -26,9 +26,12 @@ separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_fron
    per-load transpile.
 2. **Production React builds** (`react.production.min.js` / `react-dom.production.min.js`):
    dev 1.16 MB → prod 138 KB raw (228 KB → 41 KB gz for ReactDOM).
-3. **ECharts off the first-paint path** — deferred after the app bundle and `useEChart`
-   made resilient (waits for `window.echarts` instead of a one-shot init), so charts still
-   render but the 1 MB library no longer gates first paint.
+3. **ECharts lazy-loaded** — removed from `index.html` entirely; a singleton
+   `ensureECharts()` injects the ~1 MB library on demand. The dashboard prefetches it
+   during idle time after first paint and loads it immediately on first chart-view open,
+   so it no longer competes with the initial data fetch and never blocks first paint.
+   `useEChart` is resilient (waits for `window.echarts`), so charts still render. Verified:
+   ECharts requested exactly once, ~686 ms in (after the ~160 ms FCP); all charts render.
 4. All scripts `defer`; data transfer was already gzipped (see correction in Observations).
 
 ### Results (headless, instant local network — CPU-bound costs)
@@ -51,11 +54,10 @@ separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_fron
 (new build tooling), `.gitignore` (`node_modules/`). Build: `npm install && npm run build`.
 
 ### Further optional wins (not done)
-- **Truly lazy ECharts** (inject the script only on first chart-tab open) to save its
-  327 KB gz entirely for users who never open a chart. The resilient `useEChart` already
-  supports a late-arriving `window.echarts`, so this is now low-risk.
 - Self-host / subset Google Fonts (currently 5 render-blocking families).
 - Code-split per view if the bundle grows.
+
+*(Done — lazy ECharts: implemented as on-demand + idle prefetch; see item 3 above.)*
 
 ## Measurement environment
 

@@ -212,6 +212,20 @@ function App() {
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
+  /* Lazy-load ECharts (~1 MB): prefetch during idle after first paint so it is
+     usually ready before a chart is opened, and load it immediately if a chart
+     view is opened first. The charts (useEChart) pick it up via window.echarts
+     once present. ensureECharts() is a singleton, so this loads it at most once. */
+  useEffect(() => {
+    const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
+    const id = idle(() => { window.ensureECharts && window.ensureECharts(); });
+    return () => (window.cancelIdleCallback || clearTimeout)(id);
+  }, []);
+  useEffect(() => {
+    const CHART_PAGES = ["timeline", "trajectory", "map", "audio", "albums", "constellation", "coverage"];
+    if (CHART_PAGES.includes(page)) window.ensureECharts && window.ensureECharts();
+  }, [page]);
+
   /* apply accent + density to <html> */
   useEffect(() => {
     document.documentElement.setAttribute("data-density", density);

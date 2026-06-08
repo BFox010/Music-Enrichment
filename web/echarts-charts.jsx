@@ -18,6 +18,26 @@ function themeVars() {
   };
 }
 
+/* ── lazy ECharts loader ────────────────────────────────────────────────────
+   ECharts (~1 MB) is no longer in index.html. It is injected on demand: the
+   dashboard prefetches it during idle time after first paint, and loads it
+   immediately when a chart view is opened. ensureECharts() is a singleton —
+   the <script> is added at most once and the same promise is reused. */
+let __echartsPromise = null;
+function ensureECharts() {
+  if (window.echarts) return Promise.resolve(window.echarts);
+  if (__echartsPromise) return __echartsPromise;
+  __echartsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
+    s.async = true;
+    s.onload = () => resolve(window.echarts);
+    s.onerror = () => { __echartsPromise = null; reject(new Error("ECharts failed to load")); };
+    document.head.appendChild(s);
+  });
+  return __echartsPromise;
+}
+
 /* ── shared ECharts mount hook ──────────────────────────────────────────── */
 function useEChart(ref) {
   const chartRef = useRef(null);
