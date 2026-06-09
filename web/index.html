@@ -7,7 +7,13 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=Spline+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <!-- Load fonts without blocking first paint: applied as `print` (ignored for
+       screen layout) until the stylesheet loads, then swapped to `all`. Text
+       paints immediately in a fallback face (display=swap). -->
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=Spline+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" media="print" onload="this.media='all'" />
+  <noscript>
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Manrope:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=Spline+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  </noscript>
 
   <link rel="stylesheet" href="themes.css" />
 
@@ -30,20 +36,32 @@
 
   <!-- ngrok's free tier returns an HTML interstitial instead of JSON unless
        this header is present; add it to same-origin requests so the SPA's
-       API fetches always receive JSON. Installed before any component runs. -->
+       API fetches always receive JSON. The shim also attaches the dashboard
+       token to mutating (non-GET) same-origin requests so the server accepts
+       them — the token comes from same-origin GET /api/config, which a
+       cross-origin page cannot read (no CORS). Installed before any component runs. -->
   <script>
     (function () {
       var _fetch = window.fetch.bind(window);
+      // Fetch the token once via the raw fetch (avoid recursing through the wrapper).
+      var _tokenPromise = _fetch("/api/config", { headers: { "ngrok-skip-browser-warning": "true" } })
+        .then(function (r) { return r.ok ? r.json() : null; })
+        .then(function (d) { return (d && d.token) || ""; })
+        .catch(function () { return ""; });
       window.fetch = function (input, init) {
         init = init || {};
         var url = typeof input === "string" ? input : (input && input.url) || "";
         var sameOrigin = !/^https?:\/\//i.test(url) || url.indexOf(location.origin) === 0;
-        if (sameOrigin) {
+        if (!sameOrigin) return _fetch(input, init);
+        var method = (init.method || (input && input.method) || "GET").toUpperCase();
+        var send = function (token) {
           var h = new Headers((init && init.headers) || (input && input.headers) || {});
           h.set("ngrok-skip-browser-warning", "true");
-          init = Object.assign({}, init, { headers: h });
-        }
-        return _fetch(input, init);
+          if (token && method !== "GET" && method !== "HEAD") h.set("X-Dashboard-Token", token);
+          return _fetch(input, Object.assign({}, init, { headers: h }));
+        };
+        // Mutating requests wait for the token; reads go immediately.
+        return (method !== "GET" && method !== "HEAD") ? _tokenPromise.then(send) : send("");
       };
     })();
   </script>
@@ -54,6 +72,11 @@
 
   <!-- data (defines window.MUSIC_DATA) -->
   <script defer src="data/library.js"></script>
+
+  <!-- shared pure data transforms (no JSX); loaded before app.bundle.js so its
+       functions/constants are globals the bundle uses, and so web/data-worker.js
+       can importScripts the same code off the main thread. -->
+  <script defer src="data-processing.js"></script>
 
   <!-- app: pre-compiled from the *.jsx sources by scripts/build_frontend.mjs.
        Run `npm run build` (or `npm run dev` to rebuild on save) after editing any .jsx. -->

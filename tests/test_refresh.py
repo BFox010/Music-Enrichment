@@ -179,6 +179,11 @@ class TestApiRefresh:
                 from app.main import app
                 yield TestClient(app)
 
+    @staticmethod
+    def _auth():
+        from app.main import DASHBOARD_TOKEN
+        return {"X-Dashboard-Token": DASHBOARD_TOKEN}
+
     def test_refresh_endpoint_returns_200(self, client):
         fake_result = {
             "sync": {"new": 2, "fetched": 2, "total": 50, "pages_fetched": 1},
@@ -187,7 +192,7 @@ class TestApiRefresh:
             "cache": {"tracks": 100, "scrobbles": 500},
         }
         with patch("app.refresh.refresh", new=AsyncMock(return_value=fake_result)):
-            r = client.post("/api/refresh")
+            r = client.post("/api/refresh", headers=self._auth())
         assert r.status_code == 200
         body = r.json()
         assert body["sync"]["new"] == 2
@@ -198,7 +203,7 @@ class TestApiRefresh:
             raise RuntimeError("LASTFM_API_KEY not set")
 
         with patch("app.refresh.refresh", new=explode):
-            r = client.post("/api/refresh")
+            r = client.post("/api/refresh", headers=self._auth())
         assert r.status_code == 400
         assert "LASTFM_API_KEY" in r.json()["detail"]
 
@@ -209,7 +214,7 @@ class TestApiRefresh:
             raise RefreshInProgress("a refresh is already running")
 
         with patch("app.refresh.refresh", new=busy):
-            r = client.post("/api/refresh")
+            r = client.post("/api/refresh", headers=self._auth())
         assert r.status_code == 409
         assert "already running" in r.json()["detail"]
 

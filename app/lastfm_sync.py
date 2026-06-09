@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 from datetime import datetime, timezone
 from pathlib import Path
@@ -12,7 +13,12 @@ import httpx
 from pipeline.config import LASTFM_API_ROOT, LASTFM_RATE_LIMIT, SCROBBLES_PATH
 from pipeline.ingest_scrobbles import ingest_from_records
 
+log = logging.getLogger(__name__)
+
 _PAGE_SIZE = 200
+# Safety cap so a since_ts=0 full-history fetch (or a misbehaving API reporting a
+# huge totalPages) can't loop unbounded. 250 pages × 200 = 50k scrobbles.
+_MAX_PAGES = 250
 
 
 def get_last_scrobble_ts(scrobbles: list[dict]) -> int:
@@ -70,6 +76,12 @@ async def fetch_recent_scrobbles(
             rt = body.get("recenttracks", {})
             attr = rt.get("@attr", {})
             total_pages = int(attr.get("totalPages", 1))
+            if total_pages > _MAX_PAGES:
+                log.warning(
+                    "Last.fm reported %d pages; capping at %d (%d scrobbles)",
+                    total_pages, _MAX_PAGES, _MAX_PAGES * _PAGE_SIZE,
+                )
+                total_pages = _MAX_PAGES
             tracks = rt.get("track", [])
 
             # Last.fm can return a single dict instead of a list when there's one result
@@ -99,6 +111,12 @@ async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
     existing = get_scrobbles()
     since_ts = get_last_scrobble_ts(existing)
     prev_count = len(existing)
+    if since_ts == 0 and prev_count > 0:
+        log.warning(
+            "No usable latest-scrobble timestamp from %d existing rows — "
+            "fetching full history (duplicates will be de-duped on append).",
+            prev_count,
+        )
 
     records = await fetch_recent_scrobbles(username, api_key, since_ts)
     pages_fetched = max(1, (len(records) + _PAGE_SIZE - 1) // _PAGE_SIZE) if records else 0

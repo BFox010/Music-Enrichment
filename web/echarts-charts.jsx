@@ -99,7 +99,7 @@ function TimelineChart({ active }) {
     if (!active) return;
     setLoading(true);
     fetch(`/api/timeline?by=${by}`)
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
         setLoading(false);
         if (!chart.current || !data?.length) return;
@@ -172,7 +172,7 @@ function ArtistTrajectory({ active }) {
     if (!active || raw) return;
     setLoading(true);
     fetch("/api/artist-trajectory?top=20")
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => {
         setLoading(false);
         const rows = (d && d.data) || [];
@@ -289,7 +289,7 @@ function ListeningMap({ active }) {
     setLoading(true);
     const q = year != null ? `?year=${year}` : "";
     fetch("/api/time-of-day" + q)
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
         // First pass (year unknown): learn the available years, default to the
         // most recent, and let the effect re-run with that year filter.
@@ -402,7 +402,7 @@ function AudioFeaturesChart({ active }) {
     if (!active) return;
     setLoading(true);
     fetch("/api/audio-features")
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(({ scatter, histograms }) => {
         setLoading(false);
         const c = themeVars();
@@ -504,7 +504,7 @@ function SaturationChart({ active }) {
     if (!active) return;
     setLoading(true);
     fetch("/api/saturation")
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => { setLoading(false); setData(d); })
       .catch(() => setLoading(false));
   }, [active]);
@@ -788,7 +788,7 @@ function TagConstellation({ active }) {
 
     const minCount = field === "mood_tags" ? 1 : 15;
     fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(({ nodes, edges }) => {
         setLoading(false);
         if (!chart.current || !nodes?.length) return;

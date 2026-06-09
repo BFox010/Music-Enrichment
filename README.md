@@ -263,3 +263,10 @@ npm run dev          # same, but rebuilds on save (watch mode)
 and commit the regenerated `web/app.bundle.js`. The dashboard is served by the FastAPI
 app (`uvicorn app.main:app`), which also gzip-compresses the dataset and `/api/*`
 responses. See [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md) for the load-time profile.
+
+`web/data-processing.js` and `web/data-worker.js` are **plain JS, not part of the
+bundle** — they hold the pure parse/aggregate transforms so a Web Worker can run the
+initial-load parse off the main thread (the bundle references them as globals). Edit
+them directly; no rebuild needed. On first paint the dashboard fetches
+`/tracks.min.jsonl` (a slimmed projection of the tracks the UI renders) rather than the
+full `tracks.jsonl`, which stays available for direct download and via `/api/*`.
