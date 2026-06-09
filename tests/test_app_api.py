@@ -453,6 +453,23 @@ class TestMalformedRows:
                              "/api/artist-trajectory", "/api/albums", "/api/top"):
                     assert c.get(path).status_code == 200, path
 
+    def test_audio_features_survives_missing_artist(self):
+        """A row with audio_features but no artist/track must not 500."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tp = Path(tmp) / "tracks.jsonl"
+            sp = Path(tmp) / "scrobbles.jsonl"
+            tp.write_text(
+                json.dumps({"audio_features": {"energy": 0.5, "valence": 0.5}}) + "\n",
+                encoding="utf-8",
+            )
+            sp.write_text("", encoding="utf-8")
+            with data.use_paths(tp, sp):
+                c = TestClient(app)
+                r = c.get("/api/audio-features")
+                assert r.status_code == 200
+                scatter = r.json()["scatter"]
+                assert scatter and scatter[0]["artist"] == ""
+
 
 class TestLastFmStatus:
     def test_status_ok(self, client):

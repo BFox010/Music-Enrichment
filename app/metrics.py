@@ -263,8 +263,8 @@ def audio_features() -> dict[str, Any]:
                 {
                     "energy": round(float(af["energy"]), 4),
                     "valence": round(float(af["valence"]), 4),
-                    "artist": t["artist"],
-                    "track": t["track"],
+                    "artist": t.get("artist") or "",
+                    "track": t.get("track") or "",
                     "play_count": int(t.get("play_count") or 0),
                 }
             )
