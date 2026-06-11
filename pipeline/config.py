@@ -16,6 +16,7 @@ SCROBBLES_PATH: Path = REPO_ROOT / "scrobbles.jsonl"
 
 # ── Intermediate per-phase outputs (gitignored) ──────────────────────────
 TRACKS_SKELETON_PATH: Path = REPO_ROOT / "tracks_skeleton.jsonl"
+TRACKS_WITH_SPOTIFY_PATH: Path = REPO_ROOT / "tracks_with_spotify.jsonl"
 TRACKS_WITH_AUDIO_PATH: Path = REPO_ROOT / "tracks_with_audio.jsonl"
 TRACKS_WITH_METADATA_PATH: Path = REPO_ROOT / "tracks_with_metadata.jsonl"
 TRACKS_WITH_DISCOGS_PATH: Path = REPO_ROOT / "tracks_with_discogs.jsonl"
@@ -41,12 +42,17 @@ INPUT_APPLE_MUSIC_LIBRARY: Path = INPUTS_DIR / "apple_music_library.xml"  # iTun
 INPUT_EXISTING_AUDIT: Path = INPUTS_DIR / "existing_audit.csv"
 INPUT_EXPORTIFY_CSV: Path = INPUTS_DIR / "exportify.csv"
 INPUT_CLAUDE_MOOD_RESULTS: Path = INPUTS_DIR / "claude_mood_results.jsonl"
+# Spotify app credentials (Client ID + Secret). Either set the env vars
+# SPOTIFY_CLIENT_ID / SPOTIFY_CLIENT_SECRET, or drop a JSON file here with
+# {"client_id": "...", "client_secret": "..."}. Absent → Phase B is skipped.
+INPUT_SPOTIFY_CREDENTIALS: Path = INPUTS_DIR / "spotify_credentials.json"
 
 # ── API caches ───────────────────────────────────────────────────────────
 APPLE_MUSIC_CACHE: Path = CACHE_DIR / "apple_music.json"
 LASTFM_CACHE: Path = CACHE_DIR / "lastfm.json"
 MUSICBRAINZ_CACHE: Path = CACHE_DIR / "musicbrainz.json"
 DISCOGS_CACHE: Path = CACHE_DIR / "discogs.json"
+SPOTIFY_CACHE: Path = CACHE_DIR / "spotify_search.json"
 
 # ── Schema ───────────────────────────────────────────────────────────────
 # Integer, monotonic. Bump only on breaking renames/removals — additive fields
@@ -76,12 +82,17 @@ LASTFM_API_ROOT: str = "https://ws.audioscrobbler.com/2.0/"
 MUSICBRAINZ_API_ROOT: str = "https://musicbrainz.org/ws/2/"
 DISCOGS_API_ROOT: str = "https://api.discogs.com/"
 ITUNES_SEARCH_API: str = "https://itunes.apple.com/search"
+# Spotify Search (NOT the deprecated audio-features endpoint — search is still
+# open to new apps). Token via Client-Credentials flow (no user login).
+SPOTIFY_API_ROOT: str = "https://api.spotify.com/v1/"
+SPOTIFY_TOKEN_URL: str = "https://accounts.spotify.com/api/token"
 
 # ── Rate limits (req/sec) ────────────────────────────────────────────────
 LASTFM_RATE_LIMIT: float = 5.0
 MUSICBRAINZ_RATE_LIMIT: float = 1.0   # 1 req/sec hard
 DISCOGS_RATE_LIMIT: float = 1.0       # 60/min
 ITUNES_RATE_LIMIT: float = 0.33       # ~20/min (conservative)
+SPOTIFY_RATE_LIMIT: float = 3.0       # conservative; Spotify uses a 30s rolling window
 
 # Backoff: tries × base × 2^attempt up to max_sleep
 HTTP_MAX_RETRIES: int = 5

@@ -61,6 +61,19 @@ phases:
     schema_version: 5
     resumable: true
 
+  - id: "B"
+    name: Spotify ID resolution
+    module: pipeline.enrich_spotify_ids
+    callable: enrich
+    inputs:
+      - tracks_with_apple.jsonl
+    outputs:
+      - tracks_with_spotify.jsonl
+    depends_on: ["A"]
+    schema_version: 5
+    resumable: true
+    optional: true   # skips gracefully when no Spotify credentials are present
+
   - id: "3a"
     name: TuneMyMusic export
     module: pipeline.export_tunemymusic
