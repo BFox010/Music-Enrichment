@@ -6,11 +6,11 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 """
 
 import os
+import secrets
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -22,12 +22,22 @@ import app.query as query
 
 app = FastAPI(title="Music Dashboard")
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+# No CORS middleware: the dashboard is served from the same origin as the API,
+# so it never needs cross-origin access. Allowing all origins would let any
+# website a user visits read their full listening history over the public tunnel.
+
+# Shared secret guarding the mutating endpoints (refresh / sync / reload). The
+# SPA reads it from GET /api/config (same-origin only, since there is no CORS);
+# a cross-origin page can neither read it nor set the custom header without a
+# preflight that now fails — blocking drive-by CSRF triggering of pipeline runs.
+# Set DASHBOARD_TOKEN to keep the token stable across restarts.
+DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN") or secrets.token_urlsafe(32)
+
+
+def require_token(x_dashboard_token: str = Header(default="")) -> None:
+    if not secrets.compare_digest(x_dashboard_token, DASHBOARD_TOKEN):
+        raise HTTPException(status_code=403, detail="missing or invalid dashboard token")
+
 
 # Gzip every response above the threshold. This transparently compresses the
 # multi-MB JSONL data endpoints and all static assets (CSS/JSX), which is the
@@ -36,6 +46,14 @@ app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Load data eagerly at import time; tests override via data.use_paths().
 data.load()
+
+
+@app.get("/api/config")
+def api_config():
+    """Same-origin client bootstrap. Returns the token the SPA must echo back in
+    the ``X-Dashboard-Token`` header on mutating requests. With CORS disabled,
+    cross-origin pages cannot read this response."""
+    return {"token": DASHBOARD_TOKEN}
 
 
 @app.get("/api/overview")
@@ -134,7 +152,7 @@ def api_tag_graph(
     return metrics.tag_graph(field=field, min_count=min_count)
 
 
-@app.post("/api/reload")
+@app.post("/api/reload", dependencies=[Depends(require_token)])
 def api_reload():
     return data.reload()
 
@@ -153,7 +171,7 @@ def lastfm_status():
     }
 
 
-@app.post("/api/lastfm/sync")
+@app.post("/api/lastfm/sync", dependencies=[Depends(require_token)])
 async def lastfm_sync():
     from app.lastfm_sync import sync as _sync
     try:
@@ -164,7 +182,7 @@ async def lastfm_sync():
         raise HTTPException(status_code=400, detail=str(exc))
 
 
-@app.post("/api/refresh")
+@app.post("/api/refresh", dependencies=[Depends(require_token)])
 async def api_refresh():
     """Full-chain refresh: sync scrobbles → pipeline → export pending → reload."""
     from app.refresh import refresh as _refresh, RefreshInProgress
@@ -204,7 +222,46 @@ def serve_scrobbles_jsonl(request: Request):
     return _conditional_file(SCROBBLES_PATH, request, "application/x-ndjson")
 
 
+@app.get("/tracks.min.jsonl")
+def serve_tracks_min_jsonl(request: Request):
+    """Slimmed tracks for the dashboard's first paint — only the fields the UI
+    renders (see app.query.project_min_track). ~44% smaller gzipped than the full
+    /tracks.jsonl. Full data stays available there and via /api/*. ETag tracks the
+    source file's mtime+size so it 304s on repeat loads and refreshes after a sync."""
+    import json
+
+    if not TRACKS_PATH.exists():
+        raise HTTPException(404, "tracks.jsonl not found")
+    st = TRACKS_PATH.stat()
+    etag = f'W/"min-{int(st.st_mtime)}-{st.st_size}"'
+    cache_headers = {"ETag": etag, "Cache-Control": "public, max-age=0, must-revalidate"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=cache_headers)
+    body = "".join(
+        json.dumps(query.project_min_track(t), ensure_ascii=False) + "\n"
+        for t in data.get_tracks()
+    )
+    return Response(body, media_type="application/x-ndjson", headers=cache_headers)
+
+
+class CachedStaticFiles(StaticFiles):
+    """StaticFiles that adds a short ``Cache-Control`` to file responses.
+
+    Starlette's StaticFiles sends an ETag (→ conditional 304s) but no
+    ``Cache-Control``, so over a tunnel every repeat load still revalidates each
+    asset. A short max-age lets the browser serve from cache without a round-trip;
+    it stays short because app.bundle.js / themes.css aren't content-hashed, so a
+    rebuild must become visible quickly."""
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers.setdefault(
+            "Cache-Control", "public, max-age=300, must-revalidate"
+        )
+        return resp
+
+
 # Mount static files last so API routes take precedence.
 _web_dir = Path(__file__).resolve().parent.parent / "web"
 if _web_dir.exists():
-    app.mount("/", StaticFiles(directory=str(_web_dir), html=True), name="static")
+    app.mount("/", CachedStaticFiles(directory=str(_web_dir), html=True), name="static")

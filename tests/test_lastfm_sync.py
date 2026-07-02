@@ -141,3 +141,21 @@ class TestFetchRecentScrobbles:
                 asyncio.run(
                     fetch_recent_scrobbles("baduser", "fakekey", since_ts=0)
                 )
+
+    def test_caps_total_pages(self):
+        """C1 — a huge totalPages must be capped, not looped unbounded."""
+        # Each page reports 100 total pages; with the cap patched to 2, only 2
+        # requests should be made (and only 2 mock responses are provided, so an
+        # uncapped loop would StopIteration).
+        pages = [
+            _api_page([_raw_track(uts=str(1730606040 + i))], page=i + 1, total_pages=100)
+            for i in range(2)
+        ]
+        client = _mock_client(pages)
+        with patch("httpx.AsyncClient", return_value=client), \
+                patch("app.lastfm_sync._MAX_PAGES", 2):
+            result = asyncio.run(
+                fetch_recent_scrobbles("testuser", "fakekey", since_ts=0)
+            )
+        assert client.get.call_count == 2
+        assert len(result) == 2

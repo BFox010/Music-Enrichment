@@ -65,8 +65,8 @@ def overview() -> dict[str, Any]:
         cov[label] = {"n": count, "pct": round(count / n * 100, 1) if n else 0.0}
 
     scrobble_range: dict[str, Any] = {}
-    if scrobbles:
-        years = [s["year"] for s in scrobbles]
+    years = [s["year"] for s in scrobbles if s.get("year") is not None]
+    if years:
         scrobble_range = {"first": min(years), "last": max(years)}
 
     return {
@@ -96,10 +96,16 @@ def moods() -> list[dict]:
 def timeline(by: str = "year") -> list[dict]:
     counts: Counter[str] = Counter()
     for s in get_scrobbles():
+        year = s.get("year")
+        if year is None:
+            continue
         if by == "month":
-            key = f"{s['year']}-{s['month']:02d}"
+            month = s.get("month")
+            if month is None:
+                continue
+            key = f"{year}-{month:02d}"
         else:
-            key = str(s["year"])
+            key = str(year)
         counts[key] += 1
     return [{"period": p, "plays": c} for p, c in sorted(counts.items())]
 
@@ -118,7 +124,9 @@ def time_of_day(year: Optional[int] = None) -> dict[str, Any]:
     for s in get_scrobbles():
         if s.get("year") is not None:
             years.add(s["year"])
-        hw[(s["hour"], s["day_of_week"])] += 1
+        hour, dow = s.get("hour"), s.get("day_of_week")
+        if hour is not None and dow is not None:
+            hw[(hour, dow)] += 1
         if year is None or s.get("year") == year:
             date = (s.get("scrobbled_at") or "")[:10]
             if date:
@@ -142,14 +150,15 @@ def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
     )
     for t in get_tracks():
         album = (t.get("album") or "").strip()
-        if not album:
+        artist = t.get("artist")
+        if not album or not artist:
             continue
-        key = (t["artist"].lower(), album.lower())
+        key = (artist.lower(), album.lower())
         plays = int(t.get("play_count") or 0)
         rec = by_album[key]
         rec["plays"].append(plays)
         rec["total"] += plays
-        rec["artist"] = t["artist"]
+        rec["artist"] = artist
         rec["album"] = album
         if t.get("release_year"):
             rec["years"].add(t["release_year"])
@@ -187,18 +196,25 @@ def artist_trajectory(top: int = 15) -> dict[str, Any]:
     artist_plays: Counter[str] = Counter()
     artist_display: dict[str, str] = {}
     for t in tracks:
-        key = t["artist"].lower()
+        artist = t.get("artist")
+        if not artist:
+            continue
+        key = artist.lower()
         artist_plays[key] += int(t.get("play_count") or 0)
-        artist_display[key] = t["artist"]
+        artist_display[key] = artist
 
     top_set = {a for a, _ in artist_plays.most_common(top)}
 
     traj: Counter[tuple[str, str]] = Counter()
     for s in scrobbles:
-        key = s["artist"].lower()
+        artist = s.get("artist")
+        year, month = s.get("year"), s.get("month")
+        if not artist or year is None or month is None:
+            continue
+        key = artist.lower()
         if key in top_set:
-            period = f"{s['year']}-{s['month']:02d}-01"
-            name = artist_display.get(key, s["artist"])
+            period = f"{year}-{month:02d}-01"
+            name = artist_display.get(key, artist)
             traj[(period, name)] += 1
 
     data = [[period, count, name] for (period, name), count in traj.items()]
@@ -211,15 +227,18 @@ def top_items(dim: str = "artists", n: int = 20) -> list[dict]:
     if dim == "artists":
         plays: Counter[str] = Counter()
         for t in tracks:
-            plays[t["artist"]] += int(t.get("play_count") or 0)
+            artist = t.get("artist")
+            if not artist:
+                continue
+            plays[artist] += int(t.get("play_count") or 0)
         return [{"name": a, "plays": c} for a, c in plays.most_common(n)]
     # dim == "tracks"
     by_plays = sorted(tracks, key=lambda t: -int(t.get("play_count") or 0))[:n]
     return [
         {
-            "name": f"{t['artist']} — {t['track']}",
-            "artist": t["artist"],
-            "track": t["track"],
+            "name": f"{t.get('artist') or ''} — {t.get('track') or ''}",
+            "artist": t.get("artist") or "",
+            "track": t.get("track") or "",
             "plays": int(t.get("play_count") or 0),
         }
         for t in by_plays
@@ -244,8 +263,8 @@ def audio_features() -> dict[str, Any]:
                 {
                     "energy": round(float(af["energy"]), 4),
                     "valence": round(float(af["valence"]), 4),
-                    "artist": t["artist"],
-                    "track": t["track"],
+                    "artist": t.get("artist") or "",
+                    "track": t.get("track") or "",
                     "play_count": int(t.get("play_count") or 0),
                 }
             )

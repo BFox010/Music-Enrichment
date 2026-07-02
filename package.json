@@ -1,0 +1,13 @@
+{
+  "name": "music-enrichment-web",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Frontend build tooling for the Listening Atlas dashboard (web/).",
+  "scripts": {
+    "build": "node scripts/build_frontend.mjs",
+    "dev": "node scripts/build_frontend.mjs --watch"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

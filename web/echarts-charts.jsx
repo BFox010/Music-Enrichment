@@ -18,26 +18,56 @@ function themeVars() {
   };
 }
 
+/* ── lazy ECharts loader ────────────────────────────────────────────────────
+   ECharts (~1 MB) is no longer in index.html. It is injected on demand: the
+   dashboard prefetches it during idle time after first paint, and loads it
+   immediately when a chart view is opened. ensureECharts() is a singleton —
+   the <script> is added at most once and the same promise is reused. */
+let __echartsPromise = null;
+function ensureECharts() {
+  if (window.echarts) return Promise.resolve(window.echarts);
+  if (__echartsPromise) return __echartsPromise;
+  __echartsPromise = new Promise((resolve, reject) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
+    s.async = true;
+    s.onload = () => resolve(window.echarts);
+    s.onerror = () => { __echartsPromise = null; reject(new Error("ECharts failed to load")); };
+    document.head.appendChild(s);
+  });
+  return __echartsPromise;
+}
+
 /* ── shared ECharts mount hook ──────────────────────────────────────────── */
 function useEChart(ref) {
   const chartRef = useRef(null);
   useEffect(() => {
-    if (!ref.current || !window.echarts) return;
-    chartRef.current = echarts.init(ref.current, null, { renderer: "canvas" });
-    const onResize = () => chartRef.current?.resize();
-    window.addEventListener("resize", onResize);
-    // The container is often 0×0 at init time (skeleton showing, or the page
-    // hidden via display:none). Observe it and resize once it gains real size
-    // so the chart fills its card instead of rendering into a 0-height canvas.
+    let cancelled = false;
     let ro;
-    if (typeof ResizeObserver !== "undefined") {
-      ro = new ResizeObserver(() => {
-        const el = ref.current;
-        if (el && el.clientWidth && el.clientHeight) chartRef.current?.resize();
-      });
-      ro.observe(ref.current);
+    let pollId;
+    const onResize = () => chartRef.current?.resize();
+    // ECharts is loaded lazily (deferred, off the first-paint critical path), so it
+    // may not exist yet when this runs. Wait for it instead of giving up once.
+    function init() {
+      if (cancelled || chartRef.current || !ref.current) return;
+      if (!window.echarts) { pollId = setTimeout(init, 50); return; }
+      chartRef.current = echarts.init(ref.current, null, { renderer: "canvas" });
+      window.addEventListener("resize", onResize);
+      // The container is often 0×0 at init time (skeleton showing, or the page
+      // hidden via display:none). Observe it and resize once it gains real size
+      // so the chart fills its card instead of rendering into a 0-height canvas.
+      if (typeof ResizeObserver !== "undefined") {
+        ro = new ResizeObserver(() => {
+          const el = ref.current;
+          if (el && el.clientWidth && el.clientHeight) chartRef.current?.resize();
+        });
+        ro.observe(ref.current);
+      }
     }
+    init();
     return () => {
+      cancelled = true;
+      clearTimeout(pollId);
       window.removeEventListener("resize", onResize);
       ro?.disconnect();
       chartRef.current?.dispose();
@@ -69,7 +99,7 @@ function TimelineChart({ active }) {
     if (!active) return;
     setLoading(true);
     fetch(`/api/timeline?by=${by}`)
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
         setLoading(false);
         if (!chart.current || !data?.length) return;
@@ -142,7 +172,7 @@ function ArtistTrajectory({ active }) {
     if (!active || raw) return;
     setLoading(true);
     fetch("/api/artist-trajectory?top=20")
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => {
         setLoading(false);
         const rows = (d && d.data) || [];
@@ -259,7 +289,7 @@ function ListeningMap({ active }) {
     setLoading(true);
     const q = year != null ? `?year=${year}` : "";
     fetch("/api/time-of-day" + q)
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
         // First pass (year unknown): learn the available years, default to the
         // most recent, and let the effect re-run with that year filter.
@@ -372,7 +402,7 @@ function AudioFeaturesChart({ active }) {
     if (!active) return;
     setLoading(true);
     fetch("/api/audio-features")
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(({ scatter, histograms }) => {
         setLoading(false);
         const c = themeVars();
@@ -474,7 +504,7 @@ function SaturationChart({ active }) {
     if (!active) return;
     setLoading(true);
     fetch("/api/saturation")
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => { setLoading(false); setData(d); })
       .catch(() => setLoading(false));
   }, [active]);
@@ -758,7 +788,7 @@ function TagConstellation({ active }) {
 
     const minCount = field === "mood_tags" ? 1 : 15;
     fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
-      .then((r) => r.json())
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(({ nodes, edges }) => {
         setLoading(false);
         if (!chart.current || !nodes?.length) return;

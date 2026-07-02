@@ -20,6 +20,46 @@ DISPLAY_COLUMNS: list[str] = [
     "first_scrobbled", "last_scrobbled",
 ]
 
+# Fields the web dashboard's client-side code (web/dashboard.jsx::normalizeTrack +
+# the chart/explorer components) actually reads off each raw track. The canonical
+# tracks.jsonl carries ~40 fields/row; the browser only needs these, so the
+# /tracks.min.jsonl route projects to this set to shrink the first-paint payload.
+# Nothing is lost — tracks.jsonl on disk and the /api/* endpoints keep every field.
+MIN_TRACK_FIELDS: tuple[str, ...] = (
+    "artist", "track", "album", "release_year",
+    "genres", "lastfm_tags", "discogs_styles",
+    "mood_tags", "mood_source", "mood_confidence",
+    "play_count", "peak_year",
+    "first_scrobbled", "last_scrobbled",
+    "apple_music_available", "enrichment_sources", "saturation_tier", "playlists",
+    # join keys used to attach scrobble-derived play windows + drill-downs client-side
+    "artist_normalized", "track_normalized",
+)
+
+# Only these audio-feature sub-fields are charted client-side; the rest (tempo,
+# loudness, speechiness, …) are used server-side by /api/audio-features only.
+_MIN_AUDIO_FEATURES: tuple[str, ...] = (
+    "energy", "valence", "danceability", "acousticness",
+)
+
+
+def project_min_track(row: dict) -> dict:
+    """Project a full track row down to the fields the browser renders.
+
+    ``musicbrainz_id``/``spotify_id`` collapse to booleans because the UI only
+    checks presence (``normalizeTrack`` does ``!!(raw.musicbrainz_id …)``); this
+    drops the long id strings from the payload.
+    """
+    out: dict[str, Any] = {k: row[k] for k in MIN_TRACK_FIELDS if k in row}
+    af = row.get("audio_features")
+    if isinstance(af, dict):
+        out["audio_features"] = {
+            k: af[k] for k in _MIN_AUDIO_FEATURES if k in af
+        }
+    out["musicbrainz_id"] = bool(row.get("musicbrainz_id"))
+    out["spotify_id"] = bool(row.get("spotify_id"))
+    return out
+
 
 def _get_nested(row: dict, key: str) -> Any:
     """Retrieve a possibly-nested value using dot notation."""

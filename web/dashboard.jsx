@@ -4,61 +4,12 @@
 const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
 /* ---------- helpers ---------- */
-const SEASON_BY_MONTH = { 12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring", 6: "summer", 7: "summer", 8: "summer", 9: "fall", 10: "fall", 11: "fall" };
-
-function normalizeTrack(raw, i) {
-  return {
-    i,
-    artist: raw.artist || "Unknown",
-    track: raw.track || "Untitled",
-    album: raw.album || "",
-    release_year: raw.release_year || null,
-    genres: Array.isArray(raw.genres) ? raw.genres : [],
-    tags: Array.isArray(raw.lastfm_tags) ? raw.lastfm_tags : (Array.isArray(raw.tags) ? raw.tags : []),
-    styles: Array.isArray(raw.discogs_styles) ? raw.discogs_styles : (Array.isArray(raw.styles) ? raw.styles : []),
-    moods: raw.mood_tags || raw.moods || null,
-    mood_source: raw.mood_source || null,
-    mood_confidence: raw.mood_confidence || null,
-    play: Number(raw.play_count != null ? raw.play_count : (raw.play || 0)) || 0,
-    py: raw.py || null,
-    tm: raw.tm != null ? raw.tm : null,
-    lm: raw.lm != null ? raw.lm : null,
-    peak_year: raw.peak_year || null,
-    first: raw.first_scrobbled || raw.first || null,
-    last: raw.last_scrobbled || raw.last || null,
-    mbid: !!(raw.musicbrainz_id || raw.mbid),
-    spotify: !!(raw.spotify_id || raw.spotify),
-    apple: raw.apple_music_available != null ? raw.apple_music_available : (raw.apple || null),
-    af: raw.audio_features || raw.af || null,
-    sources: raw.enrichment_sources || raw.sources || [],
-    sat: raw.saturation_tier != null ? raw.saturation_tier : (raw.sat || null),
-    playlists: raw.playlists || []
-  };
-}
-
-function aggregateScrobbles(rows) {
-  const byHour = Array(24).fill(0), byDow = Array(7).fill(0), bySeason = { winter: 0, spring: 0, summer: 0, fall: 0 }, byYear = {};
-  let total = 0;
-  for (const s of rows) {
-    total++;
-    if (s.hour != null) byHour[s.hour]++;
-    if (s.day_of_week != null) byDow[s.day_of_week]++;
-    const season = s.season || (s.month ? SEASON_BY_MONTH[s.month] : null);
-    if (season) bySeason[season] = (bySeason[season] || 0) + 1;
-    if (s.year != null) byYear[s.year] = (byYear[s.year] || 0) + 1;
-  }
-  return { byHour, byDow, bySeason, byYear, total };
-}
-
-function parseJSONL(text) {
-  const out = [];
-  for (const line of text.split("\n")) {
-    const t = line.trim();
-    if (!t) continue;
-    try { out.push(JSON.parse(t)); } catch (e) { /* skip */ }
-  }
-  return out;
-}
+/* The pure data transforms (SEASON_BY_MONTH, normalizeTrack, aggregateScrobbles,
+   parseJSONL, trackKey, buildPlayWindows, attachWindows, buildDrill,
+   processLibrary) and the calendar-window constants (CUR_YEAR, CUR_MONTH_KEY, …)
+   now live in web/data-processing.js so the off-main-thread parser
+   (web/data-worker.js) can share them via importScripts. That file loads as a
+   global <script> before this bundle, so the names used below resolve to it. */
 
 function countMap(arr) { const m = {}; for (const k of arr) m[k] = (m[k] || 0) + 1; return m; }
 function topEntries(map, n) { return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, n).map(([key, value]) => ({ key, value })); }
@@ -73,14 +24,6 @@ const TIMEFRAMES = [
   ["month_this", "This month"],
   ["month_last", "Last month"]
 ];
-// Derive the calendar windows from "now" rather than hardcoding a year, so the
-// timeframe slicer keeps working as the calendar rolls over.
-const _NOW = new Date();
-const CUR_YEAR = _NOW.getFullYear(), LAST_YEAR = CUR_YEAR - 1;
-const _pad2 = (n) => String(n).padStart(2, "0");
-const CUR_MONTH_KEY = `${CUR_YEAR}-${_pad2(_NOW.getMonth() + 1)}`;
-const _lastMonth = new Date(_NOW.getFullYear(), _NOW.getMonth() - 1, 1);
-const LAST_MONTH_KEY = `${_lastMonth.getFullYear()}-${_pad2(_lastMonth.getMonth() + 1)}`;
 
 function playInWindow(t, tf) {
   if (tf === "all" || !tf) return t.play || 0;
@@ -89,86 +32,6 @@ function playInWindow(t, tf) {
   if (tf === "month_this") return t.tm || 0;
   if (tf === "month_last") return t.lm || 0;
   return t.play || 0;
-}
-
-/* Per-track windowed play counts, computed by joining scrobbles → tracks.
-   tracks.jsonl only carries a lifetime `play_count`, so without this every
-   timeframe except "All time" reads as zero. Keyed on normalized identity. */
-function trackKey(o) {
-  const a = (o.artist_normalized || o.artist || "").toLowerCase();
-  const t = (o.track_normalized || o.track || "").toLowerCase();
-  return a + "\x00" + t;
-}
-function buildPlayWindows(scrobbleRows) {
-  const map = new Map();
-  for (const s of scrobbleRows) {
-    const k = trackKey(s);
-    let e = map.get(k);
-    if (!e) { e = { py: {}, tm: 0, lm: 0 }; map.set(k, e); }
-    if (s.year != null) e.py[s.year] = (e.py[s.year] || 0) + 1;
-    const ym = (s.scrobbled_at || "").slice(0, 7);
-    if (ym === CUR_MONTH_KEY) e.tm++;
-    else if (ym === LAST_MONTH_KEY) e.lm++;
-  }
-  return map;
-}
-function attachWindows(rawTracks, scrobbleRows) {
-  if (!scrobbleRows || !scrobbleRows.length) return rawTracks;
-  const win = buildPlayWindows(scrobbleRows);
-  for (const t of rawTracks) {
-    const e = win.get(trackKey(t));
-    if (e) { t.py = e.py; t.tm = e.tm; t.lm = e.lm; }
-  }
-  return rawTracks;
-}
-
-/* Cross-join scrobbles → tracks to count genres/moods/tracks per time slice
-   (season, hour-of-day, day-of-week). Powers the overview drill-downs and the
-   Seasonal Favorites page. Computed once at load from the in-memory rows. */
-const SEASONS_LIST = ["winter", "spring", "summer", "fall"];
-function buildDrill(rawTracks, scrobbleRows) {
-  if (!rawTracks || !scrobbleRows || !scrobbleRows.length) return null;
-  const info = new Map();
-  for (const t of rawTracks) {
-    info.set(trackKey(t), {
-      genres: Array.isArray(t.genres) ? t.genres : [],
-      moods: Array.isArray(t.mood_tags) ? t.mood_tags : (Array.isArray(t.moods) ? t.moods : []),
-      label: `${t.artist || "Unknown"} — ${t.track || "Untitled"}`,
-    });
-  }
-  const mk = () => ({ genres: {}, moods: {}, tracks: {}, total: 0 });
-  const season = {}, hour = {}, dow = {};
-  for (const s of SEASONS_LIST) { season[s] = mk(); season[s].byHour = new Array(24).fill(0); }
-  for (let h = 0; h < 24; h++) hour[h] = mk();
-  for (let d = 0; d < 7; d++) dow[d] = mk();
-  const bump = (bucket, gi) => {
-    bucket.total++;
-    for (const g of gi.genres) bucket.genres[g] = (bucket.genres[g] || 0) + 1;
-    for (const m of gi.moods) bucket.moods[m] = (bucket.moods[m] || 0) + 1;
-    bucket.tracks[gi.label] = (bucket.tracks[gi.label] || 0) + 1;
-  };
-  for (const sc of scrobbleRows) {
-    const gi = info.get(trackKey(sc));
-    if (!gi) continue;
-    const se = sc.season || (sc.month ? SEASON_BY_MONTH[sc.month] : null);
-    if (se && season[se]) { bump(season[se], gi); if (sc.hour != null) season[se].byHour[sc.hour]++; }
-    if (sc.hour != null && hour[sc.hour]) bump(hour[sc.hour], gi);
-    if (sc.day_of_week != null && dow[sc.day_of_week]) bump(dow[sc.day_of_week], gi);
-  }
-  return { season, hour, dow };
-}
-
-/* Single entry point used by every data-load path (initial fetch, refresh,
-   manual file drop) so windowing + drill are always built consistently. */
-function processLibrary(rawTracks, scrobbleRows) {
-  const ns = (scrobbleRows && scrobbleRows.length) ? aggregateScrobbles(scrobbleRows) : null;
-  let nt = null, drill = null;
-  if (rawTracks && rawTracks.length) {
-    attachWindows(rawTracks, scrobbleRows);
-    drill = buildDrill(rawTracks, scrobbleRows);
-    nt = rawTracks.map(normalizeTrack);
-  }
-  return { nt, ns, drill };
 }
 
 /* ---------- App ---------- */
@@ -212,6 +75,20 @@ function App() {
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
+  /* Lazy-load ECharts (~1 MB): prefetch during idle after first paint so it is
+     usually ready before a chart is opened, and load it immediately if a chart
+     view is opened first. The charts (useEChart) pick it up via window.echarts
+     once present. ensureECharts() is a singleton, so this loads it at most once. */
+  useEffect(() => {
+    const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
+    const id = idle(() => { window.ensureECharts && window.ensureECharts(); });
+    return () => (window.cancelIdleCallback || clearTimeout)(id);
+  }, []);
+  useEffect(() => {
+    const CHART_PAGES = ["timeline", "trajectory", "map", "audio", "albums", "constellation", "coverage"];
+    if (CHART_PAGES.includes(page)) window.ensureECharts && window.ensureECharts();
+  }, [page]);
+
   /* apply accent + density to <html> */
   useEffect(() => {
     document.documentElement.setAttribute("data-density", density);
@@ -246,7 +123,7 @@ function App() {
       // Re-fetch live data so the UI reflects the updated tracks/scrobbles
       try {
         const [tr, sc] = await Promise.allSettled([
-          fetch("tracks.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
+          fetch("tracks.min.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
           fetch("scrobbles.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
         ]);
         const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
@@ -297,36 +174,58 @@ function App() {
   /* try fetching real files if served alongside (e.g. in the repo) */
   useEffect(() => {
     let cancelled = false;
-    // Yield to the browser so the app shell can paint before we run the
-    // synchronous JSONL parse + aggregation (otherwise a big main-thread block
-    // can make a freshly-loaded mobile page feel frozen).
-    const yieldToPaint = () => new Promise((resolve) => {
-      (window.requestIdleCallback || ((cb) => setTimeout(cb, 0)))(resolve);
-    });
+    let worker = null;
+
+    // Apply a processed library to state (shared by the worker + sync paths).
+    const apply = (nt, ns, nd) => {
+      if (cancelled || !(nt || ns)) return;
+      setData((d) => ({
+        meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
+        tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
+      }));
+      if (nd) setDrill(nd);
+      showToast("Loaded your live library from the repo");
+    };
+
     (async () => {
       try {
+        // Fetch the slim tracks projection (only the fields the UI renders) plus
+        // scrobbles. The download is async; the heavy parse + cross-join is handed
+        // to a Web Worker so the app shell stays responsive on a fresh mobile load.
         const [tr, sc] = await Promise.allSettled([
-          fetch("tracks.jsonl").then((r) => r.ok ? r.text() : Promise.reject()),
+          fetch("tracks.min.jsonl").then((r) => r.ok ? r.text() : Promise.reject()),
           fetch("scrobbles.jsonl").then((r) => r.ok ? r.text() : Promise.reject())
         ]);
         if (cancelled) return;
-        await yieldToPaint();
-        if (cancelled) return;
-        const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
-        const scRows = sc.status === "fulfilled" ? parseJSONL(sc.value) : null;
-        const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
-        if (nt || ns) {
-          setData((d) => ({
-            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
-            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
-          }));
-          if (nd) setDrill(nd);
-          showToast("Loaded your live library from the repo");
-        }
-      } catch (e) { /* sample stays */ }
-      finally { if (!cancelled) setIsLoadingLive(false); }
+        const tracksText = tr.status === "fulfilled" ? tr.value : null;
+        const scrobblesText = sc.status === "fulfilled" ? sc.value : null;
+        if (!tracksText && !scrobblesText) { if (!cancelled) setIsLoadingLive(false); return; }
+
+        // Synchronous fallback: parse + process on the main thread.
+        const runSync = () => {
+          const trRows = tracksText ? parseJSONL(tracksText) : null;
+          const scRows = scrobblesText ? parseJSONL(scrobblesText) : null;
+          const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
+          apply(nt, ns, nd);
+          if (!cancelled) setIsLoadingLive(false);
+        };
+
+        if (typeof Worker === "undefined") { runSync(); return; }
+        try {
+          worker = new Worker("data-worker.js");
+          worker.onmessage = (e) => {
+            const m = e.data || {};
+            if (m.ok) { apply(m.nt, m.ns, m.drill); }
+            else { runSync(); return; }
+            if (!cancelled) setIsLoadingLive(false);
+            worker.terminate(); worker = null;
+          };
+          worker.onerror = () => { if (worker) { worker.terminate(); worker = null; } runSync(); };
+          worker.postMessage({ tracksText, scrobblesText });
+        } catch (e) { runSync(); }
+      } catch (e) { if (!cancelled) setIsLoadingLive(false); /* sample stays */ }
     })();
-    return () => { cancelled = true; };
+    return () => { cancelled = true; if (worker) { worker.terminate(); worker = null; } };
   }, [showToast]);
 
   /* drag + drop */

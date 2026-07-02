@@ -1,0 +1,13 @@
+const puppeteer=require('puppeteer'); const fs=require('fs'); const path=require('path');
+const BASE=process.argv[2]; const MIRROR=path.join(__dirname,'mirror');
+const map=u=>{if(u.includes('react-dom'))return'react-dom.development.js';if(u.includes('react.dev'))return'react.development.js';if(u.includes('babel'))return'babel.min.js';if(u.includes('echarts'))return'echarts.min.js';return null;};
+(async()=>{const b=await puppeteer.launch({headless:'new',args:['--no-sandbox','--disable-dev-shm-usage']});const p=await b.newPage();
+const errs=[];p.on('console',m=>errs.push('['+m.type()+'] '+m.text().slice(0,200)));p.on('pageerror',e=>errs.push('PAGEERROR '+e.message.slice(0,200)));
+await p.setRequestInterception(true);
+p.on('request',r=>{const f=map(r.url());if(f){r.respond({status:200,contentType:'application/javascript',body:fs.readFileSync(path.join(MIRROR,f))});}else if(r.url().includes('fonts.google')||r.url().includes('gstatic')){r.abort();}else r.continue();});
+await p.goto(BASE+'/',{waitUntil:'networkidle0',timeout:60000});
+await new Promise(r=>setTimeout(r,3000));
+const dom=await p.evaluate(()=>({rootChildren:document.getElementById('root')?.children.length,pill:document.querySelector('.pill-live')?.textContent,sidenav:document.querySelectorAll('.sidenav-item').length,bodyLen:document.body.innerText.length}));
+console.log('DOM:',JSON.stringify(dom));
+console.log('CONSOLE/ERRORS:\n'+errs.slice(0,15).join('\n'));
+await b.close();})().catch(e=>{console.error('ERR',e.message);process.exit(1);});

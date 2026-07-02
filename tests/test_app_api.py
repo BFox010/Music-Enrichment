@@ -14,7 +14,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 import app.data as data
-from app.main import app
+from app.main import DASHBOARD_TOKEN, app
+
+# Mutating endpoints (reload/refresh/sync) require this header; the SPA reads the
+# token from GET /api/config. Tests send it directly.
+AUTH = {"X-Dashboard-Token": DASHBOARD_TOKEN}
 
 # ── Fixture data ──────────────────────────────────────────────────────────────
 
@@ -372,17 +376,99 @@ class TestTagGraph:
 
 class TestReload:
     def test_status(self, client):
-        r = client.post("/api/reload")
+        r = client.post("/api/reload", headers=AUTH)
         assert r.status_code == 200
 
     def test_returns_counts(self, client):
-        body = client.post("/api/reload").json()
+        body = client.post("/api/reload", headers=AUTH).json()
         assert body["tracks"] == 1
         assert body["scrobbles"] == 1
 
     def test_reports_skipped_counts(self, client):
-        body = client.post("/api/reload").json()
+        body = client.post("/api/reload", headers=AUTH).json()
         assert body["skipped"] == {"tracks": 0, "scrobbles": 0}
+
+
+class TestAuthGate:
+    def test_reload_without_token_is_403(self, client):
+        assert client.post("/api/reload").status_code == 403
+
+    def test_reload_with_wrong_token_is_403(self, client):
+        r = client.post("/api/reload", headers={"X-Dashboard-Token": "nope"})
+        assert r.status_code == 403
+
+    def test_config_exposes_token(self, client):
+        body = client.get("/api/config").json()
+        assert body["token"] == DASHBOARD_TOKEN
+
+    def test_no_cors_headers(self, client):
+        # CORS middleware was removed — no access-control-* headers should appear.
+        r = client.get("/api/overview", headers={"Origin": "https://evil.example"})
+        assert "access-control-allow-origin" not in {k.lower() for k in r.headers}
+
+
+class TestTracksMinJsonl:
+    def test_only_ships_ui_fields(self, client):
+        r = client.get("/tracks.min.jsonl")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/x-ndjson")
+        row = json.loads(r.text.strip().splitlines()[0])
+        # kept fields
+        assert row["artist"] == "Portishead"
+        assert row["audio_features"] == {
+            "energy": 0.4, "valence": 0.2, "danceability": 0.5, "acousticness": 0.6,
+        }
+        # id-presence flags collapsed to booleans
+        assert row["musicbrainz_id"] is False and row["spotify_id"] is False
+        # trimmed fields must be absent
+        for gone in ("enriched_at", "rejected_reason", "blacklisted", "curation_state"):
+            assert gone not in row
+
+    def test_conditional_304(self, client):
+        etag = client.get("/tracks.min.jsonl").headers["etag"]
+        r = client.get("/tracks.min.jsonl", headers={"If-None-Match": etag})
+        assert r.status_code == 304
+
+
+class TestStaticCaching:
+    def test_static_assets_have_cache_control(self, client):
+        r = client.get("/index.html")
+        assert r.status_code == 200
+        assert "max-age" in r.headers.get("cache-control", "")
+
+
+class TestMalformedRows:
+    """B1 — a row missing hot fields must degrade, not 500."""
+
+    def test_aggregations_survive_missing_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tp = Path(tmp) / "tracks.jsonl"
+            sp = Path(tmp) / "scrobbles.jsonl"
+            # tracks row with no artist; scrobble row with no year/hour/day_of_week
+            tp.write_text(json.dumps({"track": "Orphan", "play_count": 3}) + "\n", encoding="utf-8")
+            sp.write_text(json.dumps({"scrobbled_at": "2021-01-01T00:00:00Z"}) + "\n", encoding="utf-8")
+            with data.use_paths(tp, sp):
+                c = TestClient(app)
+                for path in ("/api/overview", "/api/timeline", "/api/time-of-day",
+                             "/api/artist-trajectory", "/api/albums", "/api/top"):
+                    assert c.get(path).status_code == 200, path
+
+    def test_audio_features_survives_missing_artist(self):
+        """A row with audio_features but no artist/track must not 500."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tp = Path(tmp) / "tracks.jsonl"
+            sp = Path(tmp) / "scrobbles.jsonl"
+            tp.write_text(
+                json.dumps({"audio_features": {"energy": 0.5, "valence": 0.5}}) + "\n",
+                encoding="utf-8",
+            )
+            sp.write_text("", encoding="utf-8")
+            with data.use_paths(tp, sp):
+                c = TestClient(app)
+                r = c.get("/api/audio-features")
+                assert r.status_code == 200
+                scatter = r.json()["scatter"]
+                assert scatter and scatter[0]["artist"] == ""
 
 
 class TestLastFmStatus:
