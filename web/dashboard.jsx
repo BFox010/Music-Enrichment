@@ -34,6 +34,61 @@ function playInWindow(t, tf) {
   return t.play || 0;
 }
 
+/* Aggregate a set of tracks into the shape the Overview / Genre & Moods /
+   Coverage pages render (top artists/tracks, mood/genre/tag counts, coverage,
+   KPIs). Pulled out of App so a page with an active date range can recompute it
+   over a window-scoped track subset + play function, independent of other
+   pages. `playFn(t)` returns the play count to use for `t` in this context. */
+function computeAgg(rows, playFn) {
+  const artistPlays = {}, moodCount = {}, genreCount = {}, tagCount = {};
+  let withMood = 0, cov = { tags: 0, mbid: 0, styles: 0, af: 0, apple: 0, mood: 0, spotify: 0 };
+  let totalPlays = 0;
+  for (const t of rows) {
+    const p = playFn(t);
+    artistPlays[t.artist] = (artistPlays[t.artist] || 0) + p;
+    totalPlays += p;
+    for (const m of t.moods || []) moodCount[m] = (moodCount[m] || 0) + 1;
+    if (t.moods && t.moods.length) withMood++;
+    for (const g of t.genres) genreCount[g] = (genreCount[g] || 0) + 1;
+    for (const tg of t.tags) tagCount[tg] = (tagCount[tg] || 0) + 1;
+    for (const st of t.styles) tagCount[st] = (tagCount[st] || 0) + 1;
+    if (t.tags.length) cov.tags++;
+    if (t.mbid) cov.mbid++;
+    if (t.styles.length) cov.styles++;
+    if (t.af) cov.af++;
+    if (t.apple) cov.apple++;
+    if (t.moods) cov.mood++;
+    if (t.spotify) cov.spotify++;
+  }
+  const n = rows.length || 1;
+  const topArtists = topEntries(artistPlays, 12).filter((a) => a.value > 0).map((a) => ({ ...a, sub: rows.filter((t) => t.artist === a.key).length + " trk" }));
+  const topTracks = [...rows].map((t) => ({ ...t, wp: playFn(t) })).filter((t) => t.wp > 0).sort((a, b) => b.wp - a.wp).slice(0, 12);
+  const moods = topEntries(moodCount, 14);
+  const genresAll = Object.entries(genreCount).sort((a, b) => b[1] - a[1]);
+  const genresTop = genresAll.slice(0, 8).map(([key, value]) => ({ key, value }));
+  const otherG = genresAll.slice(8).reduce((s, [, v]) => s + v, 0);
+  if (otherG > 0) genresTop.push({ key: "Other", value: otherG });
+  const genreTotal = genresTop.reduce((s, g) => s + g.value, 0);
+  const tags = topEntries(tagCount, 24);
+  const completeness = Math.round(((cov.tags + cov.mbid + cov.styles + cov.af + cov.apple + cov.mood) / (n * 6)) * 100);
+  const coverageRows = [
+    { label: "Mood tags", value: cov.mood },
+    { label: "MusicBrainz ID", value: cov.mbid },
+    { label: "Discogs styles", value: cov.styles },
+    { label: "Audio features", value: cov.af },
+    { label: "Last.fm tags", value: cov.tags },
+    { label: "Apple Music", value: cov.apple },
+    { label: "Spotify ID", value: cov.spotify }
+  ];
+  return {
+    topArtists, topTracks, moods, genresTop, genreTotal, tags, coverageRows,
+    uniqueArtists: Object.keys(artistPlays).filter((k) => artistPlays[k] > 0).length,
+    totalPlays, withMood, completeness, trackCount: rows.length,
+    maxArtist: topArtists[0]?.value || 1, maxTrack: topTracks[0]?.wp || 1,
+    maxMood: moods[0]?.value || 1
+  };
+}
+
 /* ---------- App ---------- */
 function App() {
   const [data, setData] = useState(() => window.MUSIC_DATA);
@@ -55,6 +110,24 @@ function App() {
   const [filters, setFilters] = useState({ genre: "", mood: "", tag: "", decade: "", artist: "", firstFrom: "", firstTo: "" });
   const [drill, setDrill] = useState(() => window.MUSIC_DATA && window.MUSIC_DATA.drill || null);
   const [drillSel, setDrillSel] = useState(null); // { type: 'season'|'hour'|'dow', value }
+  // Raw scrobble rows, retained so the per-page date filters can re-aggregate
+  // arbitrary windows on demand (see rangeDataFor). Sample bootstrap data has
+  // none, so this stays null until a live library loads.
+  const [scrobblesRaw, setScrobblesRaw] = useState(() => (window.MUSIC_DATA && window.MUSIC_DATA.scrobblesRaw) || null);
+  // Independent date range per page, keyed by page id: { [page]: { from, to } }.
+  // One page's range never affects another. Persisted so a chosen window
+  // survives reloads.
+  const [pageDates, setPageDates] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("ml.pageDates") || "{}") || {}; }
+    catch (e) { return {}; }
+  });
+  const setPageDate = useCallback((pid, range) => {
+    setPageDates((d) => {
+      const next = { ...d, [pid]: range && (range.from || range.to) ? range : undefined };
+      try { localStorage.setItem("ml.pageDates", JSON.stringify(next)); } catch (e) { /* ignore */ }
+      return next;
+    });
+  }, []);
 
   // ECharts components (assigned to window by echarts-charts.jsx, which loads before this file)
   const TimelineChart    = window.TimelineChart;
@@ -128,13 +201,14 @@ function App() {
         ]);
         const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
         const scRows = sc.status === "fulfilled" ? parseJSONL(sc.value) : null;
-        const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
+        const { nt, ns, drill: nd, sc: rawSc } = processLibrary(trRows, scRows);
         if (nt || ns) {
           setData((d) => ({
             meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
             tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
           }));
           if (nd) setDrill(nd);
+          if (rawSc) setScrobblesRaw(rawSc);
         }
       } catch (e) { /* live fetch optional */ }
       // Invalidate cached API-backed pages so they reflect the refreshed data.
@@ -160,7 +234,7 @@ function App() {
     }
     // Defer processing until all files are read so windowed plays + drill can
     // be joined from scrobbles regardless of the order the files arrive in.
-    const { nt: newTracks, ns: newScrob, drill: nd } = processLibrary(rawTracks, rawScrob);
+    const { nt: newTracks, ns: newScrob, drill: nd, sc } = processLibrary(rawTracks, rawScrob);
     if (!newTracks && !newScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     setData((d) => ({
       meta: { ...d.meta, isSample: false, trackCount: newTracks ? newTracks.length : d.meta.trackCount, scrobbleCount: newScrob ? newScrob.total : d.meta.scrobbleCount },
@@ -168,6 +242,7 @@ function App() {
       scrobbles: newScrob || d.scrobbles
     }));
     if (nd) setDrill(nd);
+    if (sc) setScrobblesRaw(sc);
     showToast(`Loaded your data — ${names.join(", ")}`);
   }, [showToast]);
 
@@ -177,13 +252,14 @@ function App() {
     let worker = null;
 
     // Apply a processed library to state (shared by the worker + sync paths).
-    const apply = (nt, ns, nd) => {
+    const apply = (nt, ns, nd, sc) => {
       if (cancelled || !(nt || ns)) return;
       setData((d) => ({
         meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
         tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
       }));
       if (nd) setDrill(nd);
+      if (sc) setScrobblesRaw(sc);
       showToast("Loaded your live library from the repo");
     };
 
@@ -205,8 +281,8 @@ function App() {
         const runSync = () => {
           const trRows = tracksText ? parseJSONL(tracksText) : null;
           const scRows = scrobblesText ? parseJSONL(scrobblesText) : null;
-          const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
-          apply(nt, ns, nd);
+          const { nt, ns, drill: nd, sc } = processLibrary(trRows, scRows);
+          apply(nt, ns, nd, sc);
           if (!cancelled) setIsLoadingLive(false);
         };
 
@@ -215,7 +291,7 @@ function App() {
           worker = new Worker("data-worker.js");
           worker.onmessage = (e) => {
             const m = e.data || {};
-            if (m.ok) { apply(m.nt, m.ns, m.drill); }
+            if (m.ok) { apply(m.nt, m.ns, m.drill, m.sc); }
             else { runSync(); return; }
             if (!cancelled) setIsLoadingLive(false);
             worker.terminate(); worker = null;
@@ -250,6 +326,27 @@ function App() {
   /* windowed play count for the active timeframe */
   const playOf = useCallback((t) => playInWindow(t, timeframe), [timeframe]);
 
+  /* ---------- per-page date range ---------- */
+  // Earliest/latest scrobble date, used to bound the date pickers.
+  const dateBounds = useMemo(() => scrobbleDateBounds(scrobblesRaw || []), [scrobblesRaw]);
+  const rangeReady = !!(scrobblesRaw && scrobblesRaw.length);
+  const rangeOf = useCallback((pid) => pageDates[pid] || null, [pageDates]);
+  // Re-aggregate the raw scrobbles for an inclusive [from, to] window: returns
+  // window-scoped hour/dow/season aggregates, a window drill, and a per-track
+  // in-range play-count map. Returns null when there is no live scrobble data
+  // or no range is set, so callers fall back to their full-history data.
+  const rangeDataFor = useCallback((from, to) => {
+    if (!rangeReady || (!from && !to)) return null;
+    const slice = scrobblesInRange(scrobblesRaw, from, to);
+    return {
+      scrobbles: aggregateScrobbles(slice),
+      drill: buildDrill(tracks, slice),
+      counts: buildRangeCounts(slice),
+      keys: new Set(slice.map((s) => trackKey(s))),
+      total: slice.length,
+    };
+  }, [rangeReady, scrobblesRaw, tracks]);
+
   /* stable genre→color map computed once from the WHOLE library (survives filtering/selection) */
   const genreColorMap = useMemo(() => {
     const count = {};
@@ -271,10 +368,12 @@ function App() {
       if (filters.artist && t.artist !== filters.artist) return false;
       if (filters.decade) { const d = t.release_year ? Math.floor(t.release_year / 10) * 10 : null; if (String(d) !== filters.decade) return false; }
       if (filters.firstFrom || filters.firstTo) {
-        const fy = t.first ? parseInt(String(t.first).slice(0, 4), 10) : null;
-        if (fy == null || Number.isNaN(fy)) return false;
-        if (filters.firstFrom && fy < parseInt(filters.firstFrom, 10)) return false;
-        if (filters.firstTo && fy > parseInt(filters.firstTo, 10)) return false;
+        // First-heard date filter (inclusive). t.first is an ISO date/datetime;
+        // compare on the YYYY-MM-DD prefix so bounds work at day granularity.
+        const fd = t.first ? String(t.first).slice(0, 10) : null;
+        if (!fd) return false;
+        if (filters.firstFrom && fd < filters.firstFrom) return false;
+        if (filters.firstTo && fd > filters.firstTo) return false;
       }
       if (q && !(t.artist.toLowerCase().includes(q) || t.track.toLowerCase().includes(q))) return false;
       return true;
@@ -305,65 +404,73 @@ function App() {
   };
 
   /* ---------- aggregations (from filtered set) ---------- */
-  const agg = useMemo(() => {
-    const artistPlays = {}, moodCount = {}, genreCount = {}, tagCount = {};
-    let withMood = 0, cov = { tags: 0, mbid: 0, styles: 0, af: 0, apple: 0, mood: 0, spotify: 0 };
-    let totalPlays = 0;
-    for (const t of filtered) {
-      const p = playOf(t);
-      artistPlays[t.artist] = (artistPlays[t.artist] || 0) + p;
-      totalPlays += p;
-      for (const m of t.moods || []) moodCount[m] = (moodCount[m] || 0) + 1;
-      if (t.moods && t.moods.length) withMood++;
-      for (const g of t.genres) genreCount[g] = (genreCount[g] || 0) + 1;
-      for (const tg of t.tags) tagCount[tg] = (tagCount[tg] || 0) + 1;
-      for (const st of t.styles) tagCount[st] = (tagCount[st] || 0) + 1;
-      if (t.tags.length) cov.tags++;
-      if (t.mbid) cov.mbid++;
-      if (t.styles.length) cov.styles++;
-      if (t.af) cov.af++;
-      if (t.apple) cov.apple++;
-      if (t.moods) cov.mood++;
-      if (t.spotify) cov.spotify++;
-    }
-    const n = filtered.length || 1;
-    const topArtists = topEntries(artistPlays, 12).filter((a) => a.value > 0).map((a) => ({ ...a, sub: filtered.filter((t) => t.artist === a.key).length + " trk" }));
-    const topTracks = [...filtered].map((t) => ({ ...t, wp: playOf(t) })).filter((t) => t.wp > 0).sort((a, b) => b.wp - a.wp).slice(0, 12);
-    const moods = topEntries(moodCount, 14);
-    const genresAll = Object.entries(genreCount).sort((a, b) => b[1] - a[1]);
-    const genresTop = genresAll.slice(0, 8).map(([key, value]) => ({ key, value }));
-    const otherG = genresAll.slice(8).reduce((s, [, v]) => s + v, 0);
-    if (otherG > 0) genresTop.push({ key: "Other", value: otherG });
-    const genreTotal = genresTop.reduce((s, g) => s + g.value, 0);
-    const tags = topEntries(tagCount, 24);
-    const completeness = Math.round(((cov.tags + cov.mbid + cov.styles + cov.af + cov.apple + cov.mood) / (n * 6)) * 100);
-    const coverageRows = [
-      { label: "Mood tags", value: cov.mood },
-      { label: "MusicBrainz ID", value: cov.mbid },
-      { label: "Discogs styles", value: cov.styles },
-      { label: "Audio features", value: cov.af },
-      { label: "Last.fm tags", value: cov.tags },
-      { label: "Apple Music", value: cov.apple },
-      { label: "Spotify ID", value: cov.spotify }
-    ];
-    return {
-      topArtists, topTracks, moods, genresTop, genreTotal, tags, coverageRows,
-      uniqueArtists: Object.keys(artistPlays).filter((k) => artistPlays[k] > 0).length,
-      totalPlays, withMood, completeness,
-      maxArtist: topArtists[0]?.value || 1, maxTrack: topTracks[0]?.wp || 1,
-      maxMood: moods[0]?.value || 1
-    };
-  }, [filtered, playOf]);
+  const agg = useMemo(() => computeAgg(filtered, playOf), [filtered, playOf]);
+
+  /* Page-scoped aggregations honouring each page's own date range. When a range
+     is active the track set is `filtered` restricted to tracks played in the
+     window, and play counts come from the window (rangeData.counts); otherwise
+     these fall back to the shared, full-history `agg`. Computed per page so one
+     page's date filter never affects another's. */
+  const usePageAgg = (pid) => {
+    const range = pageDates[pid];
+    const rd = useMemo(
+      () => rangeDataFor(range && range.from, range && range.to),
+      [rangeDataFor, range && range.from, range && range.to]
+    );
+    const scopedAgg = useMemo(() => {
+      if (!rd) return agg;
+      const rows = filtered.filter((t) => rd.keys.has(trackKey(t)));
+      const rp = (t) => rd.counts.get(trackKey(t)) || 0;
+      return computeAgg(rows, rp);
+    }, [rd, filtered]);
+    return { agg: scopedAgg, rangeData: rd };
+  };
+
+  // Each of these pages carries its own independent date range.
+  const { agg: overviewAgg, rangeData: overviewRange } = usePageAgg("overview");
+  const { agg: genresAgg } = usePageAgg("genres");
+  const { agg: coverageAgg } = usePageAgg("coverage");
+  const seasonalRange = useMemo(
+    () => rangeDataFor(pageDates.seasonal && pageDates.seasonal.from, pageDates.seasonal && pageDates.seasonal.to),
+    [rangeDataFor, pageDates.seasonal && pageDates.seasonal.from, pageDates.seasonal && pageDates.seasonal.to]
+  );
+  // Overview + Seasonal data sources: window-scoped when a range is active,
+  // else the full-history aggregates/drill.
+  const ovScrobbles = overviewRange ? overviewRange.scrobbles : scrobbles;
+  const ovDrill = overviewRange ? overviewRange.drill : drill;
+  const seasonalDrill = seasonalRange ? seasonalRange.drill : drill;
+
+  // Albums + Audio compute in-browser from `tracks`; scope that track set to the
+  // page's date range (and, for Albums, replace lifetime plays with in-window
+  // counts) so their client-side view honours the filter too.
+  const albumsRange = useMemo(
+    () => rangeDataFor(pageDates.albums && pageDates.albums.from, pageDates.albums && pageDates.albums.to),
+    [rangeDataFor, pageDates.albums && pageDates.albums.from, pageDates.albums && pageDates.albums.to]
+  );
+  const albumsTracks = useMemo(() => {
+    if (!albumsRange) return tracks;
+    return tracks.filter((t) => albumsRange.keys.has(trackKey(t)))
+      .map((t) => ({ ...t, play: albumsRange.counts.get(trackKey(t)) || 0 }));
+  }, [albumsRange, tracks]);
+  const audioRange = useMemo(
+    () => rangeDataFor(pageDates.audio && pageDates.audio.from, pageDates.audio && pageDates.audio.to),
+    [rangeDataFor, pageDates.audio && pageDates.audio.from, pageDates.audio && pageDates.audio.to]
+  );
+  const audioTracks = useMemo(() => {
+    if (!audioRange) return tracks;
+    return tracks.filter((t) => audioRange.keys.has(trackKey(t)));
+  }, [audioRange, tracks]);
 
   const genreColors = genreColorMap;
   const meta = data.meta;
   const nf = (x) => x.toLocaleString();
-  const tfLabel = timeframe === "all" ? "by scrobbles" : TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase();
+  const ovRanged = !!overviewRange;
+  const tfLabel = ovRanged ? "in range" : (timeframe === "all" ? "by scrobbles" : TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase());
 
   /* ---------- overview drill-down ---------- */
   const DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   const pickDrill = (type, value) => setDrillSel((cur) => (cur && cur.type === type && cur.value === value) ? null : { type, value });
-  const drillSlice = (drill && drillSel) ? drill[drillSel.type][drillSel.value] : null;
+  const drillSlice = (ovDrill && drillSel) ? ovDrill[drillSel.type][drillSel.value] : null;
   const drillLabel = drillSel
     ? (drillSel.type === "season" ? drillSel.value.charAt(0).toUpperCase() + drillSel.value.slice(1) + " listening"
       : drillSel.type === "hour" ? fmt12full(drillSel.value) + " listening"
@@ -496,34 +603,35 @@ function App() {
             <span className="slicer-label">Timeframe</span>
             <div className="seg" role="group" aria-label="Timeframe">
               {TIMEFRAMES.map(([id, label]) => (
-                <button key={id} aria-pressed={timeframe === id} onClick={() => setTimeframe(id)}>{label}</button>
+                <button key={id} aria-pressed={timeframe === id} disabled={ovRanged} onClick={() => setTimeframe(id)}>{label}</button>
               ))}
             </div>
-            <span className="slicer-note">{timeframe === "all" ? "All recorded scrobbles" : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b> · affects play-based metrics</>}</span>
+            <span className="slicer-note">{ovRanged ? <>Overridden by the <b>date range</b> below · metrics show the selected window</> : (timeframe === "all" ? "All recorded scrobbles" : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b> · affects play-based metrics</>)}</span>
           </div>
+          <DateFilter value={pageDates.overview} onChange={(r) => setPageDate("overview", r)} bounds={dateBounds} disabled={!rangeReady} label="Date range" />
 
           <div className="kpis">
-            <Kpi label="Tracks" val={nf(filtered.length)} sub={filtered.length !== tracks.length ? <>of <b>{nf(tracks.length)}</b> total</> : "unique in library"} />
-            <Kpi label={timeframe === "all" ? "Scrobbles" : "Plays"} val={nf(agg.totalPlays)} sub={<>across <b>{nf(agg.uniqueArtists)}</b> artists</>} />
-            <Kpi label="Artists" val={nf(agg.uniqueArtists)} sub={timeframe === "all" ? "distinct performers" : "played in window"} />
-            <Kpi label="Avg plays" val={(agg.totalPlays / (filtered.length || 1)).toFixed(1)} sub="per track" />
-            <Kpi label="Enriched" val={agg.completeness + "%"} sub="field completeness" spark={agg.completeness} />
-            <Kpi label="Mood-tagged" val={Math.round((agg.withMood / (filtered.length || 1)) * 100) + "%"} sub={<>{nf(agg.withMood)} classified</>} spark={Math.round((agg.withMood / (filtered.length || 1)) * 100)} />
+            <Kpi label="Tracks" val={nf(overviewAgg.trackCount)} sub={ovRanged ? "played in range" : (filtered.length !== tracks.length ? <>of <b>{nf(tracks.length)}</b> total</> : "unique in library")} />
+            <Kpi label={ovRanged || timeframe !== "all" ? "Plays" : "Scrobbles"} val={nf(overviewAgg.totalPlays)} sub={<>across <b>{nf(overviewAgg.uniqueArtists)}</b> artists</>} />
+            <Kpi label="Artists" val={nf(overviewAgg.uniqueArtists)} sub={ovRanged || timeframe !== "all" ? "played in window" : "distinct performers"} />
+            <Kpi label="Avg plays" val={(overviewAgg.totalPlays / (overviewAgg.trackCount || 1)).toFixed(1)} sub="per track" />
+            <Kpi label="Enriched" val={overviewAgg.completeness + "%"} sub="field completeness" spark={overviewAgg.completeness} />
+            <Kpi label="Mood-tagged" val={Math.round((overviewAgg.withMood / (overviewAgg.trackCount || 1)) * 100) + "%"} sub={<>{nf(overviewAgg.withMood)} classified</>} spark={Math.round((overviewAgg.withMood / (overviewAgg.trackCount || 1)) * 100)} />
           </div>
 
           <section className="block">
             <div className="grid g-32">
               <div className="card">
-                <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">{drill ? "hour · click to explore" : "hour of day"}</span></div>
-                <HourChart data={scrobbles.byHour} onPick={drill ? (h) => pickDrill("hour", h) : undefined} activeKey={drillSel && drillSel.type === "hour" ? drillSel.value : null} />
+                <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">{ovDrill ? "hour · click to explore" : "hour of day"}</span></div>
+                <HourChart data={ovScrobbles.byHour} onPick={ovDrill ? (h) => pickDrill("hour", h) : undefined} activeKey={drillSel && drillSel.type === "hour" ? drillSel.value : null} />
               </div>
               <div className="card">
-                <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">{drill ? "day · click to explore" : "day of week"}</span></div>
-                <DowChart data={scrobbles.byDow} onPick={drill ? (i) => pickDrill("dow", i) : undefined} activeKey={drillSel && drillSel.type === "dow" ? drillSel.value : null} />
+                <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">{ovDrill ? "day · click to explore" : "day of week"}</span></div>
+                <DowChart data={ovScrobbles.byDow} onPick={ovDrill ? (i) => pickDrill("dow", i) : undefined} activeKey={drillSel && drillSel.type === "dow" ? drillSel.value : null} />
               </div>
             </div>
           </section>
-          {drill && drillSel && (drillSel.type === "hour" || drillSel.type === "dow") && (
+          {ovDrill && drillSel && (drillSel.type === "hour" || drillSel.type === "dow") && (
             <section className="block">
               <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} />
             </section>
@@ -532,12 +640,12 @@ function App() {
             <div className="card">
               <div className="card-head norule" style={{ marginBottom: 12 }}>
                 <h3 className="card-title">Seasons of listening</h3>
-                <span className="card-meta">{drill ? "season · click to explore" : "scrobbles by season"}</span>
+                <span className="card-meta">{ovDrill ? "season · click to explore" : "scrobbles by season"}</span>
               </div>
-              <Seasons data={scrobbles.bySeason} total={scrobbles.total} onPick={drill ? (s) => pickDrill("season", s) : undefined} activeKey={drillSel && drillSel.type === "season" ? drillSel.value : null} />
+              <Seasons data={ovScrobbles.bySeason} total={ovScrobbles.total} onPick={ovDrill ? (s) => pickDrill("season", s) : undefined} activeKey={drillSel && drillSel.type === "season" ? drillSel.value : null} />
             </div>
           </section>
-          {drill && drillSel && drillSel.type === "season" && (
+          {ovDrill && drillSel && drillSel.type === "season" && (
             <section className="block">
               <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} views />
             </section>
@@ -546,11 +654,11 @@ function App() {
             <div className="grid g-2">
               <div className="card">
                 <div className="card-head"><h3 className="card-title">Top artists</h3><span className="card-meta">{tfLabel} · click to filter</span></div>
-                <HBars items={agg.topArtists} max={agg.maxArtist} activeKey={filters.artist} onPick={(k) => setFilter("artist", k)} unit="plays" />
+                <HBars items={overviewAgg.topArtists} max={overviewAgg.maxArtist} activeKey={filters.artist} onPick={(k) => setFilter("artist", k)} unit="plays" />
               </div>
               <div className="card">
                 <div className="card-head"><h3 className="card-title">Most played tracks</h3><span className="card-meta">{tfLabel} · top 12</span></div>
-                <TrackList items={agg.topTracks.map((t) => ({ ...t, play: t.wp }))} max={agg.maxTrack} />
+                <TrackList items={overviewAgg.topTracks.map((t) => ({ ...t, play: t.wp }))} max={overviewAgg.maxTrack} />
               </div>
             </div>
           </section>
@@ -558,28 +666,33 @@ function App() {
 
         {/* ── PAGE: Timeline ──────────────────────────────────────── */}
         <div style={{ display: page === "timeline" ? "" : "none" }}>
-          {TimelineChart && <TimelineChart active={page === "timeline"} />}
+          <DateFilter value={pageDates.timeline} onChange={(r) => setPageDate("timeline", r)} bounds={dateBounds} disabled={!rangeReady} />
+          {TimelineChart && <TimelineChart active={page === "timeline"} dateRange={pageDates.timeline || null} />}
         </div>
 
         {/* ── PAGE: Artist Trajectory ─────────────────────────────── */}
         <div style={{ display: page === "trajectory" ? "" : "none" }}>
-          {ArtistTrajectory && <ArtistTrajectory active={page === "trajectory"} />}
+          <DateFilter value={pageDates.trajectory} onChange={(r) => setPageDate("trajectory", r)} bounds={dateBounds} disabled={!rangeReady} />
+          {ArtistTrajectory && <ArtistTrajectory active={page === "trajectory"} dateRange={pageDates.trajectory || null} />}
         </div>
 
         {/* ── PAGE: Listening Map ─────────────────────────────────── */}
         <div style={{ display: page === "map" ? "" : "none" }}>
-          {ListeningMap && <ListeningMap active={page === "map"} />}
+          <DateFilter value={pageDates.map} onChange={(r) => setPageDate("map", r)} bounds={dateBounds} disabled={!rangeReady} />
+          {ListeningMap && <ListeningMap active={page === "map"} dateRange={pageDates.map || null} />}
         </div>
 
         {/* ── PAGE: Audio Features ────────────────────────────────── */}
         <div style={{ display: page === "audio" ? "" : "none" }}>
-          {AudioFeaturesChart && <AudioFeaturesChart active={page === "audio"} />}
-          <AudioFeatureExtremes tracks={tracks} />
+          <DateFilter value={pageDates.audio} onChange={(r) => setPageDate("audio", r)} bounds={dateBounds} disabled={!rangeReady} />
+          {AudioFeaturesChart && <AudioFeaturesChart active={page === "audio"} dateRange={pageDates.audio || null} />}
+          <AudioFeatureExtremes tracks={audioTracks} />
         </div>
 
         {/* ── PAGE: Albums ────────────────────────────────────────── */}
         <div style={{ display: page === "albums" ? "" : "none" }}>
-          {AlbumsPage && <AlbumsPage active={page === "albums"} tracks={tracks} />}
+          <DateFilter value={pageDates.albums} onChange={(r) => setPageDate("albums", r)} bounds={dateBounds} disabled={!rangeReady} />
+          {AlbumsPage && <AlbumsPage active={page === "albums"} tracks={albumsTracks} />}
         </div>
 
         {/* ── PAGE: Seasonal Favorites ────────────────────────────── */}
@@ -588,30 +701,34 @@ function App() {
             <h2 className="page-title">Seasonal favorites</h2>
             <p className="page-lede">What you reach for in each season — top genres, moods, and most-played tracks, from your scrobble history.</p>
           </div>
-          <SeasonalFavorites drill={drill} />
+          <DateFilter value={pageDates.seasonal} onChange={(r) => setPageDate("seasonal", r)} bounds={dateBounds} disabled={!rangeReady} />
+          <SeasonalFavorites drill={seasonalDrill} />
         </div>
 
         {/* ── PAGE: Forgotten Favorites ───────────────────────────── */}
         <div style={{ display: page === "forgotten" ? "" : "none" }}>
-          {ForgottenFavoritesPage && <ForgottenFavoritesPage active={page === "forgotten"} refreshVersion={refreshVersion} />}
+          <DateFilter value={pageDates.forgotten} onChange={(r) => setPageDate("forgotten", r)} bounds={dateBounds} disabled={!rangeReady} />
+          {ForgottenFavoritesPage && <ForgottenFavoritesPage active={page === "forgotten"} refreshVersion={refreshVersion} dateRange={pageDates.forgotten || null} />}
         </div>
 
         {/* ── PAGE: Tag Constellation ─────────────────────────────── */}
         <div style={{ display: page === "constellation" ? "" : "none" }}>
-          {TagConstellation && <TagConstellation active={page === "constellation"} />}
+          <DateFilter value={pageDates.constellation} onChange={(r) => setPageDate("constellation", r)} bounds={dateBounds} disabled={!rangeReady} />
+          {TagConstellation && <TagConstellation active={page === "constellation"} dateRange={pageDates.constellation || null} />}
         </div>
 
         {/* ── PAGE: Genre & Moods ─────────────────────────────────── */}
         <div style={{ display: page === "genres" ? "" : "none" }}>
+          <DateFilter value={pageDates.genres} onChange={(r) => setPageDate("genres", r)} bounds={dateBounds} disabled={!rangeReady} />
           <section className="block">
             <div className="grid g-2">
               <div className="card">
                 <div className="card-head"><h3 className="card-title">Mood spectrum</h3><span className="card-meta">tracks per mood · click to filter</span></div>
-                <MoodBars items={agg.moods} max={agg.maxMood} activeKey={filters.mood} onPick={(k) => setFilter("mood", k)} />
+                <MoodBars items={genresAgg.moods} max={genresAgg.maxMood} activeKey={filters.mood} onPick={(k) => setFilter("mood", k)} />
               </div>
               <div className="card">
                 <div className="card-head"><h3 className="card-title">Genre balance</h3><span className="card-meta">share of library · click to filter</span></div>
-                <GenreDonut items={agg.genresTop} total={agg.genreTotal} colors={genreColors} activeKey={filters.genre} onPick={(k) => k !== "Other" && setFilter("genre", k)} />
+                <GenreDonut items={genresAgg.genresTop} total={genresAgg.genreTotal} colors={genreColors} activeKey={filters.genre} onPick={(k) => k !== "Other" && setFilter("genre", k)} />
               </div>
             </div>
           </section>
@@ -619,20 +736,21 @@ function App() {
 
         {/* ── PAGE: Coverage ──────────────────────────────────────── */}
         <div style={{ display: page === "coverage" ? "" : "none" }}>
+          <DateFilter value={pageDates.coverage} onChange={(r) => setPageDate("coverage", r)} bounds={dateBounds} disabled={!rangeReady} />
           <section className="block">
             <div className="grid g-32">
               <div className="card">
                 <div className="card-head"><h3 className="card-title">Tags &amp; styles</h3><span className="card-meta">Last.fm + Discogs · click to filter</span></div>
-                <TagCloud items={agg.tags} activeKey={filters.tag} onPick={(k) => setFilter("tag", k)} />
+                <TagCloud items={coverageAgg.tags} activeKey={filters.tag} onPick={(k) => setFilter("tag", k)} />
               </div>
               <div className="card">
-                <div className="card-head"><h3 className="card-title">Enrichment coverage</h3><span className="card-meta">{filtered.length !== tracks.length ? "filtered" : "library"}</span></div>
-                <CoverageBars rows={agg.coverageRows} total={filtered.length} />
+                <div className="card-head"><h3 className="card-title">Enrichment coverage</h3><span className="card-meta">{pageDates.coverage || filtered.length !== tracks.length ? "filtered" : "library"}</span></div>
+                <CoverageBars rows={coverageAgg.coverageRows} total={coverageAgg.trackCount} />
               </div>
             </div>
           </section>
           <section className="block">
-            {SaturationChart && <SaturationChart active={page === "coverage"} />}
+            {SaturationChart && <SaturationChart active={page === "coverage"} dateRange={pageDates.coverage || null} />}
           </section>
         </div>
 

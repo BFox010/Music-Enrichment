@@ -88,17 +88,30 @@ const cardTools = { display: "flex", alignItems: "center", gap: 14, flexShrink: 
 // one-line explainer that sits directly under a card-head
 const cardDesc  = { margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.55, color: "var(--muted-s)", maxWidth: 640 };
 
+/* Append the page's date range (start/end) to an API URL. Both bounds are
+   optional; with neither set the URL is returned unchanged so the endpoint
+   spans the full history. Mirrors the server's start/end params. */
+function withDates(url, range) {
+  if (!range || (!range.from && !range.to)) return url;
+  const sep = url.includes("?") ? "&" : "?";
+  const parts = [];
+  if (range.from) parts.push("start=" + encodeURIComponent(range.from));
+  if (range.to) parts.push("end=" + encodeURIComponent(range.to));
+  return url + sep + parts.join("&");
+}
+
 /* ── Timeline chart ─────────────────────────────────────────────────────── */
-function TimelineChart({ active }) {
+function TimelineChart({ active, dateRange }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [by, setBy] = useState("year");
   const [loading, setLoading] = useState(true);
+  const from = dateRange && dateRange.from, to = dateRange && dateRange.to;
 
   useEffect(() => {
     if (!active) return;
     setLoading(true);
-    fetch(`/api/timeline?by=${by}`)
+    fetch(withDates(`/api/timeline?by=${by}`, dateRange))
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
         setLoading(false);
@@ -134,7 +147,7 @@ function TimelineChart({ active }) {
         });
       })
       .catch(() => setLoading(false));
-  }, [active, by]);
+  }, [active, by, from, to]);
 
   return (
     <section className="block">
@@ -158,7 +171,7 @@ function TimelineChart({ active }) {
 }
 
 /* ── Artist Trajectory (line / stream + artist picker) ──────────────────── */
-function ArtistTrajectory({ active }) {
+function ArtistTrajectory({ active, dateRange }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [raw, setRaw] = useState(null);
@@ -166,12 +179,14 @@ function ArtistTrajectory({ active }) {
   const [selected, setSelected] = useState(null);  // Set of artist names
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const from = dateRange && dateRange.from, to = dateRange && dateRange.to;
 
-  // Fetch once (top 20); seed the selection with the top 8 by total plays.
+  // Fetch (top 20) and seed the selection with the top 8 by total plays;
+  // refetch whenever the date range changes so the window's top artists show.
   useEffect(() => {
-    if (!active || raw) return;
+    if (!active) return;
     setLoading(true);
-    fetch("/api/artist-trajectory?top=20")
+    fetch(withDates("/api/artist-trajectory?top=20", dateRange))
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => {
         setLoading(false);
@@ -183,7 +198,7 @@ function ArtistTrajectory({ active }) {
         setSelected(new Set(ordered.slice(0, 8)));
       })
       .catch(() => setLoading(false));
-  }, [active, raw]);
+  }, [active, from, to]);
 
   const artists = useMemo(() => {
     if (!raw) return [];
@@ -275,7 +290,7 @@ function ArtistTrajectory({ active }) {
 }
 
 /* ── Listening Map: calendar heatmap (per year) + hour×day grid ─────────── */
-function ListeningMap({ active }) {
+function ListeningMap({ active, dateRange }) {
   const calRef  = useRef(null);
   const hwRef   = useRef(null);
   const calChart = useEChart(calRef);
@@ -283,17 +298,23 @@ function ListeningMap({ active }) {
   const [years, setYears] = useState([]);
   const [year, setYear] = useState(null);
   const [loading, setLoading] = useState(true);
+  const from = dateRange && dateRange.from, to = dateRange && dateRange.to;
+  const ranged = !!(from || to);
 
   useEffect(() => {
     if (!active) return;
     setLoading(true);
-    const q = year != null ? `?year=${year}` : "";
-    fetch("/api/time-of-day" + q)
+    // A date range takes precedence over the year picker; otherwise fall back to
+    // the selected year (learning the available years on the first pass).
+    const url = ranged
+      ? withDates("/api/time-of-day", dateRange)
+      : "/api/time-of-day" + (year != null ? `?year=${year}` : "");
+    fetch(url)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
-        // First pass (year unknown): learn the available years, default to the
-        // most recent, and let the effect re-run with that year filter.
-        if (year == null) {
+        // First pass (no range, year unknown): learn the available years,
+        // default to the most recent, and let the effect re-run with it.
+        if (!ranged && year == null) {
           if (data.years && data.years.length) { setYears(data.years); setYear(data.years[data.years.length - 1]); }
           else setLoading(false);
           return;
@@ -302,17 +323,22 @@ function ListeningMap({ active }) {
         const c = themeVars();
         const colorScale = ["#191527", "#4c2f95", "#7c4ddb", c.accent];
 
-        // Calendar heatmap — one large, legible year
+        // Calendar heatmap — one legible year, or the selected date span.
         if (calChart.current) {
           calChart.current.resize();
           const max = data.calendar.length ? Math.max(...data.calendar.map((d) => d[1])) : 1;
+          const cf = from || (data.calendar.length ? data.calendar[0][0] : null);
+          const ct = to || (data.calendar.length ? data.calendar[data.calendar.length - 1][0] : null);
+          const calRange = ranged
+            ? (cf && ct ? [cf, ct] : (cf || ct || String(new Date().getUTCFullYear())))
+            : String(year);
           calChart.current.setOption({
             backgroundColor: "transparent",
             tooltip: { formatter: (p) => `${p.data[0]} — ${p.data[1]} plays`, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
             visualMap: { min: 0, max, type: "continuous", orient: "horizontal", left: "center", bottom: 6,
               itemWidth: 14, itemHeight: 120, inRange: { color: colorScale }, textStyle: { color: c.muted } },
             calendar: [{
-              top: 30, left: 42, right: 18, range: String(year),
+              top: 30, left: 42, right: 18, range: calRange,
               cellSize: ["auto", 18],
               itemStyle: { color: "#14141b", borderWidth: 3, borderColor: c.panel, borderRadius: 3 },
               splitLine: { show: false },
@@ -351,7 +377,7 @@ function ListeningMap({ active }) {
         }
       })
       .catch(() => setLoading(false));
-  }, [active, year]);
+  }, [active, year, from, to]);
 
   return (
     <section className="block">
@@ -360,21 +386,21 @@ function ListeningMap({ active }) {
           <div className="card-head">
             <h3 className="card-title">Listening calendar</h3>
             <div style={cardTools}>
-              {years.length > 1 && (
+              {!ranged && years.length > 1 && (
                 <div className="seg seg-sm" role="group" aria-label="Calendar year">
                   {years.map((y) => (
                     <button key={y} aria-pressed={year === y} onClick={() => setYear(y)}>{y}</button>
                   ))}
                 </div>
               )}
-              <span className="card-meta">plays per day{year ? ` · ${year}` : ""}</span>
+              <span className="card-meta">plays per day{ranged ? " · in range" : (year ? ` · ${year}` : "")}</span>
             </div>
           </div>
           {loading && <ChartLoading height={220} />}
           <div ref={calRef} className="echart-wrap cal" style={{ display: loading ? "none" : "block" }} />
         </div>
         <div className="card">
-          <div className="card-head norule"><h3 className="card-title">Hour × weekday</h3><span className="card-meta">play density · all time</span></div>
+          <div className="card-head norule"><h3 className="card-title">Hour × weekday</h3><span className="card-meta">play density · {ranged ? "in range" : "all time"}</span></div>
           {loading && <ChartLoading height={320} />}
           <div ref={hwRef} style={{ width: "100%", height: 360, display: loading ? "none" : "block" }} />
         </div>
@@ -384,12 +410,13 @@ function ListeningMap({ active }) {
 }
 
 /* ── Audio Features: scatter + histograms ───────────────────────────────── */
-function AudioFeaturesChart({ active }) {
+function AudioFeaturesChart({ active, dateRange }) {
   const scRef   = useRef(null);
   const histRef = useRef(null);
   const scChart   = useEChart(scRef);
   const histChart = useEChart(histRef);
   const [loading, setLoading] = useState(true);
+  const from = dateRange && dateRange.from, to = dateRange && dateRange.to;
 
   const HISTS = [
     { key: "energy",       label: "Energy",      color: "#e040fb" },
@@ -401,7 +428,7 @@ function AudioFeaturesChart({ active }) {
   useEffect(() => {
     if (!active) return;
     setLoading(true);
-    fetch("/api/audio-features")
+    fetch(withDates("/api/audio-features", dateRange))
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(({ scatter, histograms }) => {
         setLoading(false);
@@ -470,7 +497,7 @@ function AudioFeaturesChart({ active }) {
         }
       })
       .catch(() => setLoading(false));
-  }, [active]);
+  }, [active, from, to]);
 
   return (
     <section className="block">
@@ -492,22 +519,23 @@ function AudioFeaturesChart({ active }) {
 }
 
 /* ── Saturation donut (folded into the Coverage page) ───────────────────── */
-function SaturationChart({ active }) {
+function SaturationChart({ active, dateRange }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const from = dateRange && dateRange.from, to = dateRange && dateRange.to;
 
   const TIER_LABELS = { "1": "Tier 1 — Heavy rotation", "2": "Tier 2 — Regular", "3": "Tier 3 — Deep cuts", "unranked": "Unranked" };
 
   useEffect(() => {
     if (!active) return;
     setLoading(true);
-    fetch("/api/saturation")
+    fetch(withDates("/api/saturation", dateRange))
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => { setLoading(false); setData(d); })
       .catch(() => setLoading(false));
-  }, [active]);
+  }, [active, from, to]);
 
   useEffect(() => {
     if (!active || !chart.current || !data || !data.length) return;
@@ -657,11 +685,12 @@ function AlbumsPage({ active, tracks }) {
 }
 
 /* ── Tag Constellation (force graph) ────────────────────────────────────── */
-function TagConstellation({ active }) {
+function TagConstellation({ active, dateRange }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [field, setField] = useState("discogs_styles");
   const [loading, setLoading] = useState(true);
+  const from = dateRange && dateRange.from, to = dateRange && dateRange.to;
 
   const FIELDS = [
     ["discogs_styles", "Styles"],
@@ -787,7 +816,7 @@ function TagConstellation({ active }) {
     };
 
     const minCount = field === "mood_tags" ? 1 : 15;
-    fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
+    fetch(withDates(`/api/tag-graph?field=${field}&min_count=${minCount}`, dateRange))
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(({ nodes, edges }) => {
         setLoading(false);
@@ -809,7 +838,7 @@ function TagConstellation({ active }) {
       if (rafB) cancelAnimationFrame(rafB);
       if (onWinResize) window.removeEventListener("resize", onWinResize);
     };
-  }, [active, field]);
+  }, [active, field, from, to]);
 
   return (
     <section className="block">
@@ -867,24 +896,27 @@ function FfSparkline({ sparkline, peakYear, recentStart }) {
 }
 
 /* ── Forgotten Favorites page ───────────────────────────────────────────── */
-function ForgottenFavoritesPage({ active, refreshVersion = 0 }) {
+function ForgottenFavoritesPage({ active, refreshVersion = 0, dateRange }) {
   const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [shown, setShown] = useState(25);
-  const loadedVer = useRef(-1);
+  const loadedKey = useRef(null);
+  const from = dateRange && dateRange.from, to = dateRange && dateRange.to;
 
   useEffect(() => {
     if (!active) return;
-    if (loadedVer.current === refreshVersion) return;  // already loaded for this version
-    loadedVer.current = refreshVersion;                // claim up-front to avoid double-fetch
+    // Reload when the refresh version OR the date range changes.
+    const key = `${refreshVersion}|${from || ""}|${to || ""}`;
+    if (loadedKey.current === key) return;  // already loaded for this key
+    loadedKey.current = key;                // claim up-front to avoid double-fetch
     setLoading(true);
     setError(null);
-    fetch("/api/forgotten-favorites?top=100")
+    fetch(withDates("/api/forgotten-favorites?top=100", dateRange))
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => { setItems(d); setLoading(false); })
-      .catch((e) => { loadedVer.current = -1; setError(String(e)); setLoading(false); });
-  }, [active, refreshVersion]);
+      .catch((e) => { loadedKey.current = null; setError(String(e)); setLoading(false); });
+  }, [active, refreshVersion, from, to]);
 
   if (!active) return null;
 

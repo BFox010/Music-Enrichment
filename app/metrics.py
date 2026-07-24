@@ -33,6 +33,68 @@ _HISTOGRAM_FEATURES: list[str] = [
 ]
 
 
+def _track_key(obj: dict) -> str:
+    """Normalized artist\\x00track identity, matching the client's trackKey and
+    forgotten_favorites' local _key so scrobbles and tracks join consistently."""
+    a = (obj.get("artist_normalized") or obj.get("artist") or "").lower().strip()
+    t = (obj.get("track_normalized") or obj.get("track") or "").lower().strip()
+    return f"{a}\x00{t}"
+
+
+def _in_range(scrobbled_at: Any, start: Optional[str], end: Optional[str]) -> bool:
+    """Whether a scrobble's date (YYYY-MM-DD prefix) falls within [start, end].
+
+    ``start``/``end`` are inclusive ISO date strings (either may be ``None``).
+    Lexicographic comparison is valid because the dates are zero-padded ISO.
+    A scrobble with no parseable date is excluded from any bounded range.
+    """
+    date = (scrobbled_at or "")[:10]
+    if not date:
+        return False
+    if start and date < start:
+        return False
+    if end and date > end:
+        return False
+    return True
+
+
+def _scrobbles_in_range(
+    start: Optional[str] = None, end: Optional[str] = None
+) -> list[dict]:
+    """Scrobbles whose ``scrobbled_at`` falls in [start, end]. With neither
+    bound set this returns the full list unchanged (no date filter)."""
+    scrobbles = get_scrobbles()
+    if not start and not end:
+        return scrobbles
+    return [s for s in scrobbles if _in_range(s.get("scrobbled_at"), start, end)]
+
+
+def _track_keys_in_range(
+    start: Optional[str] = None, end: Optional[str] = None
+) -> Optional[set[str]]:
+    """Set of track keys with at least one scrobble in [start, end], or ``None``
+    when no bound is set (meaning "no filter — keep every track")."""
+    if not start and not end:
+        return None
+    keys: set[str] = set()
+    for s in get_scrobbles():
+        if _in_range(s.get("scrobbled_at"), start, end):
+            keys.add(_track_key(s))
+    return keys
+
+
+def _tracks_in_range(
+    start: Optional[str] = None, end: Optional[str] = None
+) -> list[dict]:
+    """Tracks with at least one scrobble in [start, end]; the full library when
+    no bound is set. Used by metadata metrics (genres/moods/albums/…) so a date
+    range scopes them to the music actually listened to in that window."""
+    keys = _track_keys_in_range(start, end)
+    if keys is None:
+        return get_tracks()
+    return [t for t in get_tracks() if _track_key(t) in keys]
+
+
 def _histogram(values: list[float], n_bins: int = 10) -> list[dict]:
     if not values:
         return []
@@ -77,25 +139,29 @@ def overview() -> dict[str, Any]:
     }
 
 
-def genres(top: int = 50) -> list[dict]:
+def genres(
+    top: int = 50, start: Optional[str] = None, end: Optional[str] = None
+) -> list[dict]:
     counts: Counter[str] = Counter()
-    for t in get_tracks():
+    for t in _tracks_in_range(start, end):
         for g in t.get("genres") or []:
             counts[g] += 1
     return [{"genre": g, "count": c} for g, c in counts.most_common(top)]
 
 
-def moods() -> list[dict]:
+def moods(start: Optional[str] = None, end: Optional[str] = None) -> list[dict]:
     counts: Counter[str] = Counter()
-    for t in get_tracks():
+    for t in _tracks_in_range(start, end):
         for m in t.get("mood_tags") or []:
             counts[m] += 1
     return [{"mood": m, "count": c} for m, c in counts.most_common()]
 
 
-def timeline(by: str = "year") -> list[dict]:
+def timeline(
+    by: str = "year", start: Optional[str] = None, end: Optional[str] = None
+) -> list[dict]:
     counts: Counter[str] = Counter()
-    for s in get_scrobbles():
+    for s in _scrobbles_in_range(start, end):
         year = s.get("year")
         if year is None:
             continue
@@ -110,24 +176,32 @@ def timeline(by: str = "year") -> list[dict]:
     return [{"period": p, "plays": c} for p, c in sorted(counts.items())]
 
 
-def time_of_day(year: Optional[int] = None) -> dict[str, Any]:
+def time_of_day(
+    year: Optional[int] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> dict[str, Any]:
     """Calendar + hour×weekday heatmaps.
 
-    The hour×weekday density always spans the full history (more data = a
-    cleaner pattern). The calendar is filtered to ``year`` when given so the
-    grid can render one large, legible year at a time. ``years`` lists every
-    year present so the UI can build a picker.
+    With no date filter the hour×weekday density spans the full history (more
+    data = a cleaner pattern) and the calendar is filtered to ``year`` when
+    given so the grid can render one large, legible year at a time. When a
+    ``start``/``end`` range is supplied both grids are scoped to that window.
+    ``years`` lists every year present (in the active scope) so the UI can
+    build a picker.
     """
+    ranged = bool(start or end)
+    source = _scrobbles_in_range(start, end) if ranged else get_scrobbles()
     hw: Counter[tuple[int, int]] = Counter()
     cal: Counter[str] = Counter()
     years: set[int] = set()
-    for s in get_scrobbles():
+    for s in source:
         if s.get("year") is not None:
             years.add(s["year"])
         hour, dow = s.get("hour"), s.get("day_of_week")
         if hour is not None and dow is not None:
             hw[(hour, dow)] += 1
-        if year is None or s.get("year") == year:
+        if ranged or year is None or s.get("year") == year:
             date = (s.get("scrobbled_at") or "")[:10]
             if date:
                 cal[date] += 1
@@ -138,17 +212,24 @@ def time_of_day(year: Optional[int] = None) -> dict[str, Any]:
     }
 
 
-def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
+def albums(
+    top: int = 50,
+    min_tracks: int = 2,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> list[dict]:
     """Most-played albums, scored by total plays + how evenly listening
     spreads across the album's tracks (Spotify-Wrapped style).
 
     ``spread`` is normalized play-count entropy: 1.0 = plays perfectly even
     across tracks, →0 = one track dominates. Single-track albums are skipped.
+    A ``start``/``end`` range scopes the ranking to albums with a track played
+    in that window (play totals remain the track's lifetime ``play_count``).
     """
     by_album: dict[tuple[str, str], dict] = defaultdict(
         lambda: {"plays": [], "total": 0, "artist": "", "album": "", "years": set()}
     )
-    for t in get_tracks():
+    for t in _tracks_in_range(start, end):
         album = (t.get("album") or "").strip()
         artist = t.get("artist")
         if not album or not artist:
@@ -189,19 +270,32 @@ def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
     return result[:top]
 
 
-def artist_trajectory(top: int = 15) -> dict[str, Any]:
-    tracks = get_tracks()
-    scrobbles = get_scrobbles()
+def artist_trajectory(
+    top: int = 15, start: Optional[str] = None, end: Optional[str] = None
+) -> dict[str, Any]:
+    ranged = bool(start or end)
+    scrobbles = _scrobbles_in_range(start, end)
 
     artist_plays: Counter[str] = Counter()
     artist_display: dict[str, str] = {}
-    for t in tracks:
-        artist = t.get("artist")
-        if not artist:
-            continue
-        key = artist.lower()
-        artist_plays[key] += int(t.get("play_count") or 0)
-        artist_display[key] = artist
+    if ranged:
+        # Rank artists by in-range scrobble counts so the top set reflects the
+        # selected window rather than lifetime play counts.
+        for s in scrobbles:
+            artist = s.get("artist")
+            if not artist:
+                continue
+            key = artist.lower()
+            artist_plays[key] += 1
+            artist_display[key] = artist
+    else:
+        for t in get_tracks():
+            artist = t.get("artist")
+            if not artist:
+                continue
+            key = artist.lower()
+            artist_plays[key] += int(t.get("play_count") or 0)
+            artist_display[key] = artist
 
     top_set = {a for a, _ in artist_plays.most_common(top)}
 
@@ -245,8 +339,10 @@ def top_items(dim: str = "artists", n: int = 20) -> list[dict]:
     ]
 
 
-def audio_features() -> dict[str, Any]:
-    tracks = get_tracks()
+def audio_features(
+    start: Optional[str] = None, end: Optional[str] = None
+) -> dict[str, Any]:
+    tracks = _tracks_in_range(start, end)
     af_tracks = [t for t in tracks if t.get("audio_features")]
 
     feat_values: dict[str, list[float]] = defaultdict(list)
@@ -275,9 +371,11 @@ def audio_features() -> dict[str, Any]:
     }
 
 
-def saturation() -> list[dict]:
+def saturation(
+    start: Optional[str] = None, end: Optional[str] = None
+) -> list[dict]:
     counts: Counter[str] = Counter()
-    for t in get_tracks():
+    for t in _tracks_in_range(start, end):
         tier = t.get("saturation_tier")
         key = str(tier) if tier is not None else "unranked"
         counts[key] += 1
@@ -296,24 +394,26 @@ _TAG_GRAPH_FIELDS: frozenset[str] = frozenset(
 
 
 def forgotten_favorites(
-    top: int = 30, min_peak: int = 5, recent_years: int = 2
+    top: int = 30,
+    min_peak: int = 5,
+    recent_years: int = 2,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
 ) -> list[dict]:
     """Tracks with a strong historical peak that have faded from recent listening.
 
     Builds per-track yearly play counts from scrobbles, scores each track by
     ``peak_plays / max(recent_plays, 1)``, and returns the most-forgotten tracks
     sorted descending by that ratio.  Only tracks whose peak pre-dates the
-    recent window are included.
+    recent window are included. A ``start``/``end`` range restricts the scrobble
+    history considered.
     """
-    scrobbles = get_scrobbles()
+    scrobbles = _scrobbles_in_range(start, end)
     tracks = get_tracks()
     if not scrobbles:
         return []
 
-    def _key(obj: dict) -> str:
-        a = (obj.get("artist_normalized") or obj.get("artist") or "").lower().strip()
-        t = (obj.get("track_normalized") or obj.get("track") or "").lower().strip()
-        return f"{a}\x00{t}"
+    _key = _track_key
 
     yearly: dict[str, Counter] = defaultdict(Counter)
     scrobble_labels: dict[str, dict] = {}
@@ -379,11 +479,17 @@ def forgotten_favorites(
     return result[:top]
 
 
-def tag_graph(field: str = "discogs_styles", min_count: int = 15) -> dict[str, Any]:
+def tag_graph(
+    field: str = "discogs_styles",
+    min_count: int = 15,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+) -> dict[str, Any]:
     """Co-occurrence graph for a tag field.
 
     Nodes are tags whose track count >= min_count. Edges connect any two tags
     that appear together on the same track; edge weight = number of shared tracks.
+    A ``start``/``end`` range scopes the graph to tracks played in that window.
     """
     if field not in _TAG_GRAPH_FIELDS:
         field = "discogs_styles"
@@ -391,7 +497,7 @@ def tag_graph(field: str = "discogs_styles", min_count: int = 15) -> dict[str, A
     tag_counts: Counter[str] = Counter()
     co_occur: Counter[tuple[str, str]] = Counter()
 
-    for t in get_tracks():
+    for t in _tracks_in_range(start, end):
         tags = list(dict.fromkeys(v for v in (t.get(field) or []) if v))
         for tag in tags:
             tag_counts[tag] += 1

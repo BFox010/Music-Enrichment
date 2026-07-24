@@ -24,6 +24,7 @@ const SOURCES = [
   "tweaks-panel.jsx",
   "charts.jsx",
   "explorer.jsx",
+  "datefilter.jsx",
   "echarts-charts.jsx",
   "dashboard.jsx",
 ];

@@ -105,6 +105,47 @@ function attachWindows(rawTracks, scrobbleRows) {
   return rawTracks;
 }
 
+/* Filter raw scrobble rows to an inclusive [from, to] date window. Both bounds
+   are optional ISO YYYY-MM-DD strings; comparison is lexicographic on the date
+   prefix, which is valid for zero-padded ISO dates. Rows with no parseable date
+   are dropped from any bounded window. Returns the input unchanged when neither
+   bound is set (no filter). Used by the per-page date filters to re-aggregate. */
+function scrobblesInRange(rows, from, to) {
+  if (!rows || (!from && !to)) return rows || [];
+  return rows.filter((s) => {
+    const d = (s.scrobbled_at || "").slice(0, 10);
+    if (!d) return false;
+    if (from && d < from) return false;
+    if (to && d > to) return false;
+    return true;
+  });
+}
+
+/* Min / max scrobble date (YYYY-MM-DD) across raw rows, used to bound the
+   date-input pickers so a range can't be set outside the data. */
+function scrobbleDateBounds(rows) {
+  let min = null, max = null;
+  for (const s of rows || []) {
+    const d = (s.scrobbled_at || "").slice(0, 10);
+    if (!d) continue;
+    if (min == null || d < min) min = d;
+    if (max == null || d > max) max = d;
+  }
+  return { min, max };
+}
+
+/* Per-track play counts within a scrobble slice, keyed by normalized identity
+   (trackKey). The date-filtered analog of buildPlayWindows — lets play-based
+   metrics (KPIs, top tracks/artists, albums) be scoped to a date window. */
+function buildRangeCounts(scrobbleRows) {
+  const map = new Map();
+  for (const s of scrobbleRows) {
+    const k = trackKey(s);
+    map.set(k, (map.get(k) || 0) + 1);
+  }
+  return map;
+}
+
 /* Cross-join scrobbles → tracks to count genres/moods/tracks per time slice
    (season, hour-of-day, day-of-week). Powers the overview drill-downs and the
    Seasonal Favorites page. Computed once at load from the in-memory rows. */
@@ -150,5 +191,8 @@ function processLibrary(rawTracks, scrobbleRows) {
     drill = buildDrill(rawTracks, scrobbleRows);
     nt = rawTracks.map(normalizeTrack);
   }
-  return { nt, ns, drill };
+  // `sc` carries the raw scrobble rows back to the caller so the per-page date
+  // filters can re-aggregate arbitrary windows on demand (aggregateScrobbles /
+  // buildDrill / buildRangeCounts discard nothing here — the rows are retained).
+  return { nt, ns, drill, sc: (scrobbleRows && scrobbleRows.length) ? scrobbleRows : null };
 }

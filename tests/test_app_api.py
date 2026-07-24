@@ -374,6 +374,59 @@ class TestTagGraph:
         assert "Moody" in node_names
 
 
+class TestDateRangeFilters:
+    """start/end date-range params scope the analytics endpoints to a window.
+
+    The module fixture has a single scrobble on 2020-06-15. A range covering
+    that day keeps the data; a range before it empties the scrobble-driven and
+    metadata endpoints alike; omitting both bounds reproduces the unfiltered
+    output.
+    """
+
+    def test_timeline_in_range(self, client):
+        body = client.get("/api/timeline?start=2020-01-01&end=2020-12-31").json()
+        assert len(body) == 1 and body[0]["plays"] == 1
+
+    def test_timeline_out_of_range(self, client):
+        body = client.get("/api/timeline?start=2021-01-01&end=2021-12-31").json()
+        assert body == []
+
+    def test_timeline_no_bounds_unchanged(self, client):
+        assert client.get("/api/timeline").json() == client.get("/api/timeline?by=year").json()
+
+    def test_time_of_day_range_scopes_hour_weekday(self, client):
+        # Without a range the hour×weekday grid spans all history; an
+        # out-of-range window empties it too.
+        body = client.get("/api/time-of-day?start=2021-01-01&end=2021-12-31").json()
+        assert body["hour_weekday"] == []
+        assert body["calendar"] == []
+
+    def test_time_of_day_range_includes(self, client):
+        body = client.get("/api/time-of-day?start=2020-06-01&end=2020-06-30").json()
+        entries = {(row[0], row[1]): row[2] for row in body["hour_weekday"]}
+        assert entries.get((22, 0)) == 1
+
+    def test_genres_metadata_range(self, client):
+        assert client.get("/api/genres?start=2020-01-01&end=2020-12-31").json()
+        assert client.get("/api/genres?start=2021-01-01&end=2021-12-31").json() == []
+
+    def test_saturation_metadata_range(self, client):
+        assert client.get("/api/saturation?start=2021-01-01&end=2021-12-31").json() == []
+
+    def test_artist_trajectory_range(self, client):
+        body = client.get("/api/artist-trajectory?start=2020-01-01&end=2020-12-31").json()
+        assert body["data"] and body["data"][0][2] == "Portishead"
+        empty = client.get("/api/artist-trajectory?start=2021-01-01&end=2021-12-31").json()
+        assert empty["data"] == []
+
+    def test_forgotten_favorites_range_out(self, client):
+        assert client.get("/api/forgotten-favorites?start=2021-01-01&end=2021-12-31").json() == []
+
+    def test_invalid_date_rejected(self, client):
+        # Non ISO-date values fail the pattern → 422.
+        assert client.get("/api/timeline?start=2020").status_code == 422
+
+
 class TestReload:
     def test_status(self, client):
         r = client.post("/api/reload", headers=AUTH)

@@ -10,10 +10,16 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
   const decadeList = decades || [];
   const yearList = years || [];
   const fmtVal = (k, v) => (k === "decade" ? v + "s" : v);
-  const newThisYear = curYear != null && String(filters.firstFrom) === String(curYear) && String(filters.firstTo) === String(curYear);
+  // First-heard range is now a day-granularity date filter; bound the pickers to
+  // the span of first-heard years present.
+  const dmin = yearList.length ? `${yearList[0]}-01-01` : undefined;
+  const dmax = yearList.length ? `${yearList[yearList.length - 1]}-12-31` : undefined;
+  const yStart = curYear != null ? `${curYear}-01-01` : "";
+  const yEnd = curYear != null ? `${curYear}-12-31` : "";
+  const newThisYear = curYear != null && filters.firstFrom === yStart && filters.firstTo === yEnd;
   const toggleNew = () => {
     if (newThisYear) { onRange("firstFrom", ""); onRange("firstTo", ""); }
-    else { onRange("firstFrom", String(curYear)); onRange("firstTo", String(curYear)); }
+    else { onRange("firstFrom", yStart); onRange("firstTo", yEnd); }
   };
   return (
     <div className="filterbar">
@@ -59,15 +65,9 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
           {yearList.length > 0 && (
             <div className="fb-control">
               <span className="fb-label">First heard</span>
-              <select className="fb-yr" value={filters.firstFrom || ""} onChange={(e) => onRange("firstFrom", e.target.value)}>
-                <option value="">From…</option>
-                {yearList.map((y) => <option key={y} value={y}>{y}</option>)}
-              </select>
+              <input type="date" className="df-input" value={filters.firstFrom || ""} min={dmin} max={filters.firstTo || dmax} onChange={(e) => onRange("firstFrom", e.target.value)} aria-label="First heard from" />
               <span className="fb-dash">–</span>
-              <select className="fb-yr" value={filters.firstTo || ""} onChange={(e) => onRange("firstTo", e.target.value)}>
-                <option value="">To…</option>
-                {yearList.map((y) => <option key={y} value={y}>{y}</option>)}
-              </select>
+              <input type="date" className="df-input" value={filters.firstTo || ""} min={filters.firstFrom || dmin} max={dmax} onChange={(e) => onRange("firstTo", e.target.value)} aria-label="First heard to" />
               {curYear != null && (
                 <button className={"fb-quick" + (newThisYear ? " active" : "")} onClick={toggleNew} title={`First scrobbled in ${curYear}`}>
                   New this year

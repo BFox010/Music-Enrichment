@@ -61,37 +61,63 @@ def api_overview():
     return metrics.overview()
 
 
+# ISO date (YYYY-MM-DD) date-range params shared by the analytics endpoints.
+# Both bounds are optional and inclusive; omitting them keeps the full history.
+_DATE_PATTERN = "^\\d{4}-\\d{2}-\\d{2}$"
+
+
 @app.get("/api/genres")
-def api_genres(top: int = Query(50, ge=1, le=500)):
-    return metrics.genres(top=top)
+def api_genres(
+    top: int = Query(50, ge=1, le=500),
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+):
+    return metrics.genres(top=top, start=start, end=end)
 
 
 @app.get("/api/moods")
-def api_moods():
-    return metrics.moods()
+def api_moods(
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+):
+    return metrics.moods(start=start, end=end)
 
 
 @app.get("/api/timeline")
-def api_timeline(by: str = Query("year", pattern="^(year|month)$")):
-    return metrics.timeline(by=by)
+def api_timeline(
+    by: str = Query("year", pattern="^(year|month)$"),
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+):
+    return metrics.timeline(by=by, start=start, end=end)
 
 
 @app.get("/api/time-of-day")
-def api_time_of_day(year: Optional[int] = Query(None)):
-    return metrics.time_of_day(year=year)
+def api_time_of_day(
+    year: Optional[int] = Query(None),
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+):
+    return metrics.time_of_day(year=year, start=start, end=end)
 
 
 @app.get("/api/albums")
 def api_albums(
     top: int = Query(50, ge=1, le=500),
     min_tracks: int = Query(2, ge=1, le=50),
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
 ):
-    return metrics.albums(top=top, min_tracks=min_tracks)
+    return metrics.albums(top=top, min_tracks=min_tracks, start=start, end=end)
 
 
 @app.get("/api/artist-trajectory")
-def api_artist_trajectory(top: int = Query(15, ge=1, le=50)):
-    return metrics.artist_trajectory(top=top)
+def api_artist_trajectory(
+    top: int = Query(15, ge=1, le=50),
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+):
+    return metrics.artist_trajectory(top=top, start=start, end=end)
 
 
 @app.get("/api/top")
@@ -103,13 +129,19 @@ def api_top(
 
 
 @app.get("/api/audio-features")
-def api_audio_features():
-    return metrics.audio_features()
+def api_audio_features(
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+):
+    return metrics.audio_features(start=start, end=end)
 
 
 @app.get("/api/saturation")
-def api_saturation():
-    return metrics.saturation()
+def api_saturation(
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+):
+    return metrics.saturation(start=start, end=end)
 
 
 @app.get("/api/tracks")
@@ -140,16 +172,22 @@ def api_forgotten_favorites(
     top: int = Query(30, ge=1, le=200),
     min_peak: int = Query(5, ge=1, le=100),
     recent_years: int = Query(2, ge=1, le=5),
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
 ):
-    return metrics.forgotten_favorites(top=top, min_peak=min_peak, recent_years=recent_years)
+    return metrics.forgotten_favorites(
+        top=top, min_peak=min_peak, recent_years=recent_years, start=start, end=end
+    )
 
 
 @app.get("/api/tag-graph")
 def api_tag_graph(
     field: str = Query("discogs_styles", pattern="^(discogs_styles|mood_tags|lastfm_tags)$"),
     min_count: int = Query(15, ge=1, le=500),
+    start: Optional[str] = Query(None, pattern=_DATE_PATTERN),
+    end: Optional[str] = Query(None, pattern=_DATE_PATTERN),
 ):
-    return metrics.tag_graph(field=field, min_count=min_count)
+    return metrics.tag_graph(field=field, min_count=min_count, start=start, end=end)
 
 
 @app.post("/api/reload", dependencies=[Depends(require_token)])
