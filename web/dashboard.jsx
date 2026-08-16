@@ -6,7 +6,7 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
 /* ---------- helpers ---------- */
 /* The pure data transforms (SEASON_BY_MONTH, normalizeTrack, aggregateScrobbles,
    parseJSONL, trackKey, buildPlayWindows, attachWindows, buildDrill,
-   processLibrary) and the calendar-window constants (CUR_YEAR, CUR_MONTH_KEY, …)
+   processLibrary) and the timeframe anchor (ANCHOR, computeAnchor, isoWeekKey)
    now live in web/data-processing.js so the off-main-thread parser
    (web/data-worker.js) can share them via importScripts. That file loads as a
    global <script> before this bundle, so the names used below resolve to it. */
@@ -21,16 +21,24 @@ const TIMEFRAMES = [
   ["all", "All time"],
   ["year_this", "This year"],
   ["year_last", "Last year"],
+  ["season_this", "This season"],
+  ["season_last", "Last season"],
   ["month_this", "This month"],
-  ["month_last", "Last month"]
+  ["month_last", "Last month"],
+  ["week_this", "This week"],
+  ["week_last", "Last week"]
 ];
 
 function playInWindow(t, tf) {
   if (tf === "all" || !tf) return t.play || 0;
-  if (tf === "year_this") return (t.py && t.py[CUR_YEAR]) || 0;
-  if (tf === "year_last") return (t.py && t.py[LAST_YEAR]) || 0;
+  if (tf === "year_this") return (t.py && t.py[ANCHOR.curYear]) || 0;
+  if (tf === "year_last") return (t.py && t.py[ANCHOR.lastYear]) || 0;
+  if (tf === "season_this") return t.ts || 0;
+  if (tf === "season_last") return t.ls || 0;
   if (tf === "month_this") return t.tm || 0;
   if (tf === "month_last") return t.lm || 0;
+  if (tf === "week_this") return t.tw || 0;
+  if (tf === "week_last") return t.lw || 0;
   return t.play || 0;
 }
 
@@ -309,21 +317,33 @@ function App() {
     const artistPlays = {}, moodCount = {}, genreCount = {}, tagCount = {};
     let withMood = 0, cov = { tags: 0, mbid: 0, styles: 0, af: 0, apple: 0, mood: 0, spotify: 0 };
     let totalPlays = 0;
+    /* Tag charts are play-weighted with conserved mass: one play contributes
+       exactly 1.0, split across that track's tags. Counting one vote per track
+       described the library rather than the listening, and let a 4-tag track
+       outvote a 2-tag one purely because of which pipeline labeled it. */
+    const addMass = (bucket, keys, plays) => {
+      if (!keys || !keys.length || plays <= 0) return;
+      const share = plays / keys.length;
+      for (const k of keys) bucket[k] = (bucket[k] || 0) + share;
+    };
+    let taggedPlays = 0;
     for (const t of filtered) {
       const p = playOf(t);
       artistPlays[t.artist] = (artistPlays[t.artist] || 0) + p;
       totalPlays += p;
-      for (const m of t.moods || []) moodCount[m] = (moodCount[m] || 0) + 1;
+      addMass(moodCount, t.moods, p);
+      if (t.moods && t.moods.length && p > 0) taggedPlays += p;
       if (t.moods && t.moods.length) withMood++;
-      for (const g of t.genres) genreCount[g] = (genreCount[g] || 0) + 1;
-      for (const tg of t.tags) tagCount[tg] = (tagCount[tg] || 0) + 1;
-      for (const st of t.styles) tagCount[st] = (tagCount[st] || 0) + 1;
+      addMass(genreCount, t.genres, p);
+      addMass(tagCount, [...(t.tags || []), ...(t.styles || [])], p);
       if (t.tags.length) cov.tags++;
       if (t.mbid) cov.mbid++;
       if (t.styles.length) cov.styles++;
       if (t.af) cov.af++;
       if (t.apple) cov.apple++;
-      if (t.moods) cov.mood++;
+      // Length-checked: mood_tags arrives as [] for tracks the classifier
+      // declined to guess on, and an empty array is truthy.
+      if (t.moods && t.moods.length) cov.mood++;
       if (t.spotify) cov.spotify++;
     }
     const n = filtered.length || 1;
@@ -349,7 +369,12 @@ function App() {
     return {
       topArtists, topTracks, moods, genresTop, genreTotal, tags, coverageRows,
       uniqueArtists: Object.keys(artistPlays).filter((k) => artistPlays[k] > 0).length,
-      totalPlays, withMood, completeness,
+      totalPlays, withMood, completeness, taggedPlays,
+      // Share of plays in this window that carry any mood. Worth showing
+      // because it is uneven across windows — the classifier leaves a mood
+      // blank when the audio features cannot predict it, so the denominator
+      // behind the mood chart moves as you change timeframe.
+      moodCoverage: totalPlays > 0 ? taggedPlays / totalPlays : 0,
       maxArtist: topArtists[0]?.value || 1, maxTrack: topTracks[0]?.wp || 1,
       maxMood: moods[0]?.value || 1
     };
@@ -499,7 +524,14 @@ function App() {
                 <button key={id} aria-pressed={timeframe === id} onClick={() => setTimeframe(id)}>{label}</button>
               ))}
             </div>
-            <span className="slicer-note">{timeframe === "all" ? "All recorded scrobbles" : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b> · affects play-based metrics</>}</span>
+            <span className="slicer-note">
+              {timeframe === "all"
+                ? "All recorded scrobbles"
+                : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b> · every chart on this page</>}
+              {ANCHOR.stale && ANCHOR.dataEnd
+                ? <> · data through <b>{ANCHOR.dataEnd}</b></>
+                : null}
+            </span>
           </div>
 
           <div className="kpis">
@@ -606,7 +638,7 @@ function App() {
           <section className="block">
             <div className="grid g-2">
               <div className="card">
-                <div className="card-head"><h3 className="card-title">Mood spectrum</h3><span className="card-meta">tracks per mood · click to filter</span></div>
+                <div className="card-head"><h3 className="card-title">Mood spectrum</h3><span className="card-meta">share of plays · {Math.round(agg.moodCoverage * 100)}% of plays tagged · click to filter</span></div>
                 <MoodBars items={agg.moods} max={agg.maxMood} activeKey={filters.mood} onPick={(k) => setFilter("mood", k)} />
               </div>
               <div className="card">
@@ -638,7 +670,7 @@ function App() {
 
         {/* ── PAGE: Track Explorer ────────────────────────────────── */}
         <div style={{ display: page === "explorer" ? "" : "none" }}>
-          <FilterBar filters={filters} onRemove={removeFilter} onClear={clearFilters} sort={sort} onSort={setSort} onToggle={setFilter} onRange={setFilterValue} decades={explorerRanges.decades} years={explorerRanges.years} curYear={CUR_YEAR} />
+          <FilterBar filters={filters} onRemove={removeFilter} onClear={clearFilters} sort={sort} onSort={setSort} onToggle={setFilter} onRange={setFilterValue} decades={explorerRanges.decades} years={explorerRanges.years} curYear={ANCHOR.curYear} />
           <section className="block">
             <div className="card">
               <div className="card-head">

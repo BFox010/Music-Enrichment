@@ -11,14 +11,82 @@
 const SEASON_BY_MONTH = { 12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring", 6: "summer", 7: "summer", 8: "summer", 9: "fall", 10: "fall", 11: "fall" };
 const SEASONS_LIST = ["winter", "spring", "summer", "fall"];
 
-// Derive the calendar windows from "now" rather than hardcoding a year, so the
-// timeframe slicer keeps working as the calendar rolls over.
-const _NOW = new Date();
-const CUR_YEAR = _NOW.getFullYear(), LAST_YEAR = CUR_YEAR - 1;
 const _pad2 = (n) => String(n).padStart(2, "0");
-const CUR_MONTH_KEY = `${CUR_YEAR}-${_pad2(_NOW.getMonth() + 1)}`;
-const _lastMonth = new Date(_NOW.getFullYear(), _NOW.getMonth() - 1, 1);
-const LAST_MONTH_KEY = `${_lastMonth.getFullYear()}-${_pad2(_lastMonth.getMonth() + 1)}`;
+
+/* ISO-8601 week key, e.g. "2025-W07". Weeks start Monday and the week
+   containing the year's first Thursday is week 1, so a January date can
+   legitimately belong to the previous year's final week. */
+function isoWeekKey(d) {
+  const t = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  const day = t.getUTCDay() || 7;          // Sunday → 7
+  t.setUTCDate(t.getUTCDate() + 4 - day);  // shift to the week's Thursday
+  const yearStart = new Date(Date.UTC(t.getUTCFullYear(), 0, 1));
+  const week = Math.ceil(((t - yearStart) / 86400000 + 1) / 7);
+  return `${t.getUTCFullYear()}-W${_pad2(week)}`;
+}
+
+function seasonKeyOf(d) {
+  const season = SEASON_BY_MONTH[d.getUTCMonth() + 1];
+  return `${d.getUTCFullYear()}-${season}`;
+}
+
+/* Timeframe anchor.
+
+   These windows used to be computed from the browser clock at module load.
+   That silently broke whenever the library was not synced today: with data
+   ending 2026-05-07 and a clock reading 2026-08-16, "This month" and "Last
+   month" matched nothing and the dashboard rendered as though no music had
+   ever been played.
+
+   The anchor now follows the data. If the newest scrobble is recent the wall
+   clock is used, which keeps "this month" meaning the real current month for
+   anyone syncing regularly; otherwise windows are measured back from the last
+   day with data, and `stale` lets the UI say so out loud. */
+const FRESH_WITHIN_DAYS = 7;
+
+/* Seeded from the wall clock so the object is coherent before any data has
+   been parsed; computeAnchor() overwrites every field once scrobbles land. */
+const ANCHOR = (() => {
+  const now = new Date();
+  return {
+    date: now, dataEnd: null, stale: false,
+    curYear: now.getUTCFullYear(), lastYear: now.getUTCFullYear() - 1,
+    curMonthKey: `${now.getUTCFullYear()}-${_pad2(now.getUTCMonth() + 1)}`,
+    lastMonthKey: "",
+    curWeekKey: isoWeekKey(now), lastWeekKey: "",
+    curSeasonKey: seasonKeyOf(now), lastSeasonKey: "",
+  };
+})();
+
+function computeAnchor(scrobbleRows) {
+  let maxStamp = "";
+  for (const s of scrobbleRows || []) {
+    const stamp = s.scrobbled_at || "";
+    if (stamp > maxStamp) maxStamp = stamp;
+  }
+  const wall = new Date();
+  const dataEnd = maxStamp ? new Date(maxStamp) : null;
+  const ageDays = dataEnd ? (wall - dataEnd) / 86400000 : Infinity;
+  const stale = !!dataEnd && ageDays > FRESH_WITHIN_DAYS;
+  const anchor = stale ? dataEnd : wall;
+
+  const prevMonth = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 1, 1));
+  const prevWeek = new Date(anchor.getTime() - 7 * 86400000);
+  const prevSeason = new Date(Date.UTC(anchor.getUTCFullYear(), anchor.getUTCMonth() - 3, 1));
+
+  ANCHOR.date = anchor;
+  ANCHOR.dataEnd = maxStamp ? maxStamp.slice(0, 10) : null;
+  ANCHOR.stale = stale;
+  ANCHOR.curYear = anchor.getUTCFullYear();
+  ANCHOR.lastYear = ANCHOR.curYear - 1;
+  ANCHOR.curMonthKey = `${anchor.getUTCFullYear()}-${_pad2(anchor.getUTCMonth() + 1)}`;
+  ANCHOR.lastMonthKey = `${prevMonth.getUTCFullYear()}-${_pad2(prevMonth.getUTCMonth() + 1)}`;
+  ANCHOR.curWeekKey = isoWeekKey(anchor);
+  ANCHOR.lastWeekKey = isoWeekKey(prevWeek);
+  ANCHOR.curSeasonKey = seasonKeyOf(anchor);
+  ANCHOR.lastSeasonKey = seasonKeyOf(prevSeason);
+  return ANCHOR;
+}
 
 function normalizeTrack(raw, i) {
   return {
@@ -37,6 +105,10 @@ function normalizeTrack(raw, i) {
     py: raw.py || null,
     tm: raw.tm != null ? raw.tm : null,
     lm: raw.lm != null ? raw.lm : null,
+    tw: raw.tw != null ? raw.tw : null,
+    lw: raw.lw != null ? raw.lw : null,
+    ts: raw.ts != null ? raw.ts : null,
+    ls: raw.ls != null ? raw.ls : null,
     peak_year: raw.peak_year || null,
     first: raw.first_scrobbled || raw.first || null,
     last: raw.last_scrobbled || raw.last || null,
@@ -83,15 +155,28 @@ function trackKey(o) {
   return a + "\x00" + t;
 }
 function buildPlayWindows(scrobbleRows) {
+  computeAnchor(scrobbleRows);
   const map = new Map();
   for (const s of scrobbleRows) {
     const k = trackKey(s);
     let e = map.get(k);
-    if (!e) { e = { py: {}, tm: 0, lm: 0 }; map.set(k, e); }
+    if (!e) { e = { py: {}, tm: 0, lm: 0, tw: 0, lw: 0, ts: 0, ls: 0 }; map.set(k, e); }
     if (s.year != null) e.py[s.year] = (e.py[s.year] || 0) + 1;
-    const ym = (s.scrobbled_at || "").slice(0, 7);
-    if (ym === CUR_MONTH_KEY) e.tm++;
-    else if (ym === LAST_MONTH_KEY) e.lm++;
+    const stamp = s.scrobbled_at || "";
+    if (!stamp) continue;
+    if (stamp.slice(0, 7) === ANCHOR.curMonthKey) e.tm++;
+    else if (stamp.slice(0, 7) === ANCHOR.lastMonthKey) e.lm++;
+
+    const d = new Date(stamp);
+    const wk = isoWeekKey(d);
+    if (wk === ANCHOR.curWeekKey) e.tw++;
+    else if (wk === ANCHOR.lastWeekKey) e.lw++;
+
+    const sk = s.season != null && s.year != null
+      ? `${s.year}-${s.season}`
+      : seasonKeyOf(d);
+    if (sk === ANCHOR.curSeasonKey) e.ts++;
+    else if (sk === ANCHOR.lastSeasonKey) e.ls++;
   }
   return map;
 }
@@ -100,7 +185,10 @@ function attachWindows(rawTracks, scrobbleRows) {
   const win = buildPlayWindows(scrobbleRows);
   for (const t of rawTracks) {
     const e = win.get(trackKey(t));
-    if (e) { t.py = e.py; t.tm = e.tm; t.lm = e.lm; }
+    if (e) {
+      t.py = e.py; t.tm = e.tm; t.lm = e.lm;
+      t.tw = e.tw; t.lw = e.lw; t.ts = e.ts; t.ls = e.ls;
+    }
   }
   return rawTracks;
 }
