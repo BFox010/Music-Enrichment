@@ -7,8 +7,8 @@ import tempfile
 from pathlib import Path
 
 from pipeline.classify_moods import (
-    CENTROID_SUPPRESSED_MOODS,
     _split_moods,
+    calibrate_thresholds,
     classify_track,
     compute_centroids,
     compute_global_stats,
@@ -157,12 +157,28 @@ class TestClassifyTrack:
                                   threshold=0.05)
         assert moods == []
 
-    def test_max_assignments(self) -> None:
+    def test_no_quota_by_default(self) -> None:
+        """Every mood inside its radius is emitted — no fixed slot count.
+
+        The old rule took the nearest three centroids regardless of fit, which
+        forced three tags onto ~88% of the library. Assignment is now an
+        absolute per-mood judgement, so a track sitting near four centroids
+        gets four tags.
+        """
         stats = compute_global_stats([_features()])
-        training = [(m, _features()) for m in (["A"], ["B"], ["C"], ["D"])]
-        # All centroids are identical, so distance to track is 0 for all
-        # — but the moods aren't in MOOD_CATEGORIES so won't be returned
-        # Use canonical moods instead
+        training = [
+            (["Slow"], _features()),
+            (["Sad"], _features()),
+            (["Moody"], _features()),
+            (["Dark"], _features()),
+        ]
+        centroids = compute_centroids(training, stats)
+        moods, _ = classify_track(_features(), stats, centroids, threshold=10.0)
+        assert len(moods) == 4
+
+    def test_max_assignments_is_an_optional_cap(self) -> None:
+        """The cap still works when a caller explicitly asks for one."""
+        stats = compute_global_stats([_features()])
         training = [
             (["Slow"], _features()),
             (["Sad"], _features()),
@@ -179,50 +195,64 @@ class TestClassifyTrack:
         assert moods == []
         assert nearest is None
 
-    def test_suppressed_moods_filtered_from_output(self) -> None:
-        """Centroid predictions for CENTROID_SUPPRESSED_MOODS are dropped.
+    def test_allowlist_gates_output(self) -> None:
+        """Only moods on the allowlist are emitted by the centroid path.
 
-        Audit / Claude-batch paths still emit these moods — only the
-        centroid path is gated. See 2026-05-25 spot-check verdict in
-        music_enrichment_todo.md.
+        The allowlist is derived from cross-validated F1 (pipeline.
+        evaluate_moods) rather than hand-maintained, but the gating mechanism
+        itself is what this covers.
         """
         stats = compute_global_stats([_features()])
         training = [
             (["Dark"], _features(energy=0.9, valence=0.1)),
             (["Fast"], _features(tempo=170, energy=0.9)),
-            (["Heartbreak"], _features(valence=0.2, energy=0.4)),
             (["Sad"], _features(valence=0.1, energy=0.2, tempo=80)),
         ]
         centroids = compute_centroids(training, stats)
 
-        # Pick a feature point near the Sad centroid so Sad is nearest;
-        # Dark/Fast/Heartbreak are also close enough to be within threshold
-        # but should be suppressed from output.
         moods, _ = classify_track(
             _features(valence=0.1, energy=0.2, tempo=80),
-            stats, centroids, threshold=10.0, max_assignments=4,
+            stats, centroids, threshold=10.0,
+            allowed_moods=frozenset({"Fast", "Sad"}),
         )
         assert "Sad" in moods
         assert "Dark" not in moods
-        assert "Fast" not in moods
-        assert "Heartbreak" not in moods
 
-    def test_suppression_set_is_overridable(self) -> None:
-        """Caller-supplied suppressed_moods overrides the module default."""
+    def test_allowlist_none_disables_gating(self) -> None:
+        """``allowed_moods=None`` lets everything through — used by the
+        evaluation harness, which must measure the unfiltered classifier."""
         stats = compute_global_stats([_features()])
         training = [(["Dark"], _features())]
         centroids = compute_centroids(training, stats)
 
-        # Empty suppression: Dark should now come through
         moods, _ = classify_track(
-            _features(), stats, centroids,
-            threshold=10.0, suppressed_moods=frozenset(),
+            _features(), stats, centroids, threshold=10.0, allowed_moods=None,
         )
         assert "Dark" in moods
 
-    def test_suppressed_moods_constant_matches_spotcheck_verdict(self) -> None:
-        """Guards the canonical set so it can't drift without test update."""
-        assert CENTROID_SUPPRESSED_MOODS == frozenset({"Dark", "Fast", "Heartbreak"})
+
+class TestCalibrateThresholds:
+    def test_tight_mood_gets_tighter_cutoff(self) -> None:
+        """A mood whose examples cluster tightly earns a smaller radius than a
+        diffuse one — the thing a single global threshold cannot express."""
+        stats = compute_global_stats([_features(energy=e / 10) for e in range(11)])
+        training = [(["Slow"], _features(energy=0.50)) for _ in range(30)]
+        training += [(["Moody"], _features(energy=e / 10)) for e in range(11)] * 3
+        centroids = compute_centroids(training, stats)
+        thresholds = calibrate_thresholds(training, stats, centroids, min_support=5)
+        assert thresholds["Slow"] < thresholds["Moody"]
+
+    def test_low_support_moods_omitted(self) -> None:
+        """Under min_support a mood is left out so callers fall back to the
+        global default rather than calibrating on noise."""
+        stats = compute_global_stats([_features()])
+        training = [(["Slow"], _features())] * 3
+        centroids = compute_centroids(training, stats)
+        thresholds = calibrate_thresholds(training, stats, centroids, min_support=20)
+        assert "Slow" not in thresholds
+
+    def test_empty_training_is_safe(self) -> None:
+        assert calibrate_thresholds([], {}, {}) == {}
 
 
 class TestEuclidean:
