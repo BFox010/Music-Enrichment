@@ -56,6 +56,12 @@ def api_config():
     return {"token": DASHBOARD_TOKEN}
 
 
+@app.get("/api/integrity")
+def api_integrity():
+    """Whether tracks.jsonl play counts still agree with scrobbles.jsonl."""
+    return metrics.play_count_integrity()
+
+
 @app.get("/api/overview")
 def api_overview():
     return metrics.overview()

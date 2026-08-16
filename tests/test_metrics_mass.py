@@ -155,6 +155,54 @@ class TestIdentityJoin:
             assert cov["tagged_plays"] == 1
 
 
+class TestPlayCountIntegrity:
+    """tracks.jsonl caches a play count that Phase 2 derives from scrobbles.
+
+    The two files drift apart whenever scrobbles change without the track rows
+    being rebuilt — the exact condition a fresh Last.fm export creates. Every
+    play-weighted chart inherits that error silently, so it needs a hard check.
+    """
+
+    def test_in_sync_library_reports_clean(self):
+        tracks = [_track("A", "one", ["Fast"], play_count=2)]
+        scrobbles = [_scrobble("A", "one", "2025-01-01"),
+                     _scrobble("A", "one", "2025-01-02")]
+        with _library(tracks, scrobbles):
+            r = metrics.play_count_integrity()
+            assert r["in_sync"]
+            assert r["declared_total"] == r["actual_total"] == 2
+
+    def test_stale_play_count_is_caught(self):
+        """New scrobbles ingested without rebuilding track rows."""
+        tracks = [_track("A", "one", ["Fast"], play_count=2)]
+        scrobbles = [_scrobble("A", "one", f"2025-01-0{i}") for i in (1, 2, 3)]
+        with _library(tracks, scrobbles):
+            r = metrics.play_count_integrity()
+            assert not r["in_sync"]
+            assert r["mismatched_tracks"] == 1
+            assert r["worst"][0]["delta"] == 1
+
+    def test_orphaned_scrobbles_are_counted(self):
+        """A play whose track has no row at all — invisible to every tag chart."""
+        tracks = [_track("A", "one", ["Fast"], play_count=1)]
+        scrobbles = [_scrobble("A", "one", "2025-01-01"),
+                     _scrobble("Ghost", "missing", "2025-01-02")]
+        with _library(tracks, scrobbles):
+            r = metrics.play_count_integrity()
+            assert r["unmatched_scrobbles"] == 1
+            assert not r["in_sync"]
+
+    def test_merged_aliases_do_not_read_as_drift(self):
+        """After identity resolution one row absorbs several credits; its
+        play_count covers all of them and must not look like a mismatch."""
+        track = _track("A B", "song", ["Fast"], play_count=2)
+        track["identity_aliases"] = [["a", "song"], ["a b", "song"]]
+        scrobbles = [_scrobble("A", "song", "2025-01-01"),
+                     _scrobble("A B", "song", "2025-01-02")]
+        with _library([track], scrobbles):
+            assert metrics.play_count_integrity()["in_sync"]
+
+
 class TestAliasResolution:
     def test_plays_under_a_merged_credit_still_join(self):
         """After identity resolution one row represents several credits.

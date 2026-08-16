@@ -318,3 +318,58 @@ class TestAuditAndClaudeIO:
                 }) + "\n")
             results = load_claude_results(path)
             assert results[("portishead", "roads")] == ["Sad", "Slow"]
+
+
+class TestOwnerLabelRecovery:
+    """inputs/ is gitignored, so a fresh clone has no audit CSV.
+
+    Without recovery the phase would find no owner labels, fall through to the
+    centroid for every row, and destroy every hand-made judgement in the
+    library. These labels are the training signal the classifier is built on —
+    losing them is unrecoverable, so the guard is load-bearing.
+    """
+
+    def _library(self):
+        return [
+            {"artist": "A", "track": "one", "artist_normalized": "a",
+             "track_normalized": "one", "mood_tags": ["Moody", "Dark"],
+             "mood_source": "audit", "mood_confidence": "high",
+             "audio_features": _features(energy=0.3, valence=0.2)},
+            {"artist": "B", "track": "two", "artist_normalized": "b",
+             "track_normalized": "two", "mood_tags": ["Fast"],
+             "mood_source": "claude_batch", "mood_confidence": "high",
+             "audio_features": _features(tempo=170)},
+            {"artist": "C", "track": "three", "artist_normalized": "c",
+             "track_normalized": "three", "mood_tags": ["Slow"],
+             "mood_source": "centroid", "mood_confidence": "medium",
+             "audio_features": _features(tempo=80)},
+        ]
+
+    def test_recovers_audit_and_claude_labels(self):
+        from pipeline.classify_moods import _recover_owner_labels
+
+        recovered = _recover_owner_labels(self._library())
+        assert ("a", "one") in recovered
+        assert ("b", "two") in recovered
+
+    def test_centroid_rows_are_not_treated_as_owner_labels(self):
+        from pipeline.classify_moods import _recover_owner_labels
+
+        recovered = _recover_owner_labels(self._library())
+        assert ("c", "three") not in recovered
+
+    def test_recovered_tags_are_copied_not_aliased(self):
+        """Mutating the recovered list must not reach back into the track row."""
+        from pipeline.classify_moods import _recover_owner_labels
+
+        library = self._library()
+        recovered = _recover_owner_labels(library)
+        recovered[("a", "one")]["mood_tags"].append("Injected")
+        assert library[0]["mood_tags"] == ["Moody", "Dark"]
+
+    def test_rows_without_identity_are_skipped(self):
+        from pipeline.classify_moods import _recover_owner_labels
+
+        rows = [{"artist_normalized": "", "track_normalized": "",
+                 "mood_tags": ["Fast"], "mood_source": "audit"}]
+        assert _recover_owner_labels(rows) == {}

@@ -161,6 +161,55 @@ def tag_mass(
     return mass, {"plays": plays, "tagged_plays": tagged}
 
 
+def play_count_integrity() -> dict[str, Any]:
+    """Check each track's declared ``play_count`` against the scrobble log.
+
+    ``tracks.jsonl`` caches a per-track play count that Phase 2 derives by
+    counting scrobbles. The two files can drift apart — most obviously when a
+    fresh export adds plays but the track rows are not rebuilt — and every
+    play-weighted chart silently inherits the error.
+
+    Returns the totals plus the worst offenders. ``in_sync`` is the one-line
+    answer: True when every track's count matches and no scrobble is orphaned.
+    """
+    index = _track_index()
+    actual: Counter = Counter()
+    unmatched = 0
+    for s in get_scrobbles():
+        track = _lookup(index, s)
+        if track is None:
+            unmatched += 1
+            continue
+        actual[_name_key(track)] += 1
+
+    mismatches: list[dict] = []
+    declared_total = 0
+    for t in get_tracks():
+        declared = int(t.get("play_count") or 0)
+        declared_total += declared
+        counted = actual.get(_name_key(t), 0)
+        if declared != counted:
+            mismatches.append({
+                "artist": t.get("artist") or "",
+                "track": t.get("track") or "",
+                "declared": declared,
+                "actual": counted,
+                "delta": counted - declared,
+            })
+
+    mismatches.sort(key=lambda m: -abs(m["delta"]))
+    return {
+        "tracks_checked": len(get_tracks()),
+        "scrobbles": len(get_scrobbles()),
+        "declared_total": declared_total,
+        "actual_total": sum(actual.values()),
+        "unmatched_scrobbles": unmatched,
+        "mismatched_tracks": len(mismatches),
+        "in_sync": not mismatches and unmatched == 0,
+        "worst": mismatches[:20],
+    }
+
+
 def _histogram(values: list[float], n_bins: int = 10) -> list[dict]:
     if not values:
         return []
