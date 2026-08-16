@@ -56,19 +56,33 @@ def api_config():
     return {"token": DASHBOARD_TOKEN}
 
 
+@app.get("/api/integrity")
+def api_integrity():
+    """Whether tracks.jsonl play counts still agree with scrobbles.jsonl."""
+    return metrics.play_count_integrity()
+
+
 @app.get("/api/overview")
 def api_overview():
     return metrics.overview()
 
 
+# Window forms: "all", "2025", "2025-03", "2025-summer", "2025-03-01:2025-06-30".
+_WINDOW = Query(
+    None,
+    description='Listening window: "2025", "2025-03", "2025-summer", or "from:to".',
+    max_length=32,
+)
+
+
 @app.get("/api/genres")
-def api_genres(top: int = Query(50, ge=1, le=500)):
-    return metrics.genres(top=top)
+def api_genres(top: int = Query(50, ge=1, le=500), window: Optional[str] = _WINDOW):
+    return metrics.genres(top=top, window=window)
 
 
 @app.get("/api/moods")
-def api_moods():
-    return metrics.moods()
+def api_moods(window: Optional[str] = _WINDOW):
+    return metrics.moods(window=window)
 
 
 @app.get("/api/timeline")
@@ -148,8 +162,9 @@ def api_forgotten_favorites(
 def api_tag_graph(
     field: str = Query("discogs_styles", pattern="^(discogs_styles|mood_tags|lastfm_tags)$"),
     min_count: int = Query(15, ge=1, le=500),
+    window: Optional[str] = _WINDOW,
 ):
-    return metrics.tag_graph(field=field, min_count=min_count)
+    return metrics.tag_graph(field=field, min_count=min_count, window=window)
 
 
 @app.post("/api/reload", dependencies=[Depends(require_token)])

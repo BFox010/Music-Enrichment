@@ -110,21 +110,20 @@ class TestGenres:
 
     def test_structure(self, client):
         body = client.get("/api/genres").json()
-        assert isinstance(body, list)
-        assert len(body) >= 1
-        for item in body:
+        assert isinstance(body["items"], list)
+        assert len(body["items"]) >= 1
+        for item in body["items"]:
             assert "genre" in item
-            assert "count" in item
-            assert isinstance(item["count"], int)
+            assert "plays" in item and "share" in item
 
     def test_contains_trip_hop(self, client):
         body = client.get("/api/genres").json()
-        genres = {item["genre"] for item in body}
+        genres = {item["genre"] for item in body["items"]}
         assert "trip-hop" in genres
 
     def test_top_param(self, client):
         body = client.get("/api/genres?top=1").json()
-        assert len(body) <= 1
+        assert len(body["items"]) <= 1
 
 
 class TestMoods:
@@ -133,15 +132,50 @@ class TestMoods:
 
     def test_structure(self, client):
         body = client.get("/api/moods").json()
-        assert isinstance(body, list)
-        for item in body:
-            assert "mood" in item and "count" in item
+        assert isinstance(body["items"], list)
+        for item in body["items"]:
+            assert "mood" in item and "plays" in item
 
     def test_contains_moody(self, client):
         body = client.get("/api/moods").json()
-        moods = {item["mood"] for item in body}
+        moods = {item["mood"] for item in body["items"]}
         assert "Moody" in moods
         assert "Dark" in moods
+
+    def test_mass_sums_to_tagged_plays(self, client):
+        """The core invariant: one play contributes exactly 1.0 in total.
+
+        The fixture track carries two moods and has one scrobble, so each mood
+        gets 0.5 and the total is 1.0 — not 2.0.
+        """
+        body = client.get("/api/moods").json()
+        total = sum(item["plays"] for item in body["items"])
+        assert total == pytest.approx(body["coverage"]["tagged_plays"])
+        assert body["coverage"]["tagged_plays"] == 1
+
+    def test_window_filters(self, client):
+        """A window with no plays returns zero mass, not the all-time figures."""
+        inside = client.get("/api/moods?window=2020").json()
+        assert inside["coverage"]["plays"] == 1
+        outside = client.get("/api/moods?window=1999").json()
+        assert outside["coverage"]["plays"] == 0
+        assert outside["items"] == []
+
+    def test_season_window(self, client):
+        """The fixture scrobble is summer 2020."""
+        assert client.get("/api/moods?window=2020-summer").json()["coverage"]["plays"] == 1
+        assert client.get("/api/moods?window=2020-winter").json()["coverage"]["plays"] == 0
+
+    def test_month_and_range_windows(self, client):
+        assert client.get("/api/moods?window=2020-06").json()["coverage"]["plays"] == 1
+        assert client.get("/api/moods?window=2020-07").json()["coverage"]["plays"] == 0
+        ranged = "/api/moods?window=2020-01-01:2020-12-31"
+        assert client.get(ranged).json()["coverage"]["plays"] == 1
+
+    def test_unknown_window_degrades_to_all(self, client):
+        """A malformed window must not silently produce an empty dashboard."""
+        body = client.get("/api/moods?window=nonsense").json()
+        assert body["coverage"]["plays"] == 1
 
 
 class TestTimeline:

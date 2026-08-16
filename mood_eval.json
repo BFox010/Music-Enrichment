@@ -1,0 +1,112 @@
+{
+  "per_mood": {
+    "Fast": {
+      "precision": 0.7895,
+      "recall": 0.3061,
+      "f1": 0.4412,
+      "support": 392
+    },
+    "Moody": {
+      "precision": 0.4957,
+      "recall": 0.3034,
+      "f1": 0.3764,
+      "support": 379
+    },
+    "Slow": {
+      "precision": 0.3017,
+      "recall": 0.2997,
+      "f1": 0.3007,
+      "support": 297
+    },
+    "Heavy Bass": {
+      "precision": 0.2857,
+      "recall": 0.2911,
+      "f1": 0.2884,
+      "support": 213
+    },
+    "Dance": {
+      "precision": 0.5167,
+      "recall": 0.2925,
+      "f1": 0.3735,
+      "support": 212
+    },
+    "Sad": {
+      "precision": 0.141,
+      "recall": 0.2558,
+      "f1": 0.1818,
+      "support": 43
+    },
+    "Groove": {
+      "precision": 0.3628,
+      "recall": 0.2847,
+      "f1": 0.3191,
+      "support": 144
+    },
+    "Heartbreak": {
+      "precision": 0.1988,
+      "recall": 0.2946,
+      "f1": 0.2374,
+      "support": 112
+    },
+    "Dark": {
+      "precision": 0.2081,
+      "recall": 0.3163,
+      "f1": 0.251,
+      "support": 98
+    },
+    "Love": {
+      "precision": 0.1615,
+      "recall": 0.3095,
+      "f1": 0.2122,
+      "support": 84
+    },
+    "Hype": {
+      "precision": 0.2597,
+      "recall": 0.2941,
+      "f1": 0.2759,
+      "support": 68
+    },
+    "Uplifting": {
+      "precision": 0.3038,
+      "recall": 0.3,
+      "f1": 0.3019,
+      "support": 80
+    },
+    "Happy": {
+      "precision": 0.1015,
+      "recall": 0.3077,
+      "f1": 0.1527,
+      "support": 65
+    },
+    "Sunny": {
+      "precision": 0.1609,
+      "recall": 0.3182,
+      "f1": 0.2137,
+      "support": 44
+    }
+  },
+  "macro_f1": 0.2804,
+  "exact_match": 0.0179,
+  "n": 838,
+  "folds": 5,
+  "seed": 7,
+  "allowlist": [
+    "Dance",
+    "Fast",
+    "Moody"
+  ],
+  "min_precision": 0.45,
+  "withheld": [
+    "Dark",
+    "Groove",
+    "Happy",
+    "Heartbreak",
+    "Heavy Bass",
+    "Hype",
+    "Love",
+    "Sad",
+    "Slow",
+    "Sunny",
+    "Uplifting"
+  ]
+}

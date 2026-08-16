@@ -117,6 +117,21 @@ def _enrichment_sources(row: dict) -> list[str]:
     return sources
 
 
+# Identity fields: fill a gap, never overwrite. These feed
+# compute_canonical_track_id() and Phase 4e's clustering, so churn here would
+# reshuffle which rows merge from one run to the next. Scrobble-derived MBIDs
+# are welcome where a track has none and must not displace one that a
+# dedicated enrichment lookup already established.
+_FILL_ONLY_FIELDS: frozenset[str] = frozenset({"musicbrainz_id", "artist_mbid", "isrc"})
+
+# Fields where an explicit null from the incoming row means "there is no value"
+# rather than "this file didn't carry the field". Phase 6 sets all of these on
+# every row it processes, so a null here is a deliberate verdict.
+_AUTHORITATIVE_NULL_FIELDS: frozenset[str] = frozenset(
+    {"mood_tags", "mood_source", "mood_confidence", "mood_distance"}
+)
+
+
 def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     """Merge a freshly enriched row with the existing tracks.jsonl row.
 
@@ -138,11 +153,20 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     merged: dict = dict(existing)
     for key, new_value in new.items():
         if new_value is None:
+            # A null mood from Phase 6 is a verdict, not a gap: the classifier
+            # declines to guess moods the audio features cannot predict, and
+            # that blank has to survive the merge. Rule 4 exists for fields a
+            # later intermediate simply didn't carry, which shows up as the key
+            # being absent rather than explicitly null.
+            if key in _AUTHORITATIVE_NULL_FIELDS:
+                merged[key] = None
             continue
         if isinstance(new_value, (list, dict)) and len(new_value) == 0:
             # Empty list/dict from new → keep existing if existing has content
             if merged.get(key):
                 continue
+        if key in _FILL_ONLY_FIELDS and merged.get(key):
+            continue
         merged[key] = new_value
 
     # Preserve human-edited fields (override anything new has)
@@ -150,10 +174,12 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         if existing.get(field) is not None:
             merged[field] = existing[field]
 
-    # Preserve high-quality mood data
+    # Preserve high-quality mood data. "audit" is included because those are
+    # the owner's own judgements — the training signal the whole classifier is
+    # built on. A fresher centroid pass must never overwrite one.
     existing_source = existing.get("mood_source")
     new_source = new.get("mood_source")
-    if existing_source in ("claude_batch", "manual") and new_source != existing_source:
+    if existing_source in ("audit", "claude_batch", "manual") and new_source != existing_source:
         merged["mood_tags"] = existing.get("mood_tags") or merged.get("mood_tags")
         merged["mood_source"] = existing_source
         merged["mood_confidence"] = existing.get("mood_confidence")

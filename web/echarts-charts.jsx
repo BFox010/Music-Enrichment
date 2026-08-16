@@ -545,10 +545,10 @@ function SaturationChart({ active }) {
   return (
     <div className="card">
       <div className="card-head">
-        <h3 className="card-title">Data saturation</h3>
-        <span className="card-meta">tracks by enrichment tier</span>
+        <h3 className="card-title">Rotation tiers</h3>
+        <span className="card-meta">tracks by the tier you assigned their artist</span>
       </div>
-      <p style={cardDesc}>How thoroughly each track is enriched, weighted by how much you play it. <b>Tier 1</b> = heavy rotation, fully enriched · <b>Tier 2</b> = regular plays · <b>Tier 3</b> = deep cuts · <b>Unranked</b> = not yet scored.</p>
+      <p style={cardDesc}>Your own rotation judgement, from <code>taste_profile.md</code> — not a data-quality measure. <b>Tier 1</b> = heavy rotation · <b>Tier 2</b> = moderate · <b>Tier 3</b> = special-context only · <b>Unranked</b> = artist not tiered. Tiers were written to stop generated playlists over-using favourite artists; here they simply show how much of your library you have opinions about.</p>
       <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block", height: 320 }} />
       {loading && <ChartLoading height={320} />}
     </div>

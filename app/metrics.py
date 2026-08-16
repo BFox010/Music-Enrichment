@@ -9,6 +9,7 @@ but returns dicts instead of printing.
 from __future__ import annotations
 
 import math
+import re
 from collections import Counter, defaultdict
 from typing import Any, Optional
 
@@ -24,13 +25,189 @@ _COVERAGE_FIELDS: list[tuple[str, str]] = [
     ("apple_music_checked", "apple_music_checked_at"),
     ("apple_music_available", "apple_music_available"),
     ("itunes_match", "itunes_persistent_id"),
-    ("saturation_tier", "saturation_tier"),
+    # saturation_tier deliberately absent: it is a curation choice from the
+    # taste profile, not an enrichment. Counting it here reported ~36%
+    # "coverage" when the other ~64% simply have no tier because their artist
+    # isn't in the owner's rotation list — nothing was missing.
 ]
 
 _HISTOGRAM_FEATURES: list[str] = [
     "energy", "valence", "danceability", "acousticness",
     "speechiness", "tempo", "loudness",
 ]
+
+
+_YEAR_RE = re.compile(r"^\d{4}$")
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
+_SEASON_RE = re.compile(r"^(\d{4})-(winter|spring|summer|fall)$")
+_RANGE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$")
+
+_SEASON_BY_MONTH: dict[int, str] = {
+    12: "winter", 1: "winter", 2: "winter",
+    3: "spring", 4: "spring", 5: "spring",
+    6: "summer", 7: "summer", 8: "summer",
+    9: "fall", 10: "fall", 11: "fall",
+}
+
+
+def _name_key(row: dict) -> tuple[str, str]:
+    """Normalized artist/track pair — the join both files always share."""
+    return (
+        (row.get("artist_normalized") or row.get("artist") or "").lower().strip(),
+        (row.get("track_normalized") or row.get("track") or "").lower().strip(),
+    )
+
+
+def _track_index() -> dict[tuple[str, str], dict]:
+    """Track lookup keyed by every identity a scrobble might arrive with.
+
+    Registers each track under its name pair and, when present, its
+    ``canonical_track_id``. Both are indexed rather than picking one: today
+    tracks.jsonl carries canonical IDs and scrobbles.jsonl does not, so keying
+    solely on the canonical ID would match nothing at all.
+    """
+    index: dict[tuple[str, str], dict] = {}
+    for t in get_tracks():
+        index[_name_key(t)] = t
+        cid = t.get("canonical_track_id")
+        if cid:
+            index[("cid", cid)] = t
+        # Credit variants folded together by identity resolution. The scrobble
+        # log is never rewritten, so a play recorded under "Clipse" must still
+        # find the row that now displays the full credit.
+        for alias in t.get("identity_aliases") or []:
+            if isinstance(alias, (list, tuple)) and len(alias) == 2:
+                index.setdefault((alias[0], alias[1]), t)
+    return index
+
+
+def _lookup(index: dict[tuple[str, str], dict], scrobble: dict) -> Optional[dict]:
+    cid = scrobble.get("canonical_track_id")
+    if cid:
+        hit = index.get(("cid", cid))
+        if hit is not None:
+            return hit
+    return index.get(_name_key(scrobble))
+
+
+def in_window(scrobble: dict, window: Optional[str]) -> bool:
+    """Does a scrobble fall inside ``window``?
+
+    Accepted forms — ``None``/``"all"``, ``"2025"``, ``"2025-03"``,
+    ``"2025-summer"``, or an explicit ``"2025-03-01:2025-06-30"`` date range.
+    Anything unrecognized matches everything, so a bad query degrades to
+    "all time" rather than silently returning an empty dashboard.
+    """
+    if not window or window == "all":
+        return True
+    stamp = scrobble.get("scrobbled_at") or ""
+
+    if _RANGE_RE.match(window):
+        start, _, end = window.partition(":")
+        return bool(stamp) and start <= stamp[:10] <= end
+    season = _SEASON_RE.match(window)
+    if season:
+        month = scrobble.get("month")
+        return (
+            str(scrobble.get("year")) == season.group(1)
+            and month is not None
+            and _SEASON_BY_MONTH.get(month) == season.group(2)
+        )
+    if _MONTH_RE.match(window):
+        return stamp[:7] == window
+    if _YEAR_RE.match(window):
+        return str(scrobble.get("year")) == window
+    # Unrecognized: match everything. An unparseable window should read as
+    # "all time", never as an empty dashboard the reader might mistake for
+    # "you listened to nothing".
+    return True
+
+
+def tag_mass(
+    field: str,
+    window: Optional[str] = None,
+    *,
+    normalized: bool = True,
+) -> tuple[Counter, dict[str, int]]:
+    """Play-weighted tag totals for ``field``, plus coverage for the window.
+
+    Every play contributes exactly 1.0, split evenly across the tags on the
+    track. Two distortions this removes: a track heard 200 times no longer
+    counts the same as one heard once, and a track carrying 4 tags no longer
+    outvotes one carrying 2. The totals therefore sum to the number of *tagged*
+    plays in the window, which makes the shares directly comparable.
+
+    Returns ``(mass, {"plays", "tagged_plays"})``. Coverage matters because it
+    is uneven — moods the audio features cannot predict are left blank, so the
+    denominator differs between windows and must be shown alongside the shares.
+    """
+    index = _track_index()
+    mass: Counter = Counter()
+    plays = 0
+    tagged = 0
+    for s in get_scrobbles():
+        if not in_window(s, window):
+            continue
+        plays += 1
+        track = _lookup(index, s)
+        tags = (track.get(field) or []) if track else []
+        tags = [t for t in dict.fromkeys(tags) if t]
+        if not tags:
+            continue
+        tagged += 1
+        share = 1.0 / len(tags) if normalized else 1.0
+        for tag in tags:
+            mass[tag] += share
+    return mass, {"plays": plays, "tagged_plays": tagged}
+
+
+def play_count_integrity() -> dict[str, Any]:
+    """Check each track's declared ``play_count`` against the scrobble log.
+
+    ``tracks.jsonl`` caches a per-track play count that Phase 2 derives by
+    counting scrobbles. The two files can drift apart — most obviously when a
+    fresh export adds plays but the track rows are not rebuilt — and every
+    play-weighted chart silently inherits the error.
+
+    Returns the totals plus the worst offenders. ``in_sync`` is the one-line
+    answer: True when every track's count matches and no scrobble is orphaned.
+    """
+    index = _track_index()
+    actual: Counter = Counter()
+    unmatched = 0
+    for s in get_scrobbles():
+        track = _lookup(index, s)
+        if track is None:
+            unmatched += 1
+            continue
+        actual[_name_key(track)] += 1
+
+    mismatches: list[dict] = []
+    declared_total = 0
+    for t in get_tracks():
+        declared = int(t.get("play_count") or 0)
+        declared_total += declared
+        counted = actual.get(_name_key(t), 0)
+        if declared != counted:
+            mismatches.append({
+                "artist": t.get("artist") or "",
+                "track": t.get("track") or "",
+                "declared": declared,
+                "actual": counted,
+                "delta": counted - declared,
+            })
+
+    mismatches.sort(key=lambda m: -abs(m["delta"]))
+    return {
+        "tracks_checked": len(get_tracks()),
+        "scrobbles": len(get_scrobbles()),
+        "declared_total": declared_total,
+        "actual_total": sum(actual.values()),
+        "unmatched_scrobbles": unmatched,
+        "mismatched_tracks": len(mismatches),
+        "in_sync": not mismatches and unmatched == 0,
+        "worst": mismatches[:20],
+    }
 
 
 def _histogram(values: list[float], n_bins: int = 10) -> list[dict]:
@@ -77,20 +254,43 @@ def overview() -> dict[str, Any]:
     }
 
 
-def genres(top: int = 50) -> list[dict]:
-    counts: Counter[str] = Counter()
-    for t in get_tracks():
-        for g in t.get("genres") or []:
-            counts[g] += 1
-    return [{"genre": g, "count": c} for g, c in counts.most_common(top)]
+def genres(top: int = 50, window: Optional[str] = None) -> dict[str, Any]:
+    """Genre share of listening in ``window`` — play-weighted, not per-track."""
+    mass, cov = tag_mass("genres", window)
+    return {
+        "window": window or "all",
+        "coverage": cov,
+        "items": [
+            {
+                "genre": g,
+                "plays": round(m, 2),
+                "share": round(m / cov["tagged_plays"], 4) if cov["tagged_plays"] else 0.0,
+            }
+            for g, m in mass.most_common(top)
+        ],
+    }
 
 
-def moods() -> list[dict]:
-    counts: Counter[str] = Counter()
-    for t in get_tracks():
-        for m in t.get("mood_tags") or []:
-            counts[m] += 1
-    return [{"mood": m, "count": c} for m, c in counts.most_common()]
+def moods(window: Optional[str] = None) -> dict[str, Any]:
+    """Mood share of listening in ``window`` — play-weighted, not per-track.
+
+    Previously this counted one vote per track in the library, which described
+    the catalog rather than the listening: a song played once weighed the same
+    as one played 200 times.
+    """
+    mass, cov = tag_mass("mood_tags", window)
+    return {
+        "window": window or "all",
+        "coverage": cov,
+        "items": [
+            {
+                "mood": m,
+                "plays": round(v, 2),
+                "share": round(v / cov["tagged_plays"], 4) if cov["tagged_plays"] else 0.0,
+            }
+            for m, v in mass.most_common()
+        ],
+    }
 
 
 def timeline(by: str = "year") -> list[dict]:
@@ -379,20 +579,33 @@ def forgotten_favorites(
     return result[:top]
 
 
-def tag_graph(field: str = "discogs_styles", min_count: int = 15) -> dict[str, Any]:
-    """Co-occurrence graph for a tag field.
+def tag_graph(
+    field: str = "discogs_styles",
+    min_count: int = 15,
+    window: Optional[str] = None,
+) -> dict[str, Any]:
+    """Co-occurrence graph for a tag field, weighted by plays.
 
-    Nodes are tags whose track count >= min_count. Edges connect any two tags
-    that appear together on the same track; edge weight = number of shared tracks.
+    Nodes are tags whose play count >= min_count. Edges connect any two tags
+    heard together on the same track; edge weight = shared plays.
     """
     if field not in _TAG_GRAPH_FIELDS:
         field = "discogs_styles"
 
+    # Weighted by plays: an edge between two tags should be thick because the
+    # pairing was listened to often, not because it appears on many tracks that
+    # were each heard once.
+    index = _track_index()
     tag_counts: Counter[str] = Counter()
     co_occur: Counter[tuple[str, str]] = Counter()
 
-    for t in get_tracks():
-        tags = list(dict.fromkeys(v for v in (t.get(field) or []) if v))
+    for s in get_scrobbles():
+        if not in_window(s, window):
+            continue
+        track = _lookup(index, s)
+        if not track:
+            continue
+        tags = list(dict.fromkeys(v for v in (track.get(field) or []) if v))
         for tag in tags:
             tag_counts[tag] += 1
         for i in range(len(tags)):

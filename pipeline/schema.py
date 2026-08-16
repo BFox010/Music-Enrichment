@@ -74,6 +74,13 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "mood_tags": None,
     "mood_source": None,
     "mood_confidence": None,
+    # Distance to the nearest mood centroid, so the UI can show fit rather
+    # than mere presence. Only set on centroid-classified rows.
+    "mood_distance": None,
+    # Every (artist_normalized, track_normalized) pair folded into this row by
+    # Phase 4e. scrobbles.jsonl is never rewritten, so the aggregation layer
+    # resolves an old credit to its canonical row through this list.
+    "identity_aliases": [],
     # Listening / counts
     "play_count": 0,
     "first_scrobbled": None,

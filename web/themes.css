@@ -385,8 +385,18 @@ section.block { margin-bottom: 16px; }
 .moodrow:hover { background: var(--panel-2); }
 .moodrow.active { background: color-mix(in oklab, var(--accent) 16%, var(--panel)); }
 .moodrow .m-name { font-size: 12.5px; color: var(--text); font-weight: 500; white-space: nowrap; }
-.moodrow .m-track { height: 10px; background: var(--track-bg); border-radius: var(--bar-radius); overflow: hidden; }
-.moodrow .m-fill { height: 100%; border-radius: var(--bar-radius); background-image: var(--bar-texture); transition: width .5s; }
+/* Flex so the hand-labelled and classifier-inferred segments sit end to end
+   inside one bar rather than stacking. */
+.moodrow .m-track { height: 10px; background: var(--track-bg); border-radius: var(--bar-radius); overflow: hidden; display: flex; }
+.moodrow .m-fill { height: 100%; background-image: var(--bar-texture); transition: width .5s; }
+.moodrow .m-track > .m-fill:first-child { border-radius: var(--bar-radius) 0 0 var(--bar-radius); }
+.moodrow .m-track > .m-fill:last-child { border-radius: 0 var(--bar-radius) var(--bar-radius) 0; }
+.moodrow .m-track > .m-fill:only-child { border-radius: var(--bar-radius); }
+/* Hatched so the inferred share is distinguishable without relying on opacity
+   alone, which is easy to miss at 10px tall. */
+.moodrow .m-fill-inferred {
+  background-image: repeating-linear-gradient(135deg, rgba(255,255,255,.55) 0 2px, transparent 2px 5px);
+}
 .moodrow .m-val { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; font-weight: 600; }
 
 /* ============================================================

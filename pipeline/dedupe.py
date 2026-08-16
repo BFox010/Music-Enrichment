@@ -80,6 +80,13 @@ def dedupe(
         dates = sorted(s["scrobbled_at"] for s in scrobbles)
         years = [s["year"] for s in scrobbles]
 
+        # Carry the MusicBrainz IDs the export supplied. Most-common wins for
+        # the same reason display names do: individual scrobbles disagree, and
+        # the majority reading is the safer identity. Phase 4e relies on these
+        # to recognise the same recording under different artist credits.
+        mbid = _most_common_value([s.get("musicbrainz_id") or "" for s in scrobbles])
+        artist_mbid = _most_common_value([s.get("artist_mbid") or "" for s in scrobbles])
+
         skeletons.append(
             {
                 "artist": artist,
@@ -87,6 +94,8 @@ def dedupe(
                 "artist_normalized": scrobbles[0]["artist_normalized"],
                 "track_normalized": scrobbles[0]["track_normalized"],
                 "album": album,
+                "musicbrainz_id": mbid or None,
+                "artist_mbid": artist_mbid or None,
                 "play_count": len(scrobbles),
                 "first_scrobbled": dates[0][:10],   # YYYY-MM-DD
                 "last_scrobbled": dates[-1][:10],
