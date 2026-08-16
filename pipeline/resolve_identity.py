@@ -158,6 +158,80 @@ def _cluster(tracks: list[dict]) -> tuple[list[list[int]], list[dict]]:
     return list(grouped.values()), rejected
 
 
+def _collect_aliases(rows: list[dict]) -> list[list[str]]:
+    """Every name the recordings in this cluster have ever been scrobbled under.
+
+    Accumulates each row's own key *and* any aliases it already carries. The
+    inherited ones matter on re-runs: once a row has been absorbed it no longer
+    exists to contribute its own name, so dropping its alias would orphan every
+    play logged under it.
+    """
+    aliases: list[list[str]] = []
+    for r in rows:
+        for key in [list(_name_key(r))] + [list(a) for a in (r.get("identity_aliases") or [])]:
+            if key not in aliases:
+                aliases.append(key)
+    return aliases
+
+
+def _deconflict_aliases(rows: list[dict]) -> int:
+    """Ensure every name is claimed by exactly one row. Returns drops made.
+
+    Two ways a name ends up contested, both seen in practice:
+
+    1. A live row owns the name outright — fresh metadata split a pair that
+       merged on an earlier run, so the other half must stop claiming it.
+    2. Two rows inherit the same alias from an absorbed row, because each
+       merged with it at some point in their history.
+
+    Either way the aggregation layer would route one row's plays to the other.
+    A contested alias is awarded to the row whose own title matches it, then to
+    the most-played, then alphabetically so the outcome is deterministic.
+    """
+    owned = {_name_key(r): r for r in rows}
+    dropped = 0
+
+    claims: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for r in rows:
+        own = _name_key(r)
+        seen: set[tuple[str, str]] = {own}
+        for alias in r.get("identity_aliases") or []:
+            key = (alias[0], alias[1]) if len(alias) == 2 else None
+            if key is None or key in seen:
+                continue
+            seen.add(key)
+            claims[key].append(r)
+
+    winner: dict[tuple[str, str], int] = {}
+    for key, claimants in claims.items():
+        if key in owned:
+            winner[key] = id(owned[key])
+            dropped += len(claimants)
+            continue
+        best = sorted(
+            claimants,
+            key=lambda r: (
+                r.get("track_normalized") != key[1],
+                -int(r.get("play_count") or 0),
+                r.get("artist_normalized") or "",
+            ),
+        )[0]
+        winner[key] = id(best)
+        dropped += len(claimants) - 1
+
+    for r in rows:
+        own = _name_key(r)
+        kept: list[list[str]] = [list(own)]
+        for alias in r.get("identity_aliases") or []:
+            key = (alias[0], alias[1]) if len(alias) == 2 else None
+            if key is None or key == own or list(key) in kept:
+                continue
+            if winner.get(key) == id(r):
+                kept.append(list(key))
+        r["identity_aliases"] = kept
+    return dropped
+
+
 def _union_lists(rows: list[dict], field: str) -> list:
     out: list = []
     for row in rows:
@@ -177,7 +251,9 @@ def merge_cluster(rows: list[dict]) -> dict:
     still wins over a centroid guess on the louder one.
     """
     if len(rows) == 1:
-        return dict(rows[0])
+        single = dict(rows[0])
+        single["identity_aliases"] = _collect_aliases(rows)
+        return single
 
     ordered = sorted(rows, key=lambda r: -int(r.get("play_count") or 0))
     merged = dict(ordered[0])
@@ -221,14 +297,7 @@ def merge_cluster(rows: list[dict]) -> dict:
         merged["mood_source"] = best_mood.get("mood_source")
         merged["mood_confidence"] = best_mood.get("mood_confidence")
 
-    # Every name this recording was scrobbled under, so the aggregation layer
-    # can resolve a scrobble without rewriting scrobbles.jsonl.
-    aliases = []
-    for r in rows:
-        key = list(_name_key(r))
-        if key not in aliases:
-            aliases.append(key)
-    merged["identity_aliases"] = aliases
+    merged["identity_aliases"] = _collect_aliases(rows)
     merged["canonical_track_id"] = compute_canonical_track_id(merged)
     return merged
 
@@ -264,6 +333,10 @@ def resolve(
     merged_rows = [merge_cluster([tracks[i] for i in sorted(c)]) for c in clusters]
     merged_rows.sort(key=lambda r: (r.get("artist_normalized") or "",
                                     r.get("track_normalized") or ""))
+
+    stale = _deconflict_aliases(merged_rows)
+    if stale:
+        log.info("Dropped %d stale alias claim(s) now owned by a live row", stale)
 
     collapsed = len(tracks) - len(merged_rows)
     log.info("Clusters: %d  (collapsed %d rows)", len(clusters), collapsed)

@@ -13,7 +13,12 @@ from pathlib import Path
 
 import pytest
 
-from pipeline.resolve_identity import is_credit_variant, merge_cluster, resolve
+from pipeline.resolve_identity import (
+    _deconflict_aliases,
+    is_credit_variant,
+    merge_cluster,
+    resolve,
+)
 
 
 def _row(artist, track, **extra):
@@ -188,3 +193,135 @@ class TestResolve:
             resolve(input_path=src, output_path=out, review_path=review)
             assert review.exists()
             assert "something in the way" in review.read_text(encoding="utf-8")
+
+
+class TestIdempotence:
+    """Re-running the phase must converge, not accumulate.
+
+    Fresh metadata can reveal that two rows merged on an earlier pass are
+    actually distinct — a newly-fetched MBID that disagrees, for instance. If
+    the stale alias list survives that split, both rows go on claiming the same
+    name and the aggregation layer routes one row's plays to the other.
+    """
+
+    def test_inherited_aliases_survive_a_rerun(self):
+        """An absorbed row no longer exists to contribute its own name, so the
+        alias it left behind is the only thing keeping its plays reachable."""
+        previously_merged = _row("clipse pharrell", "so far ahead", play_count=24)
+        previously_merged["identity_aliases"] = [
+            ["clipse pharrell", "so far ahead"],
+            ["clipse", "so far ahead"],
+        ]
+        merged = merge_cluster([previously_merged])
+        assert ["clipse", "so far ahead"] in merged["identity_aliases"]
+
+    def test_stale_claim_is_dropped_when_a_live_row_owns_the_name(self):
+        """Fresh metadata can split a previously-merged pair. De-confliction is
+        a whole-file question — one row cannot know what the others own — so it
+        happens in resolve(), not in merge_cluster()."""
+        a = _row("run the jewels", "blockbuster night part 1",
+                 musicbrainz_id="aaa", play_count=1)
+        a["identity_aliases"] = [
+            ["run the jewels", "blockbuster night part 1"],
+            ["run the jewels", "blockbuster night pt 1"],
+        ]
+        b = _row("run the jewels", "blockbuster night pt 1",
+                 musicbrainz_id="bbb", play_count=2)
+        rows = [a, b]
+        _deconflict_aliases(rows)
+        assert rows[0]["identity_aliases"] == [
+            ["run the jewels", "blockbuster night part 1"]
+        ]
+        assert rows[1]["identity_aliases"] == [
+            ["run the jewels", "blockbuster night pt 1"]
+        ]
+
+    def test_single_row_always_declares_its_own_name(self):
+        merged = merge_cluster([_row("artist", "song")])
+        assert merged["identity_aliases"] == [["artist", "song"]]
+
+    def test_conflicting_mbids_split_a_previously_merged_pair(self):
+        a = _row("run the jewels", "blockbuster night part 1",
+                 musicbrainz_id="aaa", play_count=1)
+        b = _row("run the jewels", "blockbuster night pt 1",
+                 musicbrainz_id="bbb", play_count=2)
+        assert not is_credit_variant(a, b)
+
+    def test_every_alias_is_claimed_exactly_once(self):
+        """The invariant that failed in practice: no name may appear on two
+        rows, or play counts get misrouted between them."""
+        rows = [
+            _row("clipse", "so far ahead", play_count=2),
+            _row("clipse pharrell", "so far ahead", play_count=22),
+            _row("run the jewels", "blockbuster night part 1",
+                 musicbrainz_id="aaa", play_count=1),
+            _row("run the jewels", "blockbuster night pt 1",
+                 musicbrainz_id="bbb", play_count=2),
+        ]
+        import json as _json
+        import tempfile as _tf
+        from pathlib import Path as _P
+        with _tf.TemporaryDirectory() as tmp:
+            src, out = _P(tmp) / "in.jsonl", _P(tmp) / "out.jsonl"
+            src.write_text("".join(_json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            resolve(input_path=src, output_path=out, review_path=_P(tmp) / "r.jsonl")
+            written = [_json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+        seen = [tuple(a) for t in written for a in t["identity_aliases"]]
+        assert len(seen) == len(set(seen)), "an alias is claimed by more than one row"
+
+
+class TestAliasUniqueness:
+    """A name may be claimed by exactly one row.
+
+    Two rows can inherit the same alias when each merged with the absorbed row
+    at some point in its history. Left alone, the aggregation layer routes one
+    row's plays to the other — which is how it surfaced: two Run the Jewels
+    rows, one over-counted by a play and one under-counted by the same play.
+    """
+
+    def test_contested_alias_goes_to_the_matching_title(self):
+        a = _row("run the jewels", "blockbuster night part 1", play_count=1)
+        a["identity_aliases"] = [["run the jewels killer mike el p",
+                                  "blockbuster night pt 1"]]
+        b = _row("run the jewels", "blockbuster night pt 1", play_count=2)
+        b["identity_aliases"] = [["run the jewels killer mike el p",
+                                  "blockbuster night pt 1"]]
+        rows = [a, b]
+        _deconflict_aliases(rows)
+        assert ["run the jewels killer mike el p", "blockbuster night pt 1"] \
+            in b["identity_aliases"]
+        assert ["run the jewels killer mike el p", "blockbuster night pt 1"] \
+            not in a["identity_aliases"]
+
+    def test_no_alias_is_claimed_twice(self):
+        a = _row("x", "one", play_count=5)
+        a["identity_aliases"] = [["ghost", "gone"]]
+        b = _row("y", "two", play_count=9)
+        b["identity_aliases"] = [["ghost", "gone"]]
+        rows = [a, b]
+        _deconflict_aliases(rows)
+        claimed = [tuple(al) for r in rows for al in r["identity_aliases"]]
+        assert len(claimed) == len(set(claimed))
+
+    def test_result_is_deterministic(self):
+        def build():
+            a = _row("x", "one", play_count=5)
+            a["identity_aliases"] = [["ghost", "gone"]]
+            b = _row("y", "two", play_count=9)
+            b["identity_aliases"] = [["ghost", "gone"]]
+            return [a, b]
+
+        first, second = build(), build()
+        _deconflict_aliases(first)
+        _deconflict_aliases(second)
+        assert [r["identity_aliases"] for r in first] == \
+               [r["identity_aliases"] for r in second]
+
+    def test_own_name_is_never_surrendered(self):
+        a = _row("artist", "song", play_count=1)
+        b = _row("other", "thing", play_count=99)
+        b["identity_aliases"] = [["artist", "song"]]
+        rows = [a, b]
+        _deconflict_aliases(rows)
+        assert a["identity_aliases"] == [["artist", "song"]]
+        assert ["artist", "song"] not in b["identity_aliases"]

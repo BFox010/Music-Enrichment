@@ -56,12 +56,18 @@ def parse_raw_scrobble(record: dict) -> dict | None:
 
     dt = datetime.fromtimestamp(uts, tz=timezone.utc)
 
+    # MusicBrainz IDs ride along in the export and are the strongest identity
+    # evidence available anywhere in the pipeline — Phase 4e uses them to fold
+    # credit variants of the same recording together. Capturing them here costs
+    # nothing and needs no network, so they are kept even when empty-string.
     return {
         "artist": artist,
         "track": track,
         "artist_normalized": normalize_artist(artist),
         "track_normalized": normalize_track(track),
         "album": album,
+        "musicbrainz_id": (record.get("mbid") or "").strip() or None,
+        "artist_mbid": ((record.get("artist") or {}).get("mbid") or "").strip() or None,
         "scrobbled_at": dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "year": dt.year,
         "month": dt.month,

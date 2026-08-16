@@ -117,6 +117,13 @@ def _enrichment_sources(row: dict) -> list[str]:
     return sources
 
 
+# Identity fields: fill a gap, never overwrite. These feed
+# compute_canonical_track_id() and Phase 4e's clustering, so churn here would
+# reshuffle which rows merge from one run to the next. Scrobble-derived MBIDs
+# are welcome where a track has none and must not displace one that a
+# dedicated enrichment lookup already established.
+_FILL_ONLY_FIELDS: frozenset[str] = frozenset({"musicbrainz_id", "artist_mbid", "isrc"})
+
 # Fields where an explicit null from the incoming row means "there is no value"
 # rather than "this file didn't carry the field". Phase 6 sets all of these on
 # every row it processes, so a null here is a deliberate verdict.
@@ -158,6 +165,8 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
             # Empty list/dict from new → keep existing if existing has content
             if merged.get(key):
                 continue
+        if key in _FILL_ONLY_FIELDS and merged.get(key):
+            continue
         merged[key] = new_value
 
     # Preserve human-edited fields (override anything new has)
