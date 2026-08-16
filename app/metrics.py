@@ -72,6 +72,12 @@ def _track_index() -> dict[tuple[str, str], dict]:
         cid = t.get("canonical_track_id")
         if cid:
             index[("cid", cid)] = t
+        # Credit variants folded together by identity resolution. The scrobble
+        # log is never rewritten, so a play recorded under "Clipse" must still
+        # find the row that now displays the full credit.
+        for alias in t.get("identity_aliases") or []:
+            if isinstance(alias, (list, tuple)) and len(alias) == 2:
+                index.setdefault((alias[0], alias[1]), t)
     return index
 
 

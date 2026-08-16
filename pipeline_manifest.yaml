@@ -156,15 +156,27 @@ phases:
     resumable: true
     optional: true
 
+  - id: "4e"
+    name: identity resolution
+    module: pipeline.resolve_identity
+    callable: resolve
+    inputs:
+      - tracks_with_genre_backfill.jsonl
+    outputs:
+      - tracks_resolved.jsonl
+    depends_on: ["4d"]
+    schema_version: 5
+    resumable: true
+
   - id: "5"
     name: Apple Music availability
     module: pipeline.check_apple_music
     callable: check
     inputs:
-      - tracks_with_genre_backfill.jsonl
+      - tracks_resolved.jsonl
     outputs:
       - tracks_with_availability.jsonl
-    depends_on: ["4d"]
+    depends_on: ["4e"]
     schema_version: 5
     resumable: true
 

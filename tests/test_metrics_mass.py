@@ -155,6 +155,39 @@ class TestIdentityJoin:
             assert cov["tagged_plays"] == 1
 
 
+class TestAliasResolution:
+    def test_plays_under_a_merged_credit_still_join(self):
+        """After identity resolution one row represents several credits.
+
+        scrobbles.jsonl is never rewritten — it stays the immutable record of
+        what was played — so plays logged under the old credit have to resolve
+        through identity_aliases or they vanish from every chart.
+        """
+        track = _track("Clipse, Pharrell Williams", "So Far Ahead", ["Moody"])
+        track["identity_aliases"] = [
+            ["clipse", "so far ahead"],
+            ["clipse, pharrell williams", "so far ahead"],
+        ]
+        scrobbles = [
+            _scrobble("Clipse", "So Far Ahead", "2025-01-01"),
+            _scrobble("Clipse, Pharrell Williams", "So Far Ahead", "2025-01-02"),
+        ]
+        with _library([track], scrobbles):
+            mass, cov = metrics.tag_mass("mood_tags")
+            assert cov["tagged_plays"] == 2
+            assert mass["Moody"] == pytest.approx(2.0)
+
+    def test_alias_does_not_shadow_a_real_track(self):
+        """An alias must never displace a row that owns that name outright."""
+        merged = _track("A B", "song", ["Fast"])
+        merged["identity_aliases"] = [["a", "song"], ["a b", "song"]]
+        real = _track("A", "song", ["Slow"])
+        with _library([real, merged], [_scrobble("A", "song", "2025-01-01")]):
+            mass, _ = metrics.tag_mass("mood_tags")
+            assert mass["Slow"] == pytest.approx(1.0)
+            assert "Fast" not in mass
+
+
 class TestBlacklistNeverFilters:
     def test_blacklisted_plays_are_still_counted(self):
         """A dashboard must report music that was demonstrably played.

@@ -94,7 +94,7 @@ class TestManifestStructure:
 
 
 class TestExpectedPhases:
-    EXPECTED_IDS = ["1", "2", "A", "3a", "3b", "3c", "4", "4b", "4c", "4d", "5", "6", "7", "8"]
+    EXPECTED_IDS = ["1", "2", "A", "3a", "3b", "3c", "4", "4b", "4c", "4d", "4e", "5", "6", "7", "8"]
 
     def test_all_expected_phase_ids_present(self, manifest):
         ids = get_phase_ids(manifest)
