@@ -396,20 +396,42 @@ function SeasonalFavorites({ drill }) {
 
 /* ---- Mood distribution ---- */
 function MoodBars({ items, max, activeKey, onPick }) {
+  /* Each bar is split into the share you labelled by hand and the share a
+     classifier inferred. Worth showing plainly: the classifier is only allowed
+     to emit the few moods it can actually predict, so those moods draw on one
+     more source than the withheld ones do. Without the split, that asymmetry
+     would read as a fact about your taste. */
   return (
     <div className="moods">
-      {items.map((m) => (
-        <div
-          key={m.key}
-          className={"moodrow" + (activeKey === m.key ? " active" : "")}
-          onClick={() => onPick && onPick(m.key)}
-          title={`${m.key} — ${m.value.toLocaleString()} tracks`}
-        >
-          <span className="m-name">{m.key}</span>
-          <div className="m-track"><div className="m-fill" style={{ width: (max ? (m.value / max) * 100 : 0) + "%", background: m.color || "var(--accent)" }}></div></div>
-          <span className="m-val num">{m.value.toLocaleString()}</span>
-        </div>
-      ))}
+      {items.map((m) => {
+        const pct = (v) => (max ? (v / max) * 100 : 0);
+        const owned = m.owned != null ? m.owned : m.value;
+        const inferred = Math.max(0, m.value - owned);
+        const inferredPct = m.value > 0 ? Math.round((inferred / m.value) * 100) : 0;
+        return (
+          <div
+            key={m.key}
+            className={"moodrow" + (activeKey === m.key ? " active" : "")}
+            onClick={() => onPick && onPick(m.key)}
+            title={`${m.key} — ${Math.round(m.value).toLocaleString()} plays`
+              + (inferred > 0 ? ` · ${inferredPct}% inferred by classifier` : " · all hand-labelled")}
+          >
+            <span className="m-name">{m.key}</span>
+            <div className="m-track">
+              <div className="m-fill" style={{ width: pct(owned) + "%", background: m.color || "var(--accent)" }}></div>
+              <div
+                className="m-fill m-fill-inferred"
+                style={{
+                  width: pct(inferred) + "%",
+                  background: m.color || "var(--accent)",
+                  opacity: 0.38,
+                }}
+              ></div>
+            </div>
+            <span className="m-val num">{Math.round(m.value).toLocaleString()}</span>
+          </div>
+        );
+      })}
     </div>
   );
 }

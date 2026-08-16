@@ -17,6 +17,9 @@ function topEntries(map, n) { return Object.entries(map).sort((a, b) => b[1] - a
 const ACCENT_OPTIONS = ["#f472b6", "#a78bfa", "#5b9dff", "#4ade80"];
 
 // Timeframe windows for play-based metrics
+/* Mood sources that represent a human judgement rather than an inference. */
+const OWNER_MOOD_SOURCES = new Set(["audit", "claude_batch", "manual"]);
+
 const TIMEFRAMES = [
   ["all", "All time"],
   ["year_this", "This year"],
@@ -314,7 +317,7 @@ function App() {
 
   /* ---------- aggregations (from filtered set) ---------- */
   const agg = useMemo(() => {
-    const artistPlays = {}, moodCount = {}, genreCount = {}, tagCount = {};
+    const artistPlays = {}, moodCount = {}, moodOwned = {}, genreCount = {}, tagCount = {};
     let withMood = 0, cov = { tags: 0, mbid: 0, styles: 0, af: 0, apple: 0, mood: 0, spotify: 0 };
     let totalPlays = 0;
     /* Tag charts are play-weighted with conserved mass: one play contributes
@@ -332,6 +335,9 @@ function App() {
       artistPlays[t.artist] = (artistPlays[t.artist] || 0) + p;
       totalPlays += p;
       addMass(moodCount, t.moods, p);
+      // Track the hand-labelled portion separately so the bars can show how
+      // much of each mood is a judgement versus an inference.
+      if (OWNER_MOOD_SOURCES.has(t.mood_source)) addMass(moodOwned, t.moods, p);
       if (t.moods && t.moods.length && p > 0) taggedPlays += p;
       if (t.moods && t.moods.length) withMood++;
       addMass(genreCount, t.genres, p);
@@ -349,7 +355,7 @@ function App() {
     const n = filtered.length || 1;
     const topArtists = topEntries(artistPlays, 12).filter((a) => a.value > 0).map((a) => ({ ...a, sub: filtered.filter((t) => t.artist === a.key).length + " trk" }));
     const topTracks = [...filtered].map((t) => ({ ...t, wp: playOf(t) })).filter((t) => t.wp > 0).sort((a, b) => b.wp - a.wp).slice(0, 12);
-    const moods = topEntries(moodCount, 14);
+    const moods = topEntries(moodCount, 14).map((m) => ({ ...m, owned: moodOwned[m.key] || 0 }));
     const genresAll = Object.entries(genreCount).sort((a, b) => b[1] - a[1]);
     const genresTop = genresAll.slice(0, 8).map(([key, value]) => ({ key, value }));
     const otherG = genresAll.slice(8).reduce((s, [, v]) => s + v, 0);

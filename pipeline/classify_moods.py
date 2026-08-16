@@ -449,6 +449,7 @@ def classify(
     chosen_input = None
     for candidate in (
         REPO_ROOT / "tracks_with_availability.jsonl",
+        REPO_ROOT / "tracks_resolved.jsonl",
         tracks_path,
         REPO_ROOT / "tracks_with_metadata.jsonl",
         TRACKS_PATH,
