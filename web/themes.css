@@ -136,9 +136,16 @@ a { color: inherit; }
   transition: background .14s, color .14s, border-color .14s;
 }
 .sidenav-item:hover { background: var(--panel-2); color: var(--text); }
-.sidenav-item.active {
-  background: color-mix(in oklab, var(--accent) 16%, var(--panel)); color: var(--text);
-  border-right-color: var(--accent);
+.sidenav-item { position: relative; isolation: isolate; }
+.sidenav-item.active { color: var(--text); }
+/* The active highlight is a separate element rather than the button's own
+   background so it can carry a view-transition-name and slide between nav
+   items instead of blinking off one and on the next. */
+.sidenav-item.active { background: color-mix(in oklab, var(--accent) 16%, var(--panel)); }
+.nav-marker {
+  position: absolute; top: 0; bottom: 0; right: 0; width: 2px;
+  pointer-events: none; background: var(--accent);
+  view-transition-name: nav-marker;
 }
 .sidenav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .7; }
 .sidenav-item.active svg { opacity: 1; }
@@ -215,7 +222,8 @@ a { color: inherit; }
   .sidenav-section { display: none; }
   .sidenav-item { white-space: nowrap; padding: 8px 12px; font-size: 12.5px;
                   border-right: 0; border-bottom: 2px solid transparent; }
-  .sidenav-item.active { border-right: 0; border-bottom-color: var(--accent); }
+  .sidenav-item.active { border-right: 0; border-bottom-color: transparent; }
+  .nav-marker { top: auto; left: 0; right: 0; bottom: 0; width: auto; height: 2px; }
   .main-content { padding: 16px 16px 70px; }
 }
 
@@ -851,4 +859,79 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   .ff-row { grid-template-columns: 22px 36px 1fr auto; gap: 10px; }
   .ff-spark-wrap { display: none; }
   .ff-score-val { font-size: 18px; }
+}
+
+/* ============================================================
+   Motion layer — see web/motion.js and web/ambient.js
+
+   Everything below is presentation for effects driven from those two files.
+   The rule they all follow: the effect either carries information (the
+   backdrop's colour, a row's new rank) or acknowledges the cursor. Nothing
+   here loops, and all of it stops under prefers-reduced-motion.
+   ============================================================ */
+
+/* ---------- ambient backdrop (ambient.js) ---------- */
+/* Sits above the body background and below the app. Quarter-resolution canvas
+   under a heavy blur — the blur is what makes rendering at 25% invisible, and
+   what keeps the gradient from ever competing with a KPI for attention. */
+.ambient-bg {
+  position: fixed; inset: 0; z-index: 0;
+  width: 100%; height: 100%;
+  pointer-events: none;
+  opacity: .30;
+  filter: blur(28px) saturate(1.15);
+  transform: scale(1.15); /* hides the blur's soft edges at the viewport rim */
+  transition: opacity .6s ease;
+}
+.ambient-bg.off { opacity: .16; }
+#root { position: relative; z-index: 1; }
+
+/* ---------- card spotlight (motion.js) ---------- */
+/* One card lit at a time. `isolation: isolate` keeps the z-index:-1 highlight
+   inside the card, so it paints over the card's own background but under its
+   content — no overlay tinting the text. */
+.card { position: relative; isolation: isolate; }
+.card::before {
+  content: ""; position: absolute; inset: 0; z-index: -1;
+  border-radius: inherit; pointer-events: none;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%),
+              color-mix(in oklab, var(--accent) 20%, transparent) 0%,
+              color-mix(in oklab, var(--accent) 8%, transparent) 34%,
+              transparent 66%);
+  opacity: 0; transition: opacity .22s ease;
+}
+.card.lit::before { opacity: 1; }
+.card.lit { border-color: color-mix(in oklab, var(--accent) 22%, var(--line)); }
+
+/* ---------- page transitions (motion.js) ---------- */
+.main-content { view-transition-name: mainpage; }
+/* The page body is named separately, so `root` here is just the chrome — app
+   bar and sidebar. A short cross-fade on it carries the active row's tint
+   across; anything longer starts to read as lag. */
+::view-transition-old(root),
+::view-transition-new(root) { animation-duration: 200ms; }
+::view-transition-old(mainpage) { animation: vt-page-out 150ms cubic-bezier(.4, 0, 1, 1) both; }
+::view-transition-new(mainpage) { animation: vt-page-in 220ms cubic-bezier(.2, .7, .2, 1) both; }
+@keyframes vt-page-out { to   { opacity: 0; translate: 0 -6px; } }
+@keyframes vt-page-in  { from { opacity: 0; translate: 0 10px; } }
+/* The nav marker morphs rather than cross-fades: same name on both sides, so
+   the browser tweens the box from the old item to the new one. */
+::view-transition-group(nav-marker) { animation-duration: 220ms; animation-timing-function: cubic-bezier(.2, .7, .2, 1); }
+::view-transition-old(nav-marker),
+::view-transition-new(nav-marker) { animation: none; opacity: 1; }
+
+/* ---------- reduced motion ---------- */
+/* Every effect above degrades to its static end state, not to a faster
+   animation: the spotlight is gone, the backdrop holds still, and lists snap
+   to their new order. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important;
+    scroll-behavior: auto !important;
+  }
+  .card::before { display: none; }
+  .ambient-bg { filter: blur(28px); }
+  ::view-transition-group(*) { animation: none !important; }
 }

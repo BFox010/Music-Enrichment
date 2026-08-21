@@ -45,6 +45,20 @@ function playInWindow(t, tf) {
   return t.play || 0;
 }
 
+/* One sidebar entry. The active highlight is rendered as its own element so it
+   can carry a view-transition-name: when the page changes, the browser tweens
+   that one box from the old item to the new one and the marker slides down the
+   nav instead of blinking off one row and on to another. */
+function NavItem({ id, page, onGo, children }) {
+  const active = page === id;
+  return (
+    <button className={"sidenav-item" + (active ? " active" : "")} onClick={() => onGo(id)}>
+      {active && <span className="nav-marker" aria-hidden="true" />}
+      {children}
+    </button>
+  );
+}
+
 /* ---------- App ---------- */
 function App() {
   const [data, setData] = useState(() => window.MUSIC_DATA);
@@ -58,6 +72,10 @@ function App() {
   const [page, setPage] = useState("overview");
   const [density, setDensity] = useState(() => localStorage.getItem("ml.density") || "comfortable");
   const [accent, setAccent] = useState(() => localStorage.getItem("ml.accent") || "#a78bfa");
+  // Both motion features are opt-out and remember the choice; the modules own
+  // the localStorage key, this is just the mirrored state the Tweaks UI binds to.
+  const [ambient, setAmbient] = useState(() => localStorage.getItem("ml.ambient") !== "off");
+  const [pointerFx, setPointerFx] = useState(() => localStorage.getItem("ml.pointerfx") !== "off");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("plays");
   const [timeframe, setTimeframe] = useState("all");
@@ -108,6 +126,9 @@ function App() {
     localStorage.setItem("ml.accent", accent);
   }, [density, accent]);
 
+  useEffect(() => { if (window.MLAmbient) window.MLAmbient.setEnabled(ambient); }, [ambient]);
+  useEffect(() => { if (window.MOTION) window.MOTION.setPointerFx(pointerFx); }, [pointerFx]);
+
   /* expose hooks for the Tweaks panel */
   useEffect(() => {
     window.__ml = { density, setDensity, accent, setAccent };
@@ -115,6 +136,20 @@ function App() {
   }, [density, accent]);
 
   const showToast = useCallback((msg) => { setToast(msg); setTimeout(() => setToast(""), 2600); }, []);
+
+  /* Page switches go through a View Transition: the outgoing page lifts and
+     fades while the incoming one settles up into place, and the sidebar's
+     active marker slides between entries. flushSync is required — the browser
+     snapshots the DOM when the callback returns, so the state update has to
+     have committed by then rather than being batched for later. MOTION falls
+     back to a plain call where the API is missing or motion is unwanted. */
+  const pageRef = useRef(page);
+  pageRef.current = page;
+  const goPage = useCallback((next) => {
+    if (pageRef.current === next) return;
+    const apply = () => ReactDOM.flushSync(() => setPage(next));
+    if (window.MOTION) window.MOTION.viewTransition(apply); else apply();
+  }, []);
 
   const doRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -410,6 +445,20 @@ function App() {
     return { decades: [...decs].sort((a, b) => a - b), years: [...yrs].sort((a, b) => a - b) };
   }, [tracks]);
 
+  /* The backdrop is tinted by whatever is actually on screen: the selected
+     genre if there is one, otherwise the dominant genres of the current
+     filter. Same oklch() strings the donut and legend are drawn with, so the
+     room and the chart always agree. */
+  useEffect(() => {
+    if (!window.MLAmbient) return;
+    const top = agg.genresTop.map((g) => g.key).filter((k) => k !== "Other" && k !== filters.genre);
+    // A selected genre takes two of the four blobs rather than all four: the
+    // room leans toward that colour instead of flooding with it, which keeps
+    // the backdrop a hint and not a filter over the whole page.
+    const keys = filters.genre ? [filters.genre, filters.genre, ...top] : top;
+    window.MLAmbient.setColors(keys.slice(0, 4).map((k) => genreColorMap[k]).filter(Boolean));
+  }, [filters.genre, agg.genresTop, genreColorMap]);
+
   /* mobile-friendly feedback: toast the match count whenever filters change */
   const firstFilterRun = useRef(true);
   useEffect(() => {
@@ -455,66 +504,66 @@ function App() {
           <div className="sidenav">
 
             <div className="sidenav-section">Overview</div>
-            <button className={"sidenav-item" + (page === "overview" ? " active" : "")} onClick={() => setPage("overview")}>
+            <NavItem id="overview" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
               Overview
-            </button>
+            </NavItem>
 
             <div className="sidenav-section">Library</div>
-            <button className={"sidenav-item" + (page === "genres" ? " active" : "")} onClick={() => setPage("genres")}>
+            <NavItem id="genres" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2a10 10 0 1 0 10 10"/><path d="M12 2v10l6.6 3.8"/></svg>
               Genre &amp; Moods
-            </button>
-            <button className={"sidenav-item" + (page === "albums" ? " active" : "")} onClick={() => setPage("albums")}>
+            </NavItem>
+            <NavItem id="albums" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.6"/></svg>
               Albums
-            </button>
-            <button className={"sidenav-item" + (page === "constellation" ? " active" : "")} onClick={() => setPage("constellation")}>
+            </NavItem>
+            <NavItem id="constellation" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="5" cy="5" r="1.5"/><circle cx="19" cy="5" r="1.5"/><circle cx="12" cy="19" r="1.5"/><circle cx="5" cy="19" r="1.5"/><circle cx="19" cy="19" r="1.5"/><line x1="6.5" y1="5" x2="17.5" y2="5"/><line x1="5" y1="6.5" x2="5" y2="17.5"/><line x1="19" y1="6.5" x2="19" y2="17.5"/><line x1="6.5" y1="19" x2="17.5" y2="19"/><line x1="6.5" y1="6.5" x2="17.5" y2="17.5"/></svg>
               Tag Constellation
-            </button>
-            <button className={"sidenav-item" + (page === "audio" ? " active" : "")} onClick={() => setPage("audio")}>
+            </NavItem>
+            <NavItem id="audio" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
               Audio Features
-            </button>
-            <button className={"sidenav-item" + (page === "coverage" ? " active" : "")} onClick={() => setPage("coverage")}>
+            </NavItem>
+            <NavItem id="coverage" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg>
               Coverage
-            </button>
+            </NavItem>
 
             <div className="sidenav-section">Listening</div>
-            <button className={"sidenav-item" + (page === "timeline" ? " active" : "")} onClick={() => setPage("timeline")}>
+            <NavItem id="timeline" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
               Timeline
-            </button>
-            <button className={"sidenav-item" + (page === "map" ? " active" : "")} onClick={() => setPage("map")}>
+            </NavItem>
+            <NavItem id="map" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
               Listening Map
-            </button>
-            <button className={"sidenav-item" + (page === "trajectory" ? " active" : "")} onClick={() => setPage("trajectory")}>
+            </NavItem>
+            <NavItem id="trajectory" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 18c3-8 7-10 9-5s5 3 9-5"/><path d="M3 12c2-5 5-7 8-4s5 4 10-2"/><path d="M3 6c2-3 4-4 6-2s4 4 12-2"/></svg>
               Artists
-            </button>
-            <button className={"sidenav-item" + (page === "seasonal" ? " active" : "")} onClick={() => setPage("seasonal")}>
+            </NavItem>
+            <NavItem id="seasonal" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="4"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M5 5l2 2M17 17l2 2M5 19l2-2M17 7l2-2"/></svg>
               Seasonal
-            </button>
-            <button className={"sidenav-item" + (page === "forgotten" ? " active" : "")} onClick={() => setPage("forgotten")}>
+            </NavItem>
+            <NavItem id="forgotten" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22C6.48 22 2 17.52 2 12S6.48 2 12 2s10 4.48 10 10-4.48 10-10 10z"/><path d="M12 8v4l3 3"/><path d="M8 2.5l-2.5 2.5"/><path d="M16 2.5l2.5 2.5"/></svg>
               Forgotten
-            </button>
+            </NavItem>
 
             <div className="sidenav-section">Browse</div>
-            <button className={"sidenav-item" + (page === "explorer" ? " active" : "")} onClick={() => setPage("explorer")}>
+            <NavItem id="explorer" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
               Tracks
-            </button>
+            </NavItem>
 
             <div className="sidenav-section">Data</div>
-            <button className={"sidenav-item" + (page === "sync" ? " active" : "")} onClick={() => setPage("sync")}>
+            <NavItem id="sync" page={page} onGo={goPage}>
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
               Scrobble Sync
-            </button>
+            </NavItem>
           </div>
         </nav>
 
@@ -748,6 +797,9 @@ function App() {
           <TweakColor label="Accent" value={accent} options={ACCENT_OPTIONS} onChange={setAccent} />
           <TweakSection label="Layout" />
           <TweakRadio label="Density" value={density} options={["comfortable", "compact"]} onChange={setDensity} />
+          <TweakSection label="Motion" />
+          <TweakToggle label="Ambient backdrop" value={ambient} onChange={setAmbient} />
+          <TweakToggle label="Pointer effects" value={pointerFx} onChange={setPointerFx} />
         </TweaksPanel>
         </div>
       </div>

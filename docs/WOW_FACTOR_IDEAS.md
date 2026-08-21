@@ -9,6 +9,11 @@ Selection rule used throughout: **the effect must carry information or reduce
 friction.** Nothing that only exists to be looked at, nothing that fights the
 user for control of the page.
 
+**Status:** 2, 3, 4, 5 and 9 are built — see `web/motion.js`, `web/ambient.js`,
+and the motion block at the bottom of `web/themes.css`. Both effect groups have
+an opt-out in the Tweaks panel and all of it is inert under
+`prefers-reduced-motion: reduce`.
+
 ---
 
 ## 1. Staged reveal on first paint (the "assembly" moment)

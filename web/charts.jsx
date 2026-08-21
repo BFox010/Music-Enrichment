@@ -2,7 +2,7 @@
    charts.jsx — presentational chart components (React)
    All styling via themes.css classNames + CSS vars.
    ============================================================ */
-const { useMemo, useState } = React;
+const { useMemo, useState, useRef, useLayoutEffect } = React;
 
 /* genre color ramp — derived from --accent at runtime via CSS color-mix-ish.
    We use fixed hues that read well on dark and harmonize per theme accent. */
@@ -15,13 +15,40 @@ function useGenreColors(genres) {
   }, [genres.join("|")]);
 }
 
+/* ---- FLIP: ranked lists travel to their new order ----
+   When a filter re-ranks a list, the rows animate from where they were to
+   where they now are instead of blinking into place. That is what lets you
+   see what the filter did — which rows survived, which collapsed — rather
+   than diffing two static frames from memory.
+
+   The "First" of FLIP is read during render, while the DOM still holds the
+   previous list; the "Last/Invert/Play" happens in the layout effect. The
+   signature guard keeps that DOM read off the renders where the order cannot
+   have changed (a search keystroke re-renders these components without
+   touching their contents), so we never force layout for nothing. */
+function useFlipRows(sig) {
+  const ref = useRef(null);
+  const prev = useRef(null);
+  const lastSig = useRef(null);
+  const changed = sig !== lastSig.current;
+  if (changed) prev.current = window.MOTION ? window.MOTION.captureRects(ref.current) : null;
+  useLayoutEffect(() => {
+    if (!changed) return;
+    lastSig.current = sig;
+    if (window.MOTION) window.MOTION.playFlip(ref.current, prev.current);
+  });
+  return ref;
+}
+
 /* ---- Ranked horizontal bars (Top Artists) ---- */
 function HBars({ items, max, activeKey, onPick, unit }) {
+  const ref = useFlipRows(items.map((it) => it.key).join("|"));
   return (
-    <div className="hbars">
+    <div className="hbars" ref={ref}>
       {items.map((it, i) => (
         <div
           key={it.key}
+          data-flip-key={it.key}
           className={"hbar" + (activeKey === it.key ? " active" : "")}
           onClick={() => onPick && onPick(it.key)}
           title={`${it.key} — ${it.value.toLocaleString()} ${unit}`}
@@ -40,10 +67,11 @@ function HBars({ items, max, activeKey, onPick, unit }) {
 
 /* ---- Top tracks list ---- */
 function TrackList({ items, max }) {
+  const ref = useFlipRows(items.map((t) => t.i).join("|"));
   return (
-    <div className="tracklist">
+    <div className="tracklist" ref={ref}>
       {items.map((t, i) => (
-        <div className="trk" key={t.i}>
+        <div className="trk" key={t.i} data-flip-key={t.i}>
           <span className="trk-rank num">{i + 1}</span>
           <div style={{ minWidth: 0 }}>
             <div className="trk-name">{t.track}</div>
@@ -401,8 +429,9 @@ function MoodBars({ items, max, activeKey, onPick }) {
      to emit the few moods it can actually predict, so those moods draw on one
      more source than the withheld ones do. Without the split, that asymmetry
      would read as a fact about your taste. */
+  const ref = useFlipRows(items.map((m) => m.key).join("|"));
   return (
-    <div className="moods">
+    <div className="moods" ref={ref}>
       {items.map((m) => {
         const pct = (v) => (max ? (v / max) * 100 : 0);
         const owned = m.owned != null ? m.owned : m.value;
@@ -411,6 +440,7 @@ function MoodBars({ items, max, activeKey, onPick }) {
         return (
           <div
             key={m.key}
+            data-flip-key={m.key}
             className={"moodrow" + (activeKey === m.key ? " active" : "")}
             onClick={() => onPick && onPick(m.key)}
             title={`${m.key} — ${Math.round(m.value).toLocaleString()} plays`
@@ -438,6 +468,7 @@ function MoodBars({ items, max, activeKey, onPick }) {
 
 /* ---- Genre donut (SVG) + legend ---- */
 function GenreDonut({ items, total, colors, activeKey, onPick, size = 132 }) {
+  const legendRef = useFlipRows(items.map((it) => it.key).join("|"));
   const r = size / 2;
   const stroke = size * 0.17;
   const radius = r - stroke / 2 - 1;
@@ -472,9 +503,9 @@ function GenreDonut({ items, total, colors, activeKey, onPick, size = 132 }) {
           <div className="dc-lab">genres</div>
         </div>
       </div>
-      <div className="donut-legend">
+      <div className="donut-legend" ref={legendRef}>
         {segs.map((s) => (
-          <div key={s.key} className={"glegend" + (activeKey === s.key ? " active" : "")} onClick={() => onPick && onPick(s.key)}>
+          <div key={s.key} data-flip-key={s.key} className={"glegend" + (activeKey === s.key ? " active" : "")} onClick={() => onPick && onPick(s.key)}>
             <span className="sw" style={{ background: colors[s.key] }}></span>
             <span className="gname">{s.key}</span>
             <span className="gval num">{Math.round(s.frac * 100)}%</span>
@@ -487,10 +518,11 @@ function GenreDonut({ items, total, colors, activeKey, onPick, size = 132 }) {
 
 /* ---- Tag cloud (ranked chips) ---- */
 function TagCloud({ items, activeKey, onPick }) {
+  const ref = useFlipRows(items.map((t) => t.key).join("|"));
   return (
-    <div className="tagcloud">
+    <div className="tagcloud" ref={ref}>
       {items.map((t) => (
-        <div key={t.key} className={"tagchip" + (activeKey === t.key ? " active" : "")} onClick={() => onPick && onPick(t.key)}>
+        <div key={t.key} data-flip-key={t.key} className={"tagchip" + (activeKey === t.key ? " active" : "")} onClick={() => onPick && onPick(t.key)}>
           {t.key}<span className="tc-n num">{t.value}</span>
         </div>
       ))}
