@@ -151,19 +151,23 @@ function Seasons({ data, total, onPick, activeKey }) {
     <div className="seasons">
       {order.map(([s, glyph]) => {
         const v = data[s] || 0;
+        // A season outside the chosen timeframe has no plays to show and
+        // nothing to drill into. A bare "0" reads as a real measurement, so
+        // it is dashed out and made inert instead.
+        const empty = v === 0;
         return (
           <div
-            className={"season" + (onPick ? " clickable" : "") + (activeKey === s ? " sel" : "")}
+            className={"season" + (onPick && !empty ? " clickable" : "") + (empty ? " s-empty" : "") + (activeKey === s ? " sel" : "")}
             key={s}
-            onClick={() => onPick && onPick(s)}
+            onClick={() => { if (onPick && !empty) onPick(s); }}
           >
             <div className="s-top">
               <span className="s-name">{s}</span>
               <span className="s-glyph">{glyph}</span>
             </div>
-            <div className="s-val num">{v.toLocaleString()}</div>
+            <div className="s-val num">{empty ? "—" : v.toLocaleString()}</div>
             <div className="s-bar"><span style={{ width: (v / max) * 100 + "%" }}></span></div>
-            <div className="s-pct num">{total ? Math.round((v / total) * 100) : 0}% of plays</div>
+            <div className="s-pct num">{empty ? "none in range" : (total ? Math.round((v / total) * 100) : 0) + "% of plays"}</div>
           </div>
         );
       })}

@@ -228,15 +228,143 @@ function buildDrill(rawTracks, scrobbleRows) {
   return { season, hour, dow };
 }
 
+/* ---------- scrobble cube ----------
+
+   The overview charts are cross-filtered: each one re-aggregates whenever the
+   timeframe or another chart's selection changes. Pre-baked buckets (byHour /
+   byDow / buildDrill) cannot answer "hours, but only on Tuesdays, this month",
+   so we keep the per-scrobble facts instead — as parallel typed arrays rather
+   than objects.
+
+   For ~16.5k scrobbles this is ~130KB, transferable to the main thread with no
+   structured-clone cost, and a full re-aggregation is one linear pass over
+   contiguous memory: well under a millisecond, so filtering stays instant.
+
+   `tf` holds a bitmask of which timeframe windows each scrobble falls in,
+   computed here from the same ANCHOR that drives playInWindow() — that is what
+   keeps the charts numerically consistent with the KPI row. */
+
+const TF_BITS = {
+  year_this: 1, year_last: 2, season_this: 4, season_last: 8,
+  month_this: 16, month_last: 32, week_this: 64, week_last: 128,
+};
+const CUBE_NONE = 255;   // sentinel for a missing hour / dow / season
+
+function buildCube(rawTracks, scrobbleRows) {
+  if (!scrobbleRows || !scrobbleRows.length) return null;
+  const n = scrobbleRows.length;
+  const hour = new Uint8Array(n), dow = new Uint8Array(n), season = new Uint8Array(n);
+  const tf = new Uint16Array(n), track = new Int32Array(n);
+
+  const idx = new Map();
+  if (rawTracks) for (let i = 0; i < rawTracks.length; i++) idx.set(trackKey(rawTracks[i]), i);
+
+  for (let i = 0; i < n; i++) {
+    const s = scrobbleRows[i];
+    hour[i] = s.hour != null ? s.hour : CUBE_NONE;
+    dow[i] = s.day_of_week != null ? s.day_of_week : CUBE_NONE;
+    const se = s.season || (s.month ? SEASON_BY_MONTH[s.month] : null);
+    const si = se ? SEASONS_LIST.indexOf(se) : -1;
+    season[i] = si >= 0 ? si : CUBE_NONE;
+    const ti = idx.get(trackKey(s));
+    track[i] = ti != null ? ti : -1;
+
+    let bits = 0;
+    if (s.year != null) {
+      if (s.year === ANCHOR.curYear) bits |= TF_BITS.year_this;
+      else if (s.year === ANCHOR.lastYear) bits |= TF_BITS.year_last;
+    }
+    const stamp = s.scrobbled_at || "";
+    if (stamp) {
+      const ym = stamp.slice(0, 7);
+      if (ym === ANCHOR.curMonthKey) bits |= TF_BITS.month_this;
+      else if (ym === ANCHOR.lastMonthKey) bits |= TF_BITS.month_last;
+
+      const d = new Date(stamp);
+      const wk = isoWeekKey(d);
+      if (wk === ANCHOR.curWeekKey) bits |= TF_BITS.week_this;
+      else if (wk === ANCHOR.lastWeekKey) bits |= TF_BITS.week_last;
+
+      const sk = (s.season != null && s.year != null) ? `${s.year}-${s.season}` : seasonKeyOf(d);
+      if (sk === ANCHOR.curSeasonKey) bits |= TF_BITS.season_this;
+      else if (sk === ANCHOR.lastSeasonKey) bits |= TF_BITS.season_last;
+    }
+    tf[i] = bits;
+  }
+  return { n, hour, dow, season, tf, track };
+}
+
+/* Re-aggregate the cube for one (timeframe, selection) pair.
+
+   Cross-filter rule: a chart is never filtered by its own dimension, so the
+   hour chart shows "hours within the selected days" while still displaying
+   every hour — otherwise picking an hour would collapse its own chart to a
+   single bar. `slice` applies all three dimensions and is what the drill-down
+   panel renders; it is only accumulated when something is selected. */
+function aggregateCube(cube, timeframe, sel, tracks) {
+  const byHour = new Array(24).fill(0);
+  const byDow = new Array(7).fill(0);
+  const bySeason = { winter: 0, spring: 0, summer: 0, fall: 0 };
+  if (!cube || !cube.n) return { byHour, byDow, bySeason, total: 0, slice: null };
+
+  const bit = TF_BITS[timeframe] || 0;
+  const { n, hour, dow, season, tf, track } = cube;
+  const selH = sel && sel.hour != null ? sel.hour : -1;
+  const selD = sel && sel.dow != null ? sel.dow : -1;
+  const selS = sel && sel.season ? SEASONS_LIST.indexOf(sel.season) : -1;
+  const active = selH >= 0 || selD >= 0 || selS >= 0;
+
+  const seasonN = [0, 0, 0, 0];
+  const genres = active ? Object.create(null) : null;
+  const moods = active ? Object.create(null) : null;
+  const trackHits = active ? Object.create(null) : null;
+  const sliceHours = active ? new Array(24).fill(0) : null;
+  let total = 0;
+
+  for (let i = 0; i < n; i++) {
+    if (bit && !(tf[i] & bit)) continue;
+    const h = hour[i], d = dow[i], s = season[i];
+    const okH = selH < 0 || h === selH;
+    const okD = selD < 0 || d === selD;
+    const okS = selS < 0 || s === selS;
+
+    if (okD && okS && h < 24) byHour[h]++;
+    if (okH && okS && d < 7) byDow[d]++;
+    if (okH && okD && s < 4) seasonN[s]++;
+    if (!(okH && okD && okS)) continue;
+
+    total++;
+    if (!active) continue;
+    if (h < 24) sliceHours[h]++;
+    const ti = track[i];
+    if (ti < 0) continue;
+    const t = tracks && tracks[ti];
+    if (!t) continue;
+    const g = t.genres;
+    if (g) for (let j = 0; j < g.length; j++) genres[g[j]] = (genres[g[j]] || 0) + 1;
+    const m = t.moods;
+    if (m) for (let j = 0; j < m.length; j++) moods[m[j]] = (moods[m[j]] || 0) + 1;
+    const label = `${t.artist || "Unknown"} — ${t.track || "Untitled"}`;
+    trackHits[label] = (trackHits[label] || 0) + 1;
+  }
+
+  for (let i = 0; i < 4; i++) bySeason[SEASONS_LIST[i]] = seasonN[i];
+  const slice = active
+    ? { genres, moods, tracks: trackHits, byHour: sliceHours, total }
+    : null;
+  return { byHour, byDow, bySeason, total, slice };
+}
+
 /* Single entry point used by every data-load path (initial fetch, refresh,
    manual file drop) so windowing + drill are always built consistently. */
 function processLibrary(rawTracks, scrobbleRows) {
   const ns = (scrobbleRows && scrobbleRows.length) ? aggregateScrobbles(scrobbleRows) : null;
-  let nt = null, drill = null;
+  let nt = null, drill = null, cube = null;
   if (rawTracks && rawTracks.length) {
     attachWindows(rawTracks, scrobbleRows);
     drill = buildDrill(rawTracks, scrobbleRows);
+    cube = buildCube(rawTracks, scrobbleRows);
     nt = rawTracks.map(normalizeTrack);
   }
-  return { nt, ns, drill };
+  return { nt, ns, drill, cube };
 }

@@ -75,19 +75,33 @@
     ];
   }
 
+  /* The backdrop has to read as near-black with only a hint of hue. The genre
+     palette is authored for charts (L 0.72) — correct on a small swatch, far
+     too light spread across the whole viewport. Every colour entering the
+     shader is remapped into a narrow dark band, keeping the relative ordering
+     between hues but collapsing the range. Chroma is nudged up because a
+     colour this dark loses apparent saturation. */
+  const AMBIENT_L_BASE = 0.10;   // darkest a backdrop colour may be
+  const AMBIENT_L_SPAN = 0.16;   // ...and how far the lightest may rise above it
+  const AMBIENT_C_GAIN = 1.30;
+
+  function ambientTone(L, C, H) {
+    return oklchToLinear(AMBIENT_L_BASE + L * AMBIENT_L_SPAN, C * AMBIENT_C_GAIN, H);
+  }
+
   const OKLCH_RE = /oklch\(\s*([\d.]+)\s+([\d.]+)\s+([\d.]+)/i;
   function parseColor(str) {
     const m = OKLCH_RE.exec(String(str || ""));
-    return m ? oklchToLinear(+m[1], +m[2], +m[3]) : null;
+    return m ? ambientTone(+m[1], +m[2], +m[3]) : null;
   }
 
   // Neutral default — the deep violet/steel of the midnight theme, so the
   // backdrop looks intentional before any data has been aggregated.
   const FALLBACK = [
-    oklchToLinear(0.42, 0.10, 285),
-    oklchToLinear(0.34, 0.07, 250),
-    oklchToLinear(0.30, 0.06, 200),
-    oklchToLinear(0.38, 0.09, 320),
+    ambientTone(0.42, 0.10, 285),
+    ambientTone(0.34, 0.07, 250),
+    ambientTone(0.30, 0.06, 200),
+    ambientTone(0.38, 0.09, 320),
   ];
 
   const mqReduce = window.matchMedia("(prefers-reduced-motion: reduce)");

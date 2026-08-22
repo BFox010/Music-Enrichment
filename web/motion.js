@@ -40,8 +40,8 @@
      layout once on entry (a handful of rects) and then do pure arithmetic per
      frame, instead of measuring the whole page. It is also the restraint —
      exactly one card is ever lit. */
-  const SCOPE_SEL = ".card, .appbar, .sidebar, .filterbar, .drill-panel, .kpis";
-  const SPOTLIGHT_SEL = ".card";
+  const SCOPE_SEL = ".card, .kpi, .appbar, .sidebar, .filterbar, .drill-panel, .kpis";
+  const SPOTLIGHT_SEL = ".card, .kpi";
   const MAGNET_SEL = [
     ".btn", ".icon-btn", ".fchip", ".tagchip", ".glegend",
     ".season.clickable", ".sidenav-item", ".seg button", ".fb-clear",

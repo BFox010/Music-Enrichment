@@ -83,7 +83,10 @@ function App() {
   const [infoOpen, setInfoOpen] = useState(false);
   const [filters, setFilters] = useState({ genre: "", mood: "", tag: "", decade: "", artist: "", firstFrom: "", firstTo: "" });
   const [drill, setDrill] = useState(() => window.MUSIC_DATA && window.MUSIC_DATA.drill || null);
-  const [drillSel, setDrillSel] = useState(null); // { type: 'season'|'hour'|'dow', value }
+  const [cube, setCube] = useState(() => window.MUSIC_DATA && window.MUSIC_DATA.cube || null);
+  // Overview cross-filter. Each dimension is independent, so "Tuesdays at 9am
+  // in summer" is expressible; null means that dimension is unconstrained.
+  const [sel, setSel] = useState({ hour: null, dow: null, season: null });
 
   // ECharts components (assigned to window by echarts-charts.jsx, which loads before this file)
   const TimelineChart    = window.TimelineChart;
@@ -174,13 +177,14 @@ function App() {
         ]);
         const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
         const scRows = sc.status === "fulfilled" ? parseJSONL(sc.value) : null;
-        const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
+        const { nt, ns, drill: nd, cube: nc } = processLibrary(trRows, scRows);
         if (nt || ns) {
           setData((d) => ({
             meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
             tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
           }));
           if (nd) setDrill(nd);
+          if (nc) setCube(nc);
         }
       } catch (e) { /* live fetch optional */ }
       // Invalidate cached API-backed pages so they reflect the refreshed data.
@@ -206,7 +210,7 @@ function App() {
     }
     // Defer processing until all files are read so windowed plays + drill can
     // be joined from scrobbles regardless of the order the files arrive in.
-    const { nt: newTracks, ns: newScrob, drill: nd } = processLibrary(rawTracks, rawScrob);
+    const { nt: newTracks, ns: newScrob, drill: nd, cube: nc } = processLibrary(rawTracks, rawScrob);
     if (!newTracks && !newScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     setData((d) => ({
       meta: { ...d.meta, isSample: false, trackCount: newTracks ? newTracks.length : d.meta.trackCount, scrobbleCount: newScrob ? newScrob.total : d.meta.scrobbleCount },
@@ -214,6 +218,7 @@ function App() {
       scrobbles: newScrob || d.scrobbles
     }));
     if (nd) setDrill(nd);
+    if (nc) setCube(nc);
     showToast(`Loaded your data — ${names.join(", ")}`);
   }, [showToast]);
 
@@ -223,13 +228,14 @@ function App() {
     let worker = null;
 
     // Apply a processed library to state (shared by the worker + sync paths).
-    const apply = (nt, ns, nd) => {
+    const apply = (nt, ns, nd, nc) => {
       if (cancelled || !(nt || ns)) return;
       setData((d) => ({
         meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
         tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
       }));
       if (nd) setDrill(nd);
+      if (nc) setCube(nc);
       showToast("Loaded your live library from the repo");
     };
 
@@ -251,8 +257,8 @@ function App() {
         const runSync = () => {
           const trRows = tracksText ? parseJSONL(tracksText) : null;
           const scRows = scrobblesText ? parseJSONL(scrobblesText) : null;
-          const { nt, ns, drill: nd } = processLibrary(trRows, scRows);
-          apply(nt, ns, nd);
+          const { nt, ns, drill: nd, cube: nc } = processLibrary(trRows, scRows);
+          apply(nt, ns, nd, nc);
           if (!cancelled) setIsLoadingLive(false);
         };
 
@@ -261,7 +267,7 @@ function App() {
           worker = new Worker("data-worker.js");
           worker.onmessage = (e) => {
             const m = e.data || {};
-            if (m.ok) { apply(m.nt, m.ns, m.drill); }
+            if (m.ok) { apply(m.nt, m.ns, m.drill, m.cube); }
             else { runSync(); return; }
             if (!cancelled) setIsLoadingLive(false);
             worker.terminate(); worker = null;
@@ -426,15 +432,32 @@ function App() {
   const nf = (x) => x.toLocaleString();
   const tfLabel = timeframe === "all" ? "by scrobbles" : TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase();
 
-  /* ---------- overview drill-down ---------- */
+  /* ---------- overview cross-filter ----------
+
+     Every overview chart reads from one re-aggregation of the scrobble cube,
+     so the timeframe and the chart selections compose: the hour chart shows
+     the selected days, the day chart shows the selected hours, and the
+     drill-down describes the intersection of everything picked. One linear
+     pass over typed arrays, memoized on the inputs, so this is imperceptible.
+
+     Falls back to the pre-baked aggregates when the cube is unavailable (the
+     bundled sample payload, or a load path that failed) — those ignore the
+     timeframe, which is the old behaviour rather than an empty dashboard. */
   const DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-  const pickDrill = (type, value) => setDrillSel((cur) => (cur && cur.type === type && cur.value === value) ? null : { type, value });
-  const drillSlice = (drill && drillSel) ? drill[drillSel.type][drillSel.value] : null;
-  const drillLabel = drillSel
-    ? (drillSel.type === "season" ? drillSel.value.charAt(0).toUpperCase() + drillSel.value.slice(1) + " listening"
-      : drillSel.type === "hour" ? fmt12full(drillSel.value) + " listening"
-      : DOW_NAMES[drillSel.value] + " listening")
-    : "";
+  const view = useMemo(() => {
+    if (!cube) return { byHour: scrobbles.byHour, byDow: scrobbles.byDow, bySeason: scrobbles.bySeason, total: scrobbles.total, slice: null };
+    return aggregateCube(cube, timeframe, sel, tracks);
+  }, [cube, timeframe, sel, tracks, scrobbles]);
+
+  const pickDim = (dim, value) => setSel((cur) => ({ ...cur, [dim]: cur[dim] === value ? null : value }));
+  const clearSel = () => setSel({ hour: null, dow: null, season: null });
+  const selActive = sel.hour != null || sel.dow != null || sel.season != null;
+  // Read as one phrase: "Tuesday · 9 AM · Summer listening".
+  const drillLabel = [
+    sel.dow != null ? DOW_NAMES[sel.dow] : null,
+    sel.hour != null ? fmt12full(sel.hour) : null,
+    sel.season ? sel.season.charAt(0).toUpperCase() + sel.season.slice(1) : null,
+  ].filter(Boolean).join(" · ") + " listening";
   // available decades / first-heard years for the explorer slicers
   const explorerRanges = useMemo(() => {
     const decs = new Set(), yrs = new Set();
@@ -601,34 +624,31 @@ function App() {
           <section className="block">
             <div className="grid g-32">
               <div className="card">
-                <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">{drill ? "hour · click to explore" : "hour of day"}</span></div>
-                <HourChart data={scrobbles.byHour} onPick={drill ? (h) => pickDrill("hour", h) : undefined} activeKey={drillSel && drillSel.type === "hour" ? drillSel.value : null} />
+                <div className="card-head"><h3 className="card-title">When the music plays</h3><span className="card-meta">{sel.dow != null ? DOW_NAMES[sel.dow].toLowerCase() + "s only · click to explore" : "hour · click to explore"}</span></div>
+                <HourChart data={view.byHour} onPick={(h) => pickDim("hour", h)} activeKey={sel.hour} />
               </div>
               <div className="card">
-                <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">{drill ? "day · click to explore" : "day of week"}</span></div>
-                <DowChart data={scrobbles.byDow} onPick={drill ? (i) => pickDrill("dow", i) : undefined} activeKey={drillSel && drillSel.type === "dow" ? drillSel.value : null} />
+                <div className="card-head"><h3 className="card-title">Weekly rhythm</h3><span className="card-meta">{sel.hour != null ? fmt12full(sel.hour) + " only · click to explore" : "day · click to explore"}</span></div>
+                <DowChart data={view.byDow} onPick={(i) => pickDim("dow", i)} activeKey={sel.dow} />
               </div>
             </div>
           </section>
-          {drill && drillSel && (drillSel.type === "hour" || drillSel.type === "dow") && (
+          {selActive && (
             <section className="block">
-              <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} />
+              {/* "Tracks & time" shows a by-hour radial, which only says
+                  something while the hour dimension is still open. */}
+              <DrillPanel label={drillLabel} slice={view.slice} onClose={clearSel} views={sel.hour == null} />
             </section>
           )}
           <section className="block">
             <div className="card">
               <div className="card-head norule" style={{ marginBottom: 12 }}>
                 <h3 className="card-title">Seasons of listening</h3>
-                <span className="card-meta">{drill ? "season · click to explore" : "scrobbles by season"}</span>
+                <span className="card-meta">{selActive ? "within your selection · click to explore" : "season · click to explore"}</span>
               </div>
-              <Seasons data={scrobbles.bySeason} total={scrobbles.total} onPick={drill ? (s) => pickDrill("season", s) : undefined} activeKey={drillSel && drillSel.type === "season" ? drillSel.value : null} />
+              <Seasons data={view.bySeason} total={view.total} onPick={(s) => pickDim("season", s)} activeKey={sel.season} />
             </div>
           </section>
-          {drill && drillSel && drillSel.type === "season" && (
-            <section className="block">
-              <DrillPanel label={drillLabel} slice={drillSlice} onClose={() => setDrillSel(null)} views />
-            </section>
-          )}
           <section className="block">
             <div className="grid g-2">
               <div className="card">

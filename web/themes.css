@@ -150,7 +150,7 @@ a { color: inherit; }
 .sidenav-item svg { width: 15px; height: 15px; flex-shrink: 0; opacity: .7; }
 .sidenav-item.active svg { opacity: 1; }
 
-.main-content { flex: 1; min-width: 0; padding: 28px 32px 90px; max-width: 1140px; }
+.main-content { flex: 1; min-width: 0; padding: 28px 32px 90px; max-width: 1140px; margin-inline: auto; }
 
 /* keep .app as an alias for any remaining uses */
 .app { padding: 28px 30px 90px; }
@@ -448,7 +448,7 @@ section.block { margin-bottom: 16px; }
 /* ============================================================
    Timeframe slicer
    ============================================================ */
-.slicer { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
+.slicer { display: flex; align-items: center; justify-content: center; gap: 14px; flex-wrap: wrap; margin-bottom: 18px; }
 .slicer-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--accent-2); font-weight: 600; }
 .seg { display: inline-flex; padding: 4px; gap: 3px; background: var(--panel); border: var(--card-border); border-radius: var(--radius-pill); flex-wrap: wrap; }
 .seg button {
@@ -459,7 +459,7 @@ section.block { margin-bottom: 16px; }
 }
 .seg button:hover { color: var(--text-2); }
 .seg button[aria-pressed="true"] { background: var(--accent); color: var(--accent-ink); }
-.slicer-note { font-size: 12px; color: var(--muted-s); flex-basis: 100%; }
+.slicer-note { font-size: 12px; color: var(--muted-s); flex-basis: 100%; text-align: center; }
 .slicer-note b { color: var(--text-2); font-weight: 600; }
 
 /* ============================================================
@@ -635,16 +635,24 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .hours .hcol.sel::after { content: ""; position: absolute; bottom: -7px; left: 50%; transform: translateX(-50%); width: 5px; height: 5px; border-radius: 50%; background: var(--accent); }
 .dowrow.clickable { cursor: pointer; border-radius: var(--radius-sm); transition: background .14s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .dowrow.clickable:active { background: var(--panel-hi); }
+.dowrow.clickable:active .dfill { filter: brightness(1.3); }
 .dowrow.sel { background: color-mix(in oklab, var(--accent) 16%, var(--panel)); }
 .dowrow.sel .dfill { box-shadow: 0 0 12px -3px var(--accent); }
 .season.clickable { cursor: pointer; transition: border-color .15s, transform .15s, background .15s; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
 .season.clickable:active { border-color: var(--accent); transform: scale(0.99); }
+/* `s-empty`, not `empty`: the bare .empty class is the shared no-results
+   placeholder (60px padding, centred) and would blow up the card. */
+.season.s-empty { opacity: .42; }
+.season.s-empty .s-val { color: var(--faint); }
 .season.sel { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 13%, var(--panel-2)); }
 .season.sel .s-bar > span { box-shadow: 0 0 12px -2px var(--accent); }
 /* keep lift/background hover affordances on real pointers only, so a single
    tap activates on touch instead of being consumed applying :hover */
 @media (hover: hover) {
-  .dowrow.clickable:hover { background: var(--panel-2); }
+  /* Match the hour columns' read: the bar itself brightens, so the row
+     announces clickability rather than only tinting its background. */
+  .dowrow.clickable:hover { background: var(--panel-hi); }
+  .dowrow.clickable:hover .dfill { filter: brightness(1.18); }
   .season.clickable:hover { border-color: var(--faint); transform: translateY(-2px); }
 }
 
@@ -878,7 +886,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   position: fixed; inset: 0; z-index: 0;
   width: 100%; height: 100%;
   pointer-events: none;
-  opacity: .30;
+  opacity: .60;
   filter: blur(28px) saturate(1.15);
   transform: scale(1.15); /* hides the blur's soft edges at the viewport rim */
   transition: opacity .6s ease;
@@ -890,18 +898,18 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 /* One card lit at a time. `isolation: isolate` keeps the z-index:-1 highlight
    inside the card, so it paints over the card's own background but under its
    content — no overlay tinting the text. */
-.card { position: relative; isolation: isolate; }
-.card::before {
+.card, .kpi { position: relative; isolation: isolate; }
+.card::before, .kpi::before {
   content: ""; position: absolute; inset: 0; z-index: -1;
   border-radius: inherit; pointer-events: none;
-  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 50%),
-              color-mix(in oklab, var(--accent) 20%, transparent) 0%,
-              color-mix(in oklab, var(--accent) 8%, transparent) 34%,
+  background: radial-gradient(250px circle at var(--mx, 50%) var(--my, 50%),
+              color-mix(in oklab, var(--accent) 13%, transparent) 0%,
+              color-mix(in oklab, var(--accent) 5%, transparent) 34%,
               transparent 66%);
   opacity: 0; transition: opacity .22s ease;
 }
-.card.lit::before { opacity: 1; }
-.card.lit { border-color: color-mix(in oklab, var(--accent) 22%, var(--line)); }
+.card.lit::before, .kpi.lit::before { opacity: 1; }
+.card.lit, .kpi.lit { border-color: color-mix(in oklab, var(--accent) 22%, var(--line)); }
 
 /* ---------- page transitions (motion.js) ---------- */
 .main-content { view-transition-name: mainpage; }
