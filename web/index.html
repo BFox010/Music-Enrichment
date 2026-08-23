@@ -78,6 +78,17 @@
        can importScripts the same code off the main thread. -->
   <script defer src="data-processing.js"></script>
 
+  <!-- motion layer: the shared pointer loop (card spotlight + magnetic
+       controls), the FLIP helpers the ranked lists use to re-rank, and the
+       View Transitions wrapper for page switches. Framework-free; the JSX
+       calls into it via window.MOTION. -->
+  <script defer src="motion.js"></script>
+
+  <!-- ambient backdrop: a slow WebGL mesh gradient tinted by the genres
+       currently on screen. Degrades to the static --bg-grad if WebGL is
+       unavailable. -->
+  <script defer src="ambient.js"></script>
+
   <!-- app: pre-compiled from the *.jsx sources by scripts/build_frontend.mjs.
        Run `npm run build` (or `npm run dev` to rebuild on save) after editing any .jsx. -->
   <script defer src="app.bundle.js"></script>
