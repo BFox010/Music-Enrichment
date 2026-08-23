@@ -632,7 +632,6 @@ def classify(
             if af:  # only batch tracks that COULD be classified by Claude
                 batch_for_claude.append(track)
 
-    # Persist
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
         for row in tracks:

@@ -270,7 +270,6 @@ def merge(
         key = (block["artist_normalized"], block["track_normalized"])
         csv_index.setdefault(key, block)
 
-    # Load existing tracks
     tracks: list[dict] = []
     with open(chosen_input, "r", encoding="utf-8") as fh:
         for line in fh:

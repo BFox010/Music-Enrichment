@@ -120,7 +120,6 @@ def _write_xlsx(rows: list[dict], path: Path) -> None:
         cell.font = header_font
         cell.fill = header_fill
 
-    # Data rows
     for r_idx, row in enumerate(rows, start=2):
         for c_idx, col in enumerate(COLUMNS, start=1):
             ws.cell(row=r_idx, column=c_idx, value=_flatten(row, col))

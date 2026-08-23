@@ -1,8 +1,9 @@
 """Phase 3a — Export TuneMyMusic-compatible CSV.
 
-Reads tracks_skeleton.jsonl and writes a CSV that TuneMyMusic can import
-to create a Spotify playlist. Owner then runs Exportify on that playlist
-to get audio features (Phase 3b/3c).
+Reads tracks_skeleton.jsonl (artist/track/album is all this needs) and writes a
+CSV TuneMyMusic can import. The playlist it creates is a *means*: the owner runs
+Exportify against it to obtain audio features, which land via Phase 3b/3c. No
+playlist is produced as a deliverable. Issue #37 plans to remove this detour.
 
 Usage:
     python -m pipeline.export_tunemymusic

@@ -1,316 +1,299 @@
-# Music-Enrichment
+# Listening Atlas
 
-Personal music-library enrichment pipeline. Ingests Last.fm scrobbles, dedupes
-into a canonical track list, enriches with Last.fm tags / MusicBrainz IDs /
-iTunes XML / Apple Music availability / Spotify audio features, classifies
-moods, applies a taste profile, and emits a single canonical `tracks.jsonl`.
+A personal scrobble-history dashboard. It turns a Last.fm export into an
+annotated track library and renders it — listening timelines, artist
+trajectories, genre and mood structure, seasonal patterns, and the tracks you
+used to play constantly and stopped.
 
-The git log is the authoritative history. [SAVE_LOG.md](SAVE_LOG.md) is the
-fast "where are we" pointer between sessions.
+A React SPA over a FastAPI serving layer, backed by an enrichment pipeline.
+`tracks.jsonl` and `scrobbles.jsonl` are the source of truth; everything else is
+derived.
 
----
-
-## Pipeline phase table
-
-| Phase | Name                          | Module                                                    | Inputs                                                              | Outputs                                                  | Depends on    | Status                          |
-|-------|-------------------------------|-----------------------------------------------------------|---------------------------------------------------------------------|----------------------------------------------------------|---------------|---------------------------------|
-| 0     | scaffolding                   | (config, normalize, _http, schema)                        | —                                                                   | tests + module surface                                   | —             | DONE                            |
-| 1     | scrobble ingest               | [pipeline/ingest_scrobbles.py](pipeline/ingest_scrobbles.py) | `inputs/lastfm_export.json`                                         | `scrobbles.jsonl`                                        | 0             | DONE (16,549 rows, additive)    |
-| 2     | dedupe                        | [pipeline/dedupe.py](pipeline/dedupe.py)                  | `scrobbles.jsonl`                                                   | `tracks_skeleton.jsonl`                                  | 1             | DONE (2,730 unique tracks)      |
-| A     | iTunes XML enrichment         | [pipeline/enrich_apple_library.py](pipeline/enrich_apple_library.py) | `tracks_skeleton.jsonl`, `inputs/apple_music_library.xml`           | `tracks_with_apple.jsonl`                                | 2             | DONE (122/2,730 matched)        |
-| 3a    | TuneMyMusic export            | [pipeline/export_tunemymusic.py](pipeline/export_tunemymusic.py) | `tracks_with_apple.jsonl`                                           | `inputs/tunemymusic_upload.csv`                          | A             | DONE                            |
-| 3b    | TuneMyMusic + Exportify       | _(manual — owner)_                                        | `inputs/tunemymusic_upload.csv`                                     | `inputs/exportify.csv`                                   | 3a            | BLOCKED (owner action)          |
-| 3c    | Exportify merge               | [pipeline/merge_exportify.py](pipeline/merge_exportify.py) | `tracks_with_apple.jsonl`, `inputs/exportify.csv`                   | `tracks_with_audio.jsonl`                                | 3b            | BLOCKED on 3b (code complete)   |
-| 4     | Last.fm + MusicBrainz         | [pipeline/enrich_metadata.py](pipeline/enrich_metadata.py) | `tracks_with_audio.jsonl` _(or tracks_with_apple.jsonl if 3c skipped)_ | `tracks_with_metadata.jsonl`                          | A (3c if run) | DONE (2,342/2,730 = 85.8%; +177 via name-variation retry) |
-| 4b    | Discogs styles                | [pipeline/enrich_discogs.py](pipeline/enrich_discogs.py)  | `tracks_with_metadata.jsonl`                                        | `tracks_with_discogs.jsonl`                              | 4             | DONE (1,923/2,730 = 70.4%)      |
-| 4c    | genre derivation              | [pipeline/derive_genres.py](pipeline/derive_genres.py)    | `tracks_with_discogs.jsonl`                                         | `tracks_with_genres.jsonl`                              | 4b            | DONE (no-API; maps itunes/discogs/lastfm tags) |
-| 4d    | genre backfill (artist-level) | [pipeline/enrich_genre_backfill.py](pipeline/enrich_genre_backfill.py) | `tracks_with_genres.jsonl`                              | `tracks_with_genre_backfill.jsonl`                      | 4c            | DONE (Last.fm artist tags + MusicBrainz, gap only) |
-| 5     | Apple Music availability      | [pipeline/check_apple_music.py](pipeline/check_apple_music.py) | `tracks_with_genre_backfill.jsonl` _(falls back to 4c/4b output if a later phase was skipped)_ | `tracks_with_availability.jsonl`                | 4d            | DONE (1,916/2,730 = 70.2%)      |
-| 6     | mood classification           | [pipeline/classify_moods.py](pipeline/classify_moods.py)  | `tracks_with_availability.jsonl`, `inputs/existing_audit.csv`        | `tracks_with_moods.jsonl`                                | 5, 3c         | DONE (98.4%; 1,289 centroid · 876 audit · 522 claude_batch · 43 null) |
-| 7     | saturation / curation         | [pipeline/apply_taste_profile.py](pipeline/apply_taste_profile.py) | `tracks_with_moods.jsonl`, [taste_profile.md](taste_profile.md)     | `tracks_with_taste.jsonl`                                | 6             | DONE                            |
-| 8     | final merge                   | [pipeline/update_tracks.py](pipeline/update_tracks.py)    | latest per-phase JSONL                                              | `tracks.jsonl`                                           | 7             | DONE (genres 99.2%, moods 98.4%) |
-| 9     | orchestrator                  | [pipeline/run_full_pipeline.py](pipeline/run_full_pipeline.py) | all of the above                                                    | `runs/full_run_*.log`                                    | 1–8           | DONE                            |
-
-Status legend: **DONE** code committed and verified end-to-end ·
-**PENDING** code complete, waits on input or upstream phase ·
-**BLOCKED** cannot proceed until external action lands.
+> **Agents:** start with [CLAUDE.md](CLAUDE.md) — invariants, conventions, and
+> gotchas in a fraction of the reading.
 
 ---
 
-## Plan → actual file mapping
+## Run it
 
-The action plan refers to several modules by names that differ from the files
-actually in the repo. Current code names are authoritative; the plan terminology
-is documented here so future work doesn't drift.
-
-| Plan name                                | Actual file                                                                |
-|------------------------------------------|----------------------------------------------------------------------------|
-| `pipeline/mood_classifier.py`            | [pipeline/classify_moods.py](pipeline/classify_moods.py)                   |
-| `pipeline/enrich_lastfm.py`              | [pipeline/enrich_metadata.py](pipeline/enrich_metadata.py)                 |
-| `pipeline/check_apple_availability.py`   | [pipeline/check_apple_music.py](pipeline/check_apple_music.py)             |
-| `pipeline/merge_final.py` (Phase 8)      | [pipeline/update_tracks.py](pipeline/update_tracks.py)                     |
-| `pipeline/schemas.py`                    | [pipeline/schema.py](pipeline/schema.py) _(singular — to evolve in Phase α Step 2)_ |
-| `foxXg_taste_profile_v4.md`              | [taste_profile.md](taste_profile.md) + [taste_profile_template.md](taste_profile_template.md) |
-
-The plan's genre work (`pipeline/genre_harmonize.py`) shipped as two phases:
-[pipeline/derive_genres.py](pipeline/derive_genres.py) (4c, maps existing tags)
-and [pipeline/enrich_genre_backfill.py](pipeline/enrich_genre_backfill.py) (4d,
-artist-level Last.fm + MusicBrainz backfill for the remaining gap). The other
-planned modules (`pipeline/emotion_fusion.py`, `pipeline/recency.py`,
-`pipeline/enrich_acousticbrainz.py`) are not yet built.
-
----
-
-## Where files live
-
-| Path                                | Contents                                                  | Tracked? |
-|-------------------------------------|-----------------------------------------------------------|----------|
-| `tracks.jsonl`                      | Canonical enriched library — Phase 8 output               | yes      |
-| `scrobbles.jsonl`                   | Raw scrobble history — Phase 1 output                     | yes      |
-| `taste_profile.md`                  | Human-edited curation reference (read by Phase 7)         | yes      |
-| `taste_profile_template.md`         | Blank starter for taste_profile.md                        | yes      |
-| `tracks_*.jsonl` (intermediates)    | Per-phase intermediate outputs                            | **no**   |
-| `inputs/`                           | Owner-provided inputs (Last.fm export, Apple XML, audit, Exportify CSV) | **no** |
-| `.cache/`                           | API response caches (`apple_music.json`, `lastfm.json`, `musicbrainz.json`, `discogs.json`) | **no** |
-| `runs/`                             | Timestamped pipeline run logs                             | (logs gitignored) |
-| `views/`                            | Generated XLSX/CSV views from `scripts/make_view.py`      | **no**   |
-| `models/`                           | Trained classifier artifacts, splits, calibration plots (Phase β) | mixed (artifacts yes; large blobs may be ignored) |
-| `reports/`                          | Evaluation reports (Phase β Step 9 onward)                | yes      |
-
-Required `.env` key: `LASTFM_API_KEY`. `DISCOGS_TOKEN` and
-`MUSICBRAINZ_USER_AGENT` are reserved placeholders (not wired up; leave
-blank). See [.env.example](.env.example) for current status.
-
----
-
-## Pipeline execution flow
-
-```
-inputs/lastfm_export.json
-       │
-       ▼
-   Phase 1  scrobbles.jsonl
-       │
-       ▼
-   Phase 2  tracks_skeleton.jsonl
-       │
-       ▼
-   Phase A  tracks_with_apple.jsonl     ← inputs/apple_music_library.xml
-       │
-       ▼
-   Phase 3a inputs/tunemymusic_upload.csv
-       │
-       ▼  [manual — Phase 3b]
-       │
-       ▼
-   Phase 3c tracks_with_audio.jsonl     ← inputs/exportify.csv
-       │
-       ▼
-   Phase 4  tracks_with_metadata.jsonl  ← Last.fm + MusicBrainz API
-       │
-       ▼
-   Phase 4b tracks_with_discogs.jsonl   ← Discogs API (styles)
-       │
-       ▼
-   Phase 4c tracks_with_genres.jsonl    ← map existing tags → genres (no API)
-       │
-       ▼
-   Phase 4d tracks_with_genre_backfill.jsonl ← Last.fm artist tags + MusicBrainz (gap only)
-       │
-       ▼
-   Phase 5  tracks_with_availability.jsonl ← iTunes Search API
-       │
-       ▼
-   Phase 6  tracks_with_moods.jsonl     ← inputs/existing_audit.csv (training)
-       │
-       ▼
-   Phase 7  tracks_with_taste.jsonl     ← taste_profile.md
-       │
-       ▼
-   Phase 8  tracks.jsonl                ← canonical output
+```bash
+pip install -r requirements.txt
+npm install && npm run build     # compile web/*.jsx → web/app.bundle.js
+uvicorn app.main:app             # http://127.0.0.1:8000
 ```
 
-**Phase 1 is additive.** The owner's export workflow is a partial pull covering
-"today back to the last pull", so ingest merges into `scrobbles.jsonl` and dedupes
-on `(scrobbled_at, artist_normalized, track_normalized)` rather than overwriting.
-A write that would leave *fewer* rows than are already on disk is refused —
+Only `LASTFM_API_KEY` and `LASTFM_USERNAME` are needed to serve the committed
+data and sync new scrobbles. See [.env.example](.env.example) for the rest.
+
+## Dashboard
+
+| Group | View | What it shows |
+|---|---|---|
+| — | Overview | KPIs, coverage gauges, top artists/tracks, genre and mood distribution |
+| Library | Genre & Moods | Genre and mood breakdown with cross-filtering |
+| Library | Albums | Album-level aggregation, gated on a minimum track count |
+| Library | Tag Constellation | Tag/style co-occurrence graph, force-laid-out |
+| Library | Audio Features | Feature histograms and the energy × valence scatter |
+| Library | Coverage | Per-field enrichment coverage and saturation tiers |
+| Listening | Timeline | Scrobbles over time, by year or month |
+| Listening | Listening Map | Hour × weekday matrix and a calendar heatmap |
+| Listening | Artists | Per-artist plays over time (themeRiver) |
+| Listening | Seasonal | Per-season favourites with a tracks-and-time drill-down |
+| Listening | Forgotten | Tracks with a peak-then-fade listening arc |
+| Browse | Tracks | Filterable, paginated track table |
+| Data | Scrobble Sync | Pull new scrobbles from Last.fm; run a full refresh |
+
+Most views accept a listening window (`2025`, `2025-03`, `2025-summer`, or
+`from:to`) and cross-filter each other.
+
+### Frontend build
+
+The `.jsx` sources are **pre-compiled** into a single minified
+`web/app.bundle.js` by [scripts/build_frontend.mjs](scripts/build_frontend.mjs)
+using esbuild. There is no in-browser transpile.
+
+```bash
+npm run build     # one-shot
+npm run dev       # watch mode
+```
+
+**After editing any `web/*.jsx`, rebuild and commit the regenerated bundle** —
+otherwise the change simply does not appear.
+
+`web/data-processing.js` and `web/data-worker.js` are **not** part of the bundle.
+They hold the pure parse/aggregate transforms as plain JS so a Web Worker can run
+the initial-load parse off the main thread; the bundle references them as
+globals. Edit directly, no rebuild needed.
+
+On first paint the dashboard fetches `/tracks.min.jsonl` — a slimmed projection
+of just the fields the UI renders. The full `tracks.jsonl` stays available for
+download and through `/api/*`.
+
+Load-time profile: [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md).
+Visual-polish backlog: [docs/WOW_FACTOR_IDEAS.md](docs/WOW_FACTOR_IDEAS.md).
+
+## API
+
+Served by [app/main.py](app/main.py). API routes register before the static mount
+so `/api/*` always wins.
+
+**Reads:** `/api/overview` · `/api/genres` · `/api/moods` · `/api/timeline` ·
+`/api/time-of-day` · `/api/albums` · `/api/artist-trajectory` · `/api/top` ·
+`/api/audio-features` · `/api/saturation` · `/api/tracks` ·
+`/api/forgotten-favorites` · `/api/tag-graph` · `/api/integrity` · `/api/config` ·
+`/api/lastfm/status`
+
+**Mutations** (require `X-Dashboard-Token`): `POST /api/reload` ·
+`POST /api/lastfm/sync` · `POST /api/refresh`
+
+**Raw data:** `/tracks.jsonl` · `/scrobbles.jsonl` · `/tracks.min.jsonl` — all
+served with ETag-based conditional GETs so repeat loads are a cheap `304`.
+
+The token comes from same-origin `GET /api/config`. There is **no CORS
+middleware, deliberately**: the dashboard is same-origin, and allowing all
+origins would let any site the user visits read their full listening history over
+the public tunnel. Set `DASHBOARD_TOKEN` to keep the token stable across
+restarts.
+
+Responses above 1 KB are gzipped.
+
+---
+
+## Pipeline
+
+Phase execution order is derived from [pipeline_manifest.yaml](pipeline_manifest.yaml),
+which is the single source of truth. Adding a phase means adding a manifest entry
+*and* implementing the module — the anti-drift test in
+[tests/test_pipeline_manifest.py](tests/test_pipeline_manifest.py) catches either
+half being missing.
+
+| Phase | Module | Input | Output |
+|---|---|---|---|
+| 1 | [ingest_scrobbles](pipeline/ingest_scrobbles.py) | `inputs/lastfm_export.json` | `scrobbles.jsonl` |
+| 2 | [dedupe](pipeline/dedupe.py) | `scrobbles.jsonl` | `tracks_skeleton.jsonl` |
+| A | [enrich_apple_library](pipeline/enrich_apple_library.py) | + `inputs/apple_music_library.xml` | `tracks_with_apple.jsonl` |
+| B | [enrich_spotify_ids](pipeline/enrich_spotify_ids.py) | `tracks_with_apple.jsonl` | `tracks_with_spotify.jsonl` |
+| 3a | [export_tunemymusic](pipeline/export_tunemymusic.py) | `tracks_skeleton.jsonl` | `inputs/tunemymusic_upload.csv` |
+| 3b | _(manual — owner)_ | `inputs/tunemymusic_upload.csv` | `inputs/exportify.csv` |
+| 3c | [merge_exportify](pipeline/merge_exportify.py) | + `inputs/exportify.csv` | `tracks_with_audio.jsonl` |
+| 4 | [enrich_metadata](pipeline/enrich_metadata.py) | `tracks_with_audio.jsonl` | `tracks_with_metadata.jsonl` |
+| 4b | [enrich_discogs](pipeline/enrich_discogs.py) | `tracks_with_metadata.jsonl` | `tracks_with_discogs.jsonl` |
+| 4c | [derive_genres](pipeline/derive_genres.py) | `tracks_with_discogs.jsonl` | `tracks_with_genres.jsonl` |
+| 4d | [enrich_genre_backfill](pipeline/enrich_genre_backfill.py) | `tracks_with_genres.jsonl` | `tracks_with_genre_backfill.jsonl` |
+| 4e | [resolve_identity](pipeline/resolve_identity.py) | `tracks_with_genre_backfill.jsonl` | `tracks_resolved.jsonl` |
+| 5 | [check_apple_music](pipeline/check_apple_music.py) | `tracks_resolved.jsonl` | `tracks_with_availability.jsonl` |
+| 6 | [classify_moods](pipeline/classify_moods.py) | + `inputs/existing_audit.csv` | `tracks_with_moods.jsonl` |
+| 7 | [apply_taste_profile](pipeline/apply_taste_profile.py) | + [taste_profile.md](taste_profile.md) | `tracks_with_taste.jsonl` |
+| 8 | [update_tracks](pipeline/update_tracks.py) | `tracks_with_taste.jsonl` | `tracks.jsonl` |
+
+**Optional phases** (`B`, `4b`, `4d`, `6`, `7`) skip gracefully when their
+credentials or input files are absent. **Phase 3b is blocked** on owner action;
+[#37](https://github.com/BFox010/Music-Enrichment/issues/37) plans to replace the
+TuneMyMusic/Exportify round-trip with a chain that doesn't need it.
+
+Phases that read a JSONL pick the **deepest existing intermediate** rather than a
+fixed path, so skipping an optional phase doesn't silently drop the fields a
+later one added.
+
+```bash
+python -m pipeline.run_full_pipeline
+python -m pipeline.run_full_pipeline --start-from 4
+python -m pipeline.run_full_pipeline --skip-tests --skip-pause
+```
+
+### Phase 1 is additive
+
+The owner's export workflow is a partial pull covering "today back to the last
+pull", so ingest merges into `scrobbles.jsonl` and dedupes on
+`(scrobbled_at, artist_normalized, track_normalized)` rather than overwriting.
+
+A write that would leave *fewer* rows than are already on disk is **refused**.
 `scrobbles.jsonl` is the base record every play-weighted number derives from, and
 Phase 2 recomputes `play_count`, `first_scrobbled`, `last_scrobbled` and
 `peak_year` from whatever survives.
 
-```
-python -m pipeline.ingest_scrobbles                        # merge (default)
-python -m pipeline.ingest_scrobbles --replace              # rebuild; still refuses to shrink
+```bash
+python -m pipeline.ingest_scrobbles                            # merge (default)
+python -m pipeline.ingest_scrobbles --replace                  # rebuild; still refuses to shrink
 python -m pipeline.ingest_scrobbles --replace --allow-shrink   # genuinely drop history
 ```
 
-For incremental updates without a manual export at all, `POST /api/lastfm/sync`
+For incremental updates without a manual export, `POST /api/lastfm/sync`
 ([app/lastfm_sync.py](app/lastfm_sync.py)) fetches from the last stored timestamp
 and appends through the same guarded path.
 
-Run end-to-end:
+### On Phase B
 
-```powershell
-py -3.13 -m pipeline.run_full_pipeline
-py -3.13 -m pipeline.run_full_pipeline --skip-tests
-py -3.13 -m pipeline.run_full_pipeline --skip-pause
-py -3.13 -m pipeline.run_full_pipeline --start-from 4
-```
+Its real output is the **ISRC** — an open standard accepted by ReccoBeats,
+MusicBrainz and AcousticBrainz alike, which keeps the audio-feature source
+swappable. `spotify_id` is stored because ReccoBeats also accepts it, not as the
+identifier of record.
 
----
+B is the **last-resort resolver**: cheaper routes (MusicBrainz `musicbrainz_id` →
+ISRC, needing no auth; then Deezer) should run first, and B should be retired
+outright if they reach adequate coverage. See the module docstring.
 
-## Schema version policy
+### On phases 3a/3c and 7
 
-Canonical version lives in `SCHEMA_VERSION` ([pipeline/config.py](pipeline/config.py)).
-Current value: `5` (integer, monotonic). The manifest pins the same value in
-[pipeline_manifest.yaml](pipeline_manifest.yaml).
+These look like playlist machinery. They aren't:
 
-Rules:
+- **3a/3b/3c** exist to acquire *audio features*. The playlist round-trip is the
+  means, not a feature.
+- **Phase 7** produces `saturation_tier`, `blacklisted` and `curation_state` —
+  dashboard-facing curation metadata. Its `playlists` field is a grouping label
+  read out of `taste_profile.md`, not a generated playlist.
 
-- Every JSONL record emits `_schema_version` as its **first** field (shipped in schema v5; `read_jsonl` also loads legacy records without it).
-- Writers emit fields in stable, documented order. [pipeline/schema.py](pipeline/schema.py) defines `FIELD_DEFAULTS` in canonical write order.
-- Readers silently ignore unknown fields. Forward-compat is preserved by `fill_defaults()` in [pipeline/schema.py](pipeline/schema.py).
-- Minor additive fields **do not** bump the schema version.
-- Breaking renames or removals **do** bump the schema version. Migration tests required.
-- Migration tests live in [tests/test_schema_v5.py](tests/test_schema_v5.py): v5 roundtrip · legacy-record compat · unknown future fields preserved.
+An earlier iteration aimed at a natural-language playlist builder that pushed to
+Spotify/Apple. That direction was dropped.
 
-Canonical track identity priority (used for all cross-phase joins):
+## API reliability
 
-1. MusicBrainz recording MBID (`musicbrainz_id`)
-2. ISRC
-3. Normalized artist + track title (`artist_normalized` + `track_normalized`)
-4. Fallback hash
+Every phase that hits an external API:
 
-All phases must preserve `canonical_track_id`. No phase may drop or overwrite it.
-
----
-
-## Resumability
-
-Today, the orchestrator supports `--start-from N` to skip earlier phases. Phase
-modules overwrite their output JSONL on each run.
-
-API enrichment phases (4, 4b, 4d, 5) cache every response — successes *and*
-failures — to a per-API JSON file under `.cache/`, and skip anything already
-cached. Two flags override that:
+- Caches every response — **successes and failures** — to `.cache/<api>.json`,
+  and skips anything already cached.
+- **Expires negative entries.** A genuine `not_found` after
+  `HTTP_NEGATIVE_TTL_SECONDS` (30 days); anything transient (`max_retries`,
+  `invalid_json`) after `HTTP_TRANSIENT_TTL_SECONDS` (6 hours). A network blip
+  heals itself on the next run instead of freezing that track permanently. Cache
+  entries written before this format carry no timestamp and count as expired.
+- **Is crash-safe** — flushes its cache from a `finally`, so an interrupted run
+  keeps every response it already paid for at the rate limit.
+- Retries with exponential backoff up to `HTTP_MAX_RETRIES` (5), and logs
+  failures without aborting the run.
+- Logs a cache summary (entries, cached `not_found` vs transient, hits/misses/
+  refetches) so a low coverage number traces back to genuine no-match versus a
+  cached failure.
 
 | Flag | Effect |
 |---|---|
-| `--force-errors` | Re-fetch only cached failures, ignoring their TTL. The cheap way to clear poisoned entries. |
-| `--force`        | Bypass the cache entirely and re-fetch everything. Slow — each phase logs an ETA first. |
+| `--force-errors` | Re-fetch cached failures only, ignoring their TTL. The cheap way to clear poisoned entries. |
+| `--force` | Bypass the cache entirely. Slow — each phase logs an ETA first. |
 
-Both are dispatched off the manifest's `accepts_force` flag, so a phase only
-receives them if its callable actually takes `force=`; the anti-drift test in
-[tests/test_pipeline_manifest.py](tests/test_pipeline_manifest.py) checks both
-directions.
+Both dispatch off the manifest's `accepts_force` flag, so a phase only receives
+them if its callable actually takes `force=`.
 
-Still target state (Phase α Step 3 / Phase δ Step 17):
+Shared HTTP layer: [pipeline/_http.py](pipeline/_http.py). Rate limits and TTLs:
+[pipeline/config.py](pipeline/config.py).
 
-- Phases skip already-completed outputs by default.
-- `--phase <name>` runs a single phase.
-- All phases are idempotent.
+Every enrichment phase writes per-field provenance — `source`, `retrieved_at`,
+`pipeline_phase`, `confidence`.
 
----
+## Schema
 
-## Branch workflow discipline
+Canonical version lives in `SCHEMA_VERSION` ([pipeline/config.py](pipeline/config.py)),
+currently `5`, mirrored in the manifest. Integer, monotonic.
 
-One phase = one branch = one PR. Branch names mirror plan section names:
+- Every record emits `_schema_version` as its **first** field. `read_jsonl` also
+  loads legacy records without it.
+- Writers emit fields in stable order — `FIELD_DEFAULTS` in
+  [pipeline/schema.py](pipeline/schema.py) defines it.
+- Readers ignore unknown fields; `fill_defaults()` preserves forward-compat.
+- Additive fields **do not** bump the version. Breaking renames or removals
+  **do**, and require migration tests
+  ([tests/test_schema_v5.py](tests/test_schema_v5.py)).
 
-| Phase           | Branch                          |
-|-----------------|---------------------------------|
-| α Foundations   | `feature/foundations`           |
-| β Modeling swap | `feature/modeling-swap`         |
-| γ Genre         | `feature/genre-harmonize`       |
-| γ Emotion       | `feature/emotion-fusion`        |
-| γ Recency       | `feature/recency`               |
-| γ AcousticBrainz | `feature/acousticbrainz`       |
-| δ Final merge   | `feature/final-merge`           |
-| ε Taste profile | `feature/taste-profile-refresh` |
+Canonical track identity, used for every cross-phase join:
 
-**A PR cannot merge until:** tests pass · schema validation passes · regression diff reviewed (`scripts/diff_tracks_jsonl.py`).
+1. MusicBrainz recording MBID (`musicbrainz_id`)
+2. ISRC
+3. Normalized artist + track (`artist_normalized` + `track_normalized`)
+4. Fallback hash
 
----
+**All phases must preserve `canonical_track_id`.** No phase may drop or overwrite
+it.
 
-## API reliability rules
+## Where files live
 
-Every external enrichment phase implements:
+| Path | Contents | Tracked |
+|---|---|---|
+| `tracks.jsonl` | Canonical enriched library — Phase 8 output | yes |
+| `scrobbles.jsonl` | Raw play history — Phase 1 output | yes |
+| `taste_profile.md` | Hand-edited curation reference, read by Phase 7 | yes |
+| `taste_profile_template.md` | Blank starter for the above | yes |
+| `tracks_*.jsonl` | Per-phase intermediates | no |
+| `inputs/` | Owner-provided exports and audit CSVs | no |
+| `.cache/` | Per-API response caches | no |
+| `runs/` | Timestamped pipeline logs | no |
+| `views/` | Generated XLSX/CSV from `scripts/make_view.py` | no |
 
-- Disk-backed JSON cache per API (`.cache/lastfm.json`, `musicbrainz.json`,
-  `discogs.json`, `apple_music.json`) — no re-fetch unless the entry has expired
-  or `--force` / `--force-errors` is passed.
-- Timeout handling.
-- Exponential backoff, retry max = `HTTP_MAX_RETRIES` (5).
-- Non-fatal failures with structured error logging.
-- **Expiring negative cache.** Failures are cached too, so a re-run is cheap, but
-  they carry a `_cached_at` timestamp and expire: a genuine `not_found` after
-  `HTTP_NEGATIVE_TTL_SECONDS` (30 days), anything transient (`max_retries`,
-  `invalid_json`) after `HTTP_TRANSIENT_TTL_SECONDS` (6 hours). A transient
-  network blip therefore heals itself on the next day's run instead of freezing
-  that track's enrichment permanently. Cache entries written before this format
-  have no timestamp and count as expired — the first run after upgrading retries
-  them once.
-- **Crash-safe.** Every phase flushes its cache from a `finally`, so an
-  interrupted run keeps every response it already paid for at the rate limit.
-- Resumable execution — already-cached records are skipped. Each phase logs a
-  cache summary (entries, cached `not_found` vs transient, hits/misses/refetches)
-  so a low coverage number can be traced to genuine no-match versus cached failure.
+`taste_profile.md` is **never written by the pipeline**. Markdown is truth for
+human judgement; JSONL is the derived index, regenerated each run.
 
-See [pipeline/_http.py](pipeline/_http.py) for the shared HTTP layer.
+## Scripts
 
----
+| Script | Purpose |
+|---|---|
+| [library_stats.py](scripts/library_stats.py) | Coverage and distribution pulse-check between runs |
+| [make_view.py](scripts/make_view.py) | XLSX/CSV view of `tracks.jsonl` for inspection |
+| [build_label_queue.py](scripts/build_label_queue.py) | Mood-labeling queue ranked by plays explained |
+| [eval_spotify_resolution.py](scripts/eval_spotify_resolution.py) | Precision/recall of the Phase B matcher against known IDs |
+| [generate_library_js.py](scripts/generate_library_js.py) | Static offline snapshot for the `file://` workflow |
+| [build_frontend.mjs](scripts/build_frontend.mjs) | esbuild JSX → `web/app.bundle.js` |
 
-## Provenance
+[scripts/archive/](scripts/archive/README.md) holds one-off utilities kept for
+provenance. Nothing imports them.
 
-Every enrichment phase writes per-field provenance:
-
-```json
-{
-  "source": "...",
-  "retrieved_at": "...",
-  "pipeline_phase": "...",
-  "confidence": 0.0
-}
-```
-
----
+Coverage percentages move whenever the library grows — a fuller export adds
+tracks the enrichment phases haven't run across, so coverage can drop without
+anything breaking. Run `library_stats.py` rather than trusting a number written
+down here.
 
 ## Tests
 
-```powershell
-py -3.13 -m pytest tests/ -q
-```
-
-Existing suites: `test_apply_taste_profile*`, `test_check_apple_music`,
-`test_classify_moods`, `test_dedupe`, `test_derive_genres`,
-`test_enrich_apple_library`, `test_enrich_discogs`, `test_enrich_genre_backfill`,
-`test_enrich_metadata`, `test_enrich_metadata_variations`, `test_http`,
-`test_ingest_scrobbles`, `test_merge_exportify`, `test_name_variations`,
-`test_normalize`, `test_pipeline_manifest`, `test_schema`, `test_tag_filter`,
-`test_update_tracks`.
-
-CI runs this suite on every push to `main` and every pull request — see
-[.github/workflows/ci.yml](.github/workflows/ci.yml).
-
-## Frontend dashboard (`web/`)
-
-The dashboard is a React SPA. The `.jsx` sources are **pre-compiled** into a single
-minified bundle (`web/app.bundle.js`) by [scripts/build_frontend.mjs](scripts/build_frontend.mjs)
-using esbuild — there is no in-browser Babel transpile.
-
 ```bash
-npm install          # one-time (installs esbuild)
-npm run build        # compile web/*.jsx -> web/app.bundle.js (+ .map)
-npm run dev          # same, but rebuilds on save (watch mode)
+python -m pytest tests/ -q
 ```
 
-**After editing any `web/*.jsx`, run `npm run build`** (or keep `npm run dev` running)
-and commit the regenerated `web/app.bundle.js`. The dashboard is served by the FastAPI
-app (`uvicorn app.main:app`), which also gzip-compresses the dataset and `/api/*`
-responses. See [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md) for the load-time profile.
+Self-contained — temp fixtures, no network, no secrets. CI runs the full suite on
+every push to `main` and every pull request
+([.github/workflows/ci.yml](.github/workflows/ci.yml)).
 
-`web/data-processing.js` and `web/data-worker.js` are **plain JS, not part of the
-bundle** — they hold the pure parse/aggregate transforms so a Web Worker can run the
-initial-load parse off the main thread (the bundle references them as globals). Edit
-them directly; no rebuild needed. On first paint the dashboard fetches
-`/tracks.min.jsonl` (a slimmed projection of the tracks the UI renders) rather than the
-full `tracks.jsonl`, which stays available for direct download and via `/api/*`.
+## Reference
+
+- [CLAUDE.md](CLAUDE.md) — agent orientation: invariants, conventions, gotchas
+- [docs/apple-music-xml.md](docs/apple-music-xml.md) — iTunes XML field mapping
+- [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md) — load-time and compute profile
+- [docs/WOW_FACTOR_IDEAS.md](docs/WOW_FACTOR_IDEAS.md) — visual-polish backlog
+
+The git log is the authoritative history.

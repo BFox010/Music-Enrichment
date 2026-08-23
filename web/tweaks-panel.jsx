@@ -1,58 +1,25 @@
 
 /* BEGIN USAGE */
-// tweaks-panel.jsx
-// Reusable Tweaks shell + form-control helpers.
+// tweaks-panel.jsx — reusable Tweaks shell + form-control helpers.
+//
 // Exports (to window): useTweaks, TweaksPanel, TweakSection, TweakRow, TweakSlider,
 //   TweakToggle, TweakRadio, TweakSelect, TweakText, TweakNumber, TweakColor, TweakButton.
 //
 // Owns the host protocol (listens for __activate_edit_mode / __deactivate_edit_mode,
 // posts __edit_mode_available / __edit_mode_set_keys / __edit_mode_dismissed) so
-// individual prototypes don't re-roll it. Ships a consistent set of controls so you
-// don't hand-draw <input type="range">, segmented radios, steppers, etc.
+// individual prototypes don't re-roll it.
 //
-// Usage (in an HTML file that loads React + Babel):
+//   const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+//   <TweaksPanel><TweakSlider label="Font size" value={t.fontSize} min={10} max={32}
+//                             onChange={(v) => setTweak('fontSize', v)} /></TweaksPanel>
 //
-//   const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-//     "primaryColor": "#D97757",
-//     "palette": ["#D97757", "#29261b", "#f6f4ef"],
-//     "fontSize": 16,
-//     "density": "regular",
-//     "dark": false
-//   }/*EDITMODE-END*/;
+// Defaults are fenced as /*EDITMODE-BEGIN*/{...}/*EDITMODE-END*/ for the host to rewrite.
 //
-//   function App() {
-//     const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
-//     return (
-//       <div style={{ fontSize: t.fontSize, color: t.primaryColor }}>
-//         Hello
-//         <TweaksPanel>
-//           <TweakSection label="Typography" />
-//           <TweakSlider label="Font size" value={t.fontSize} min={10} max={32} unit="px"
-//                        onChange={(v) => setTweak('fontSize', v)} />
-//           <TweakRadio  label="Density" value={t.density}
-//                        options={['compact', 'regular', 'comfy']}
-//                        onChange={(v) => setTweak('density', v)} />
-//           <TweakSection label="Theme" />
-//           <TweakColor  label="Primary" value={t.primaryColor}
-//                        options={['#D97757', '#2A6FDB', '#1F8A5B', '#7A5AE0']}
-//                        onChange={(v) => setTweak('primaryColor', v)} />
-//           <TweakColor  label="Palette" value={t.palette}
-//                        options={[['#D97757', '#29261b', '#f6f4ef'],
-//                                  ['#475569', '#0f172a', '#f1f5f9']]}
-//                        onChange={(v) => setTweak('palette', v)} />
-//           <TweakToggle label="Dark mode" value={t.dark}
-//                        onChange={(v) => setTweak('dark', v)} />
-//         </TweaksPanel>
-//       </div>
-//     );
-//   }
-//
-// TweakRadio is the segmented control for 2–3 short options (auto-falls-back to
-// TweakSelect past ~16/~10 chars per label); reach for TweakSelect directly when
-// options are many or long. For color tweaks always curate 3-4 options rather than
-// a free picker; an option can also be a whole 2–5 color palette (the stored value
-// is the array). The Tweak* controls are a floor, not a ceiling — build custom
-// controls inside the panel if a tweak calls for UI they don't cover.
+// Picking a control: TweakRadio for 2-3 short options (it auto-falls back to
+// TweakSelect past ~16 chars/label); TweakSelect when options are many or long.
+// For colors curate 3-4 options rather than a free picker — an option may be a
+// whole 2-5 color palette, in which case the stored value is the array.
+// These are a floor, not a ceiling: build custom controls inside the panel.
 /* END USAGE */
 // ─────────────────────────────────────────────────────────────────────────────
 

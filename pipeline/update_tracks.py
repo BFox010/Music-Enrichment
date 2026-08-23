@@ -43,8 +43,8 @@ from pipeline.schema import (
 
 log = get_logger(__name__)
 
-# Preferred input order — deepest in the chain first.
-# update_tracks picks the first one that exists.
+# Deepest in the chain first — the first path that exists wins, so skipping an
+# optional phase doesn't drop the fields an earlier one added.
 _INPUT_PRIORITY: list[Path] = [
     TRACKS_WITH_TASTE_PATH,
     TRACKS_WITH_MOODS_PATH,
@@ -148,8 +148,7 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     if existing is None:
         return new
 
-    # Start with existing as base, layer new on top — but only fill from new
-    # when new actually has a non-empty value.
+    # Layer new over existing, but only where new carries a non-empty value.
     merged: dict = dict(existing)
     for key, new_value in new.items():
         if new_value is None:
@@ -169,7 +168,7 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
             continue
         merged[key] = new_value
 
-    # Preserve human-edited fields (override anything new has)
+    # Human-edited fields always win over anything regenerated.
     for field in HUMAN_EDITED_FIELDS:
         if existing.get(field) is not None:
             merged[field] = existing[field]
@@ -184,11 +183,10 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         merged["mood_source"] = existing_source
         merged["mood_confidence"] = existing.get("mood_confidence")
 
-    # Playlist semantics: playlists are derived from taste_profile.md (Phase 7),
-    # not human-edited directly. Always trust the latest Phase 7 output — otherwise
-    # tracks get stuck in playlist sections that no longer exist in the markdown.
-    # Only curation_state is in HUMAN_EDITED_FIELDS; preserving playlists here
-    # was double-counting that preservation. See δ-1 in TODO.
+    # playlists comes from taste_profile.md via Phase 7, not from hand-editing, so
+    # always take the latest Phase 7 output — preserving it here would strand tracks
+    # in sections the markdown no longer has. curation_state is the human-edited half
+    # and is covered by HUMAN_EDITED_FIELDS.
     merged["playlists"] = list(new.get("playlists") or [])
 
     return merged
@@ -231,10 +229,8 @@ def update(
         merged = _merge_with_existing(row, existing)
         merged = fill_defaults(merged)
         merged["enrichment_sources"] = _enrichment_sources(merged)
-        # Refresh enriched_at only when the row actually changed. A no-op regen,
-        # or one that only touched other rows, keeps each row's existing stamp —
-        # so tracks.jsonl diffs show real changes instead of churning all 2,730
-        # lines whenever a rerun crosses midnight UTC.
+        # Stamp enriched_at only when the row actually changed, so a no-op regen
+        # crossing midnight UTC doesn't churn every line of tracks.jsonl.
         prev_stamp = existing.get("enriched_at") if existing else None
         if existing is not None and {**merged, "enriched_at": prev_stamp} == existing:
             merged["enriched_at"] = prev_stamp
@@ -246,10 +242,8 @@ def update(
         else:
             updated_count += 1
 
-    # Sort for stable output
     merged_rows.sort(key=lambda r: (r["artist_normalized"], r["track_normalized"]))
 
-    # Validate
     validation = validate_dataset(merged_rows)
     if validation["invalid_count"] > 0:
         log.error("Validation failed: %d invalid rows", validation["invalid_count"])

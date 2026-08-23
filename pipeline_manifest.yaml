@@ -82,7 +82,9 @@ phases:
     module: pipeline.export_tunemymusic
     callable: export
     inputs:
-      - tracks_with_apple.jsonl
+      # export() reads the skeleton directly — it only needs artist/track/album,
+      # so it does not depend on Phase A's enrichment. Ordered after A anyway.
+      - tracks_skeleton.jsonl
     outputs:
       - inputs/tunemymusic_upload.csv
     depends_on: ["A"]
