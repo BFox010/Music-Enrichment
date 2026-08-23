@@ -1,4 +1,4 @@
-"""Phase B — resolve Spotify track IDs via the Spotify Search API.
+"""Phase B — resolve ISRCs and Spotify track IDs via the Spotify Search API.
 
 For each track without a ``spotify_id``, queries
 ``https://api.spotify.com/v1/search?type=track&q=<artist track>`` and matches
@@ -9,9 +9,22 @@ shared ``name_variations`` recovery rules (strip_feat / strip_parens /
 first_artist), exactly like the Last.fm enrichment phase.
 
 Why this exists: Spotify deprecated the ``audio-features`` endpoint for new apps
-(2024-11-27), but **Search is unaffected**. Resolving ``spotify_id`` here lets
+(2024-11-27), but **Search is unaffected**. Resolving identifiers here lets
 downstream phases (e.g. a future ReccoBeats feature fetch) work without the
 manual TuneMyMusic→Exportify step, which was previously the only source of IDs.
+
+**The ISRC is the point of this phase; the Spotify ID is incidental.** A matched
+search result carries ``external_ids.isrc``, and that identifier is an open
+standard accepted by ReccoBeats, MusicBrainz and AcousticBrainz alike — so it
+keeps the audio-feature source swappable. ``spotify_id`` is re-resolvable only
+through Spotify, whose eligibility rules tightened again in March 2026, so it is
+stored because ReccoBeats also accepts it, not as the identifier of record.
+
+Standing on that: this phase is the **last-resort resolver**. Issue #37 plans a
+Spotify-free chain, and cheaper routes should run first — MusicBrainz
+(``musicbrainz_id`` → ISRC, already on 78% of the library and needing no auth),
+then Deezer. Phase B is for whatever those leave unresolved, and should be
+retired outright if they get coverage high enough.
 
 Auth: Client-Credentials flow (no user login) — needs only a free Spotify app's
 Client ID + Secret, via the ``SPOTIFY_CLIENT_ID`` / ``SPOTIFY_CLIENT_SECRET``
@@ -21,6 +34,11 @@ working untouched).
 
 Caching: ``.cache/spotify_search.json``, keyed by ``artist_norm|track_norm``
 (+variation label), so re-runs resume and never re-hit resolved tracks.
+
+Not done here: an ISRC → ``spotify_id`` lookup. It reads like a precise
+short-circuit, but in the ReccoBeats chain a track that already has an ISRC
+needs nothing further from Spotify — ReccoBeats takes the ISRC directly — so the
+call only spends rate limit to learn a redundant key.
 
 Usage:
     python -m pipeline.enrich_spotify_ids
@@ -152,32 +170,40 @@ def _best_match(response: Any, artist_norm: str, track_norm: str) -> dict[str, A
     return None
 
 
+def _extract_isrc(item: dict[str, Any]) -> str | None:
+    """Pull ``external_ids.isrc`` off a matched Spotify track object.
+
+    Tolerant by design: the field is absent on some catalogue entries, and a
+    missing ISRC must degrade to "we only learned the Spotify ID", never fail
+    the track.
+    """
+    external = item.get("external_ids")
+    if not isinstance(external, dict):
+        return None
+    isrc = external.get("isrc")
+    return isrc.strip().upper() if isinstance(isrc, str) and isrc.strip() else None
+
+
 def _resolve_one(
     client: RateLimitedClient,
     auth: SpotifyAuth,
     artist: str,
     track: str,
-    isrc: str | None,
-) -> str | None:
-    """Return a Spotify track ID for ``artist``/``track``, or None.
+) -> tuple[str | None, str | None]:
+    """Return ``(spotify_id, isrc)`` for ``artist``/``track``; either may be None.
 
-    Tries an ISRC-exact lookup first when an ISRC is present (zero-fuzz), then
-    the measured name-variation cascade. The Authorization header is refreshed
-    immediately before each network call so a long run can't go stale.
+    Walks the measured name-variation cascade and returns both identifiers off
+    the first exact match. The ISRC is the more valuable of the two: it is an
+    open standard that ReccoBeats, AcousticBrainz and MusicBrainz all accept,
+    so it keeps the audio-feature source swappable, while ``spotify_id`` is
+    re-resolvable only through Spotify (see issue #37).
+
+    The Authorization header is refreshed immediately before each network call
+    so a long run can't go stale.
     """
     search_url = SPOTIFY_API_ROOT + "search"
-
-    # ISRC is a precise identifier — trust an exact hit when we have one.
-    if isrc:
-        client.session.headers["Authorization"] = f"Bearer {auth.token()}"
-        params = {"q": f"isrc:{isrc}", "type": "track", "limit": 5}
-        response = client.get(search_url, params, f"isrc:{isrc}")
-        if isinstance(response, dict) and not response.get("_error"):
-            items = ((response.get("tracks") or {}).get("items")) or []
-            if items and isinstance(items[0], dict) and items[0].get("id"):
-                return items[0]["id"]
-
     base_key = f"{normalize_artist(artist)}|{normalize_track(track)}"
+
     for label, var_artist, var_track in lookup_variations(artist, track):
         cache_key = base_key if label == "original" else f"{base_key}#{label}"
         client.session.headers["Authorization"] = f"Bearer {auth.token()}"
@@ -188,8 +214,8 @@ def _resolve_one(
             response, normalize_artist(var_artist), normalize_track(var_track)
         )
         if match and match.get("id"):
-            return match["id"]
-    return None
+            return match["id"], _extract_isrc(match)
+    return None, None
 
 
 def enrich(
@@ -233,6 +259,7 @@ def enrich(
         "already_had": 0,
         "resolved": 0,
         "unmatched": 0,
+        "isrc_captured": 0,
     }
     t0 = time.monotonic()
     to_resolve = sum(1 for t in tracks if not t.get("spotify_id"))
@@ -242,15 +269,20 @@ def enrich(
             stats["already_had"] += 1
             continue
 
-        spotify_id = _resolve_one(
+        spotify_id, isrc = _resolve_one(
             client,
             auth,
             track.get("artist", ""),
             track.get("track", ""),
-            track.get("isrc"),
         )
         if spotify_id:
             track["spotify_id"] = spotify_id
+            # The ISRC rides along free on the same matched object. Never
+            # overwrite one we already hold — an Exportify-sourced ISRC was
+            # matched by a different route and is not ours to second-guess.
+            if isrc and not track.get("isrc"):
+                track["isrc"] = isrc
+                stats["isrc_captured"] += 1
             sources = track.setdefault("enrichment_sources", [])
             if "spotify_search" not in sources:
                 sources.append("spotify_search")
@@ -272,8 +304,10 @@ def enrich(
 
     write_jsonl(tracks, output_path)
     log.info(
-        "Phase B done: resolved=%d  unmatched=%d  already_had=%d  /  %d total",
-        stats["resolved"], stats["unmatched"], stats["already_had"], stats["total"],
+        "Phase B done: resolved=%d (isrc captured on %d)  unmatched=%d  "
+        "already_had=%d  /  %d total",
+        stats["resolved"], stats["isrc_captured"], stats["unmatched"],
+        stats["already_had"], stats["total"],
     )
     log.info("Wrote → %s", output_path)
     return stats

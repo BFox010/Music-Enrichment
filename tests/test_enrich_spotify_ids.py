@@ -1,8 +1,12 @@
-"""Tests for Phase B — Spotify ID resolution.
+"""Tests for Phase B — ISRC + Spotify ID resolution.
 
 Mirrors the structure of test_check_apple_music: exercise the pure matching
 logic, the credential loader's skip behaviour, the token provider, and the
 resolution cascade with a stubbed HTTP client (no network).
+
+The ISRC coverage at the bottom is the part that matters for issue #37 — that
+identifier is what keeps the audio-feature source swappable, so the tests pin
+both that we capture it and that we never clobber one we already hold.
 """
 
 from __future__ import annotations
@@ -15,7 +19,9 @@ from pipeline import enrich_spotify_ids as esi
 from pipeline.enrich_spotify_ids import (
     SpotifyAuth,
     _best_match,
+    _extract_isrc,
     _resolve_one,
+    enrich,
     load_credentials,
 )
 
@@ -25,8 +31,11 @@ def _search(*items: dict) -> dict:
     return {"tracks": {"items": list(items)}}
 
 
-def _track(track_id: str, name: str, *artists: str) -> dict:
-    return {"id": track_id, "name": name, "artists": [{"name": a} for a in artists]}
+def _track(track_id: str, name: str, *artists: str, isrc: str | None = None) -> dict:
+    item = {"id": track_id, "name": name, "artists": [{"name": a} for a in artists]}
+    if isrc is not None:
+        item["external_ids"] = {"isrc": isrc}
+    return item
 
 
 # ── _best_match ────────────────────────────────────────────────────────────
@@ -183,17 +192,20 @@ class _StubAuth:
 
 
 class TestResolveOne:
-    def test_isrc_exact_short_circuits(self) -> None:
-        client = _StubClient({"isrc:USABC1234567": _search(_track("byisrc", "Whatever", "Whoever"))})
-        result = _resolve_one(client, _StubAuth(), "Artist", "Song", "USABC1234567")
-        assert result == "byisrc"
-        # ISRC hit means we never fall through to the name search.
-        assert client.queries == ["isrc:USABC1234567"]
+    def test_never_spends_a_call_on_an_isrc_lookup(self) -> None:
+        """A held ISRC needs nothing from Spotify — ReccoBeats takes it directly.
 
-    def test_name_search_when_no_isrc(self) -> None:
+        Regression guard for the dropped ISRC -> spotify_id short-circuit: the
+        only query issued must be the name search.
+        """
+        client = _StubClient({"Artist Song": _search(_track("abc", "Song", "Artist"))})
+        assert _resolve_one(client, _StubAuth(), "Artist", "Song") == ("abc", None)
+        assert client.queries == ["Artist Song"]
+
+    def test_name_search_resolves(self) -> None:
         client = _StubClient({"Portishead Roads": _search(_track("abc", "Roads", "Portishead"))})
-        result = _resolve_one(client, _StubAuth(), "Portishead", "Roads", None)
-        assert result == "abc"
+        result = _resolve_one(client, _StubAuth(), "Portishead", "Roads")
+        assert result == ("abc", None)
 
     def test_variation_retry_strips_feat(self) -> None:
         # Original query misses; the strip_feat variation ("Drake 1 Train") resolves it.
@@ -201,8 +213,8 @@ class TestResolveOne:
             "Drake 1 Train (feat. Kendrick Lamar)": _search(),  # original — miss
             "Drake 1 Train": _search(_track("v", "1 Train", "Drake")),  # strip_feat — hit
         })
-        result = _resolve_one(client, _StubAuth(), "Drake", "1 Train (feat. Kendrick Lamar)", None)
-        assert result == "v"
+        result = _resolve_one(client, _StubAuth(), "Drake", "1 Train (feat. Kendrick Lamar)")
+        assert result == ("v", None)
         assert client.queries == [
             "Drake 1 Train (feat. Kendrick Lamar)",
             "Drake 1 Train",
@@ -210,9 +222,132 @@ class TestResolveOne:
 
     def test_unmatched_returns_none(self) -> None:
         client = _StubClient({})
-        assert _resolve_one(client, _StubAuth(), "Nobody", "Nothing", None) is None
+        assert _resolve_one(client, _StubAuth(), "Nobody", "Nothing") == (None, None)
 
     def test_sets_authorization_header(self) -> None:
         client = _StubClient({"A B": _search(_track("id", "B", "A"))})
-        _resolve_one(client, _StubAuth(), "A", "B", None)
+        _resolve_one(client, _StubAuth(), "A", "B")
         assert client.session.headers.get("Authorization") == "Bearer tok"
+
+
+# ── ISRC capture ─────────────────────────────────────────────────────────────
+#
+# The ISRC rides along free on a match Phase B already paid for. It is the
+# identifier that keeps the audio-feature source swappable (ReccoBeats,
+# MusicBrainz and AcousticBrainz all take it), so losing it silently — the
+# behaviour before issue #37's review — is the failure these guard against.
+
+
+class TestExtractIsrc:
+    def test_extracts_and_normalises(self) -> None:
+        assert _extract_isrc({"external_ids": {"isrc": " usabc1234567 "}}) == "USABC1234567"
+
+    def test_missing_external_ids_is_none(self) -> None:
+        assert _extract_isrc({"id": "x"}) is None
+
+    def test_external_ids_without_isrc_is_none(self) -> None:
+        assert _extract_isrc({"external_ids": {"upc": "123"}}) is None
+
+    def test_blank_isrc_is_none(self) -> None:
+        assert _extract_isrc({"external_ids": {"isrc": "   "}}) is None
+
+    def test_non_dict_external_ids_is_none(self) -> None:
+        assert _extract_isrc({"external_ids": "USABC1234567"}) is None
+
+    def test_non_string_isrc_is_none(self) -> None:
+        assert _extract_isrc({"external_ids": {"isrc": 12345}}) is None
+
+
+class TestResolveOneCapturesIsrc:
+    def test_returns_isrc_alongside_id(self) -> None:
+        client = _StubClient({
+            "Portishead Roads": _search(
+                _track("abc", "Roads", "Portishead", isrc="GBAAA9400013")
+            ),
+        })
+        assert _resolve_one(client, _StubAuth(), "Portishead", "Roads") == (
+            "abc", "GBAAA9400013",
+        )
+
+    def test_id_without_isrc_still_resolves(self) -> None:
+        """A catalogue entry with no ISRC must degrade, not fail the track."""
+        client = _StubClient({"A B": _search(_track("id1", "B", "A"))})
+        assert _resolve_one(client, _StubAuth(), "A", "B") == ("id1", None)
+
+    def test_isrc_comes_from_the_variation_that_matched(self) -> None:
+        client = _StubClient({
+            "Drake 1 Train (feat. Kendrick Lamar)": _search(),
+            "Drake 1 Train": _search(_track("v", "1 Train", "Drake", isrc="USCM51300289")),
+        })
+        assert _resolve_one(
+            client, _StubAuth(), "Drake", "1 Train (feat. Kendrick Lamar)"
+        ) == ("v", "USCM51300289")
+
+
+class TestEnrichPersistsIsrc:
+    """End-to-end over enrich(): what actually lands on the record."""
+
+    @staticmethod
+    def _run(monkeypatch, tmp_path, tracks, resolved):
+        import pipeline.enrich_spotify_ids as mod
+
+        src = tmp_path / "in.jsonl"
+        src.write_text(
+            "".join(json.dumps(t) + "\n" for t in tracks), encoding="utf-8"
+        )
+        out = tmp_path / "out.jsonl"
+
+        monkeypatch.setattr(mod, "load_credentials", lambda: ("id", "secret"))
+        monkeypatch.setattr(mod, "SpotifyAuth", lambda *a, **k: _StubAuth())
+        monkeypatch.setattr(
+            mod, "RateLimitedClient",
+            lambda *a, **k: type("C", (), {"flush": lambda self: None})(),
+        )
+        monkeypatch.setattr(
+            mod, "_resolve_one",
+            lambda client, auth, artist, track: resolved.get(track, (None, None)),
+        )
+        stats = mod.enrich(input_path=src, output_path=out)
+        rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+        return stats, {r["track"]: r for r in rows}
+
+    def test_captures_isrc_on_a_new_resolution(self, monkeypatch, tmp_path) -> None:
+        stats, rows = self._run(
+            monkeypatch, tmp_path,
+            [{"artist": "Portishead", "track": "Roads"}],
+            {"Roads": ("abc", "GBAAA9400013")},
+        )
+        assert rows["Roads"]["spotify_id"] == "abc"
+        assert rows["Roads"]["isrc"] == "GBAAA9400013"
+        assert stats["resolved"] == 1
+        assert stats["isrc_captured"] == 1
+
+    def test_never_overwrites_an_existing_isrc(self, monkeypatch, tmp_path) -> None:
+        """An Exportify-sourced ISRC was matched by another route; leave it."""
+        stats, rows = self._run(
+            monkeypatch, tmp_path,
+            [{"artist": "A", "track": "B", "isrc": "USORIGINAL01"}],
+            {"B": ("newid", "USDIFFERENT9")},
+        )
+        assert rows["B"]["isrc"] == "USORIGINAL01"
+        assert rows["B"]["spotify_id"] == "newid"
+        assert stats["isrc_captured"] == 0
+
+    def test_resolution_without_isrc_leaves_field_absent(self, monkeypatch, tmp_path) -> None:
+        stats, rows = self._run(
+            monkeypatch, tmp_path,
+            [{"artist": "A", "track": "B"}],
+            {"B": ("id1", None)},
+        )
+        assert rows["B"]["spotify_id"] == "id1"
+        assert not rows["B"].get("isrc")
+        assert stats["resolved"] == 1
+        assert stats["isrc_captured"] == 0
+
+    def test_unmatched_track_gains_neither(self, monkeypatch, tmp_path) -> None:
+        stats, rows = self._run(
+            monkeypatch, tmp_path, [{"artist": "A", "track": "B"}], {},
+        )
+        assert not rows["B"].get("spotify_id")
+        assert not rows["B"].get("isrc")
+        assert stats["unmatched"] == 1
