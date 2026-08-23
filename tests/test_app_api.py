@@ -530,3 +530,50 @@ class TestLastFmStatus:
         monkeypatch.delenv("LASTFM_API_KEY", raising=False)
         body = client.get("/api/lastfm/status").json()
         assert body["configured"] is False
+
+
+class TestDotenvLoadedAtImport:
+    """The server process must read .env itself.
+
+    Every pipeline phase calls load_dotenv() for itself, but nothing under app/
+    did — so `uvicorn app.main:app` never saw .env. LASTFM_USERNAME /
+    LASTFM_API_KEY were invisible to the live sync (which then reported itself
+    unconfigured), and DASHBOARD_TOKEN was ignored, regenerating every restart.
+    """
+
+    SENTINEL = "MUSIC_ENRICHMENT_DOTENV_SENTINEL"
+
+    def test_env_file_reaches_the_process(self, tmp_path, monkeypatch):
+        import importlib
+        import os
+
+        import pipeline.config as config
+        import app.main
+
+        (tmp_path / ".env").write_text(
+            f"{self.SENTINEL}=loaded\n", encoding="utf-8"
+        )
+        monkeypatch.delenv(self.SENTINEL, raising=False)
+        monkeypatch.setattr(config, "REPO_ROOT", tmp_path)
+
+        try:
+            importlib.reload(app.main)
+            assert os.environ.get(self.SENTINEL) == "loaded"
+        finally:
+            monkeypatch.undo()
+            importlib.reload(app.main)
+
+    def test_dashboard_token_honours_the_environment(self, monkeypatch):
+        """DASHBOARD_TOKEN is read at import; .env feeding it is the whole point
+        of pinning a token that survives a restart."""
+        import importlib
+
+        import app.main
+
+        monkeypatch.setenv("DASHBOARD_TOKEN", "pinned-token-for-test")
+        try:
+            importlib.reload(app.main)
+            assert app.main.DASHBOARD_TOKEN == "pinned-token-for-test"
+        finally:
+            monkeypatch.undo()
+            importlib.reload(app.main)

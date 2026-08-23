@@ -14,7 +14,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from pipeline.config import SCROBBLES_PATH, TRACKS_PATH
+from dotenv import load_dotenv
+from pipeline.config import REPO_ROOT, SCROBBLES_PATH, TRACKS_PATH
+
+# Each pipeline phase load_dotenv()s for itself, but nothing under app/ did, so
+# the server process never saw .env: live sync reported itself unconfigured and
+# DASHBOARD_TOKEN was ignored. Must run before DASHBOARD_TOKEN is read below.
+load_dotenv(REPO_ROOT / ".env")
 
 import app.data as data
 import app.metrics as metrics
