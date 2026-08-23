@@ -168,7 +168,6 @@ def parse_library(xml_path: Path) -> dict[tuple[str, str], dict]:
 
     log.info("Audio tracks: %d  |  Unique join keys: %d", audio_count, len(groups))
 
-    # Merge groups
     merged: dict[tuple[str, str], dict] = {}
     for key, blocks in groups.items():
         merged[key] = _merge_apple_blocks(blocks)

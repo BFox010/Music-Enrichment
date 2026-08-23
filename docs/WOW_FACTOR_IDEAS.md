@@ -33,7 +33,7 @@ assembly reads as "this thing is alive and it computed something" instead of
 on entry. Add an `IntersectionObserver` that flips a `data-revealed` attribute
 on each `.card`, and drive `--reveal-delay` off the card's index. ECharts gets
 this for free via `animationDelay: (i) => i * 12`. KPI count-up goes in `Kpi()`
-in `dashboard.jsx:836`.
+in `Kpi()` (`dashboard.jsx`).
 
 **Restraint:** Fire once per session per card, never on filter changes — a
 number that re-rolls every time you click a genre chip is a slot machine.
@@ -53,7 +53,7 @@ call — no library, no bundle cost.
 
 **Here:** Tab switching in `App()` is a state swap, so it's a one-line wrap.
 Give the shared element a `view-transition-name` derived from the genre/track
-key. The existing `.modal-scrim` fade (`themes.css:472`) becomes the fallback
+key. The existing `.modal-scrim` fade (`themes.css`) becomes the fallback
 path for browsers without support.
 
 **Restraint:** Cap at ~220ms. Anything longer and repeat navigation feels
@@ -75,7 +75,7 @@ something*. Filter to shoegaze and the room changes color.
 zero-dependency canvas WebGL with a `MeshGradient` component and a vanilla
 `createShader` entry point — it drops into the esbuild bundle without pulling in
 Three.js. Feed it the `genreColorMap` OKLCH hues already computed at
-`dashboard.jsx:265`.
+`genreColorMap` in `dashboard.jsx`.
 
 **Restraint:** Opacity ~0.35, blur it, put it behind `--bg` at 60–70% mix, and
 hard-disable under `prefers-reduced-motion` and on battery-saver. If you can
@@ -124,7 +124,7 @@ Christmas tree.
 
 ## 6. The Tag Constellation as the centerpiece, upgraded
 
-**What:** `TagConstellation` (`echarts-charts.jsx:660`) is the piece with the
+**What:** `TagConstellation` (`echarts-charts.jsx`) is the piece with the
 most inherent visual drama — a force-directed graph of the library's tag space.
 Push it: gentle continuous drift so the graph breathes, edge-bundling so the
 links read as currents rather than spaghetti, node glow scaled by play count,
@@ -154,8 +154,8 @@ portfolio piece from a tool. Cross-browser CSS `scroll-timeline` support means
 this is now `animation-timeline: view()` rather than a scroll-listener rig.
 
 **Here:** Pure CSS over the existing `TimelineChart`
-(`echarts-charts.jsx:92`), with the annotation copy generated from the real
-aggregates in `agg` (`dashboard.jsx:319`) so it's never stale.
+(`TimelineChart`, `echarts-charts.jsx`), with the annotation copy generated from the real
+aggregates in `agg` (`dashboard.jsx`) so it's never stale.
 
 **Restraint:** Keep it to roughly one viewport of scroll, and make the grid
 reachable without scrolling through it (a "skip to data" affordance, or make it
@@ -216,10 +216,11 @@ land, so the page shows that it's connected to a real, still-running pipeline.
 are cheap, both are self-contained, and (b) advertises the thing that actually
 distinguishes this project — there's a live pipeline behind it, not a CSV.
 
-**Here:** (a) wraps the existing theme apply in `dashboard.jsx:191` in
-`startViewTransition` with a `clip-path` keyframe. (b) reuses `pill-pulse`
-(`themes.css:111`) fired once on a successful `ScrobbleSync`
-(`dashboard.jsx:758`) that returns new rows.
+**Here:** (a) needs a theme apply site first — `data-theme` is currently set
+statically on `<html>` in `index.html` and never changed at runtime, so there is
+nothing to wrap yet. Once a switcher exists, wrap it in `startViewTransition`
+with a `clip-path` keyframe. (b) reuses `pill-pulse` (`themes.css`) fired once on
+a successful `ScrobbleSync` (`dashboard.jsx`) that returns new rows.
 
 **Restraint:** Once per event, never looping. A permanently pulsing element is
 an alarm.

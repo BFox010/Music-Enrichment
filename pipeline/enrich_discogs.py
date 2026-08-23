@@ -43,7 +43,6 @@ from pipeline.config import (
 
 log = get_logger(__name__)
 
-# Discogs search endpoint
 DISCOGS_SEARCH_URL: str = DISCOGS_API_ROOT.rstrip("/") + "/database/search"
 
 # Input preference: with_metadata (Phase 4 output) → with_audio → skeleton

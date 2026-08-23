@@ -257,7 +257,6 @@ class RateLimitedClient:
         if not self._should_refetch(cache_key):
             return self.cache[cache_key]
 
-        # Rate limit
         elapsed = time.monotonic() - self._last_request
         if elapsed < self.min_interval:
             time.sleep(self.min_interval - elapsed)

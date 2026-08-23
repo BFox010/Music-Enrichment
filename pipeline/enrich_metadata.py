@@ -64,7 +64,6 @@ def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
     if not isinstance(track, dict):
         return {"lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None}
 
-    # Tags
     toptags = (track.get("toptags") or {}).get("tag") or []
     if isinstance(toptags, dict):  # single-tag responses can come as dict
         toptags = [toptags]
@@ -163,7 +162,6 @@ def enrich(
         log.error("LASTFM_API_KEY not set in .env")
         raise RuntimeError("LASTFM_API_KEY missing")
 
-    # Pick input
     if input_path is None:
         input_path = next((p for p in _INPUT_PRIORITY if p.exists()), DEFAULT_INPUT)
     log.info("Input : %s", input_path)

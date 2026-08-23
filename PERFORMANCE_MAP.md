@@ -1,16 +1,28 @@
-# Performance Footprint Map — Music Enrichment Pipeline
+# Performance Footprint Map — Listening Atlas
 
-> **Profiling only — no fixes.** This document maps and quantifies the load-time and
-> compute footprint of every section of the codebase. No application code was modified.
-> Bottlenecks are recorded as **Observations** only.
+Load-time and compute footprint of the codebase.
+
+**This document has two halves, and only the first describes the system as it is
+today:**
+
+- **[Part I — Current state](#part-i--current-state)** — the frontend load
+  optimization that shipped on 2026-06-08, with before/after numbers. This is
+  live.
+- **[Part II — Original profiling report](#part-ii--original-profiling-report-historical)**
+  — the 2026-06-08 *pre-optimization* snapshot, kept for the method and the
+  backend measurements. **Its frontend sections describe a build that no longer
+  exists** (in-browser Babel, development React). Read it as history.
+
+Everything in Part II was measured against the **2,730-track / 13,669-scrobble**
+library. The library has since grown to 3,336 tracks and 16,549 scrobbles, so
+absolute milliseconds there run low. The complexity columns still hold.
 
 **Confidence legend:** ✅ measured (real run) · ⚠️ estimated / derived (static or
 extrapolated) · 🔴 could not measure (reason given).
 
-> **Update (2026-06-08): a frontend load-time optimization sweep was implemented after
-> the initial profiling.** The original report below documents the *pre-optimization*
-> state. See [Frontend load optimization](#frontend-load-optimization-implemented) for
-> the before/after results — this section supersedes the frontend observations below.
+---
+
+# Part I — Current state
 
 ## Frontend load optimization (implemented)
 
@@ -59,13 +71,29 @@ separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_fron
 
 *(Done — lazy ECharts: implemented as on-demand + idle prefetch; see item 3 above.)*
 
+---
+
+# Part II — Original profiling report (historical)
+
+> **Snapshot, not current state.** Profiling only — no application code was
+> modified for it, and bottlenecks are recorded as **Observations**.
+>
+> Two things below are now wrong rather than merely dated:
+> - **§1 "Frontend" measures in-browser Babel and development React.** Both were
+>   removed by the Part I sweep. Those rows describe a build that no longer
+>   exists.
+> - **Observation #2** flags that same removed build as a live problem.
+>
+> The backend tables, the load-order map, and the method are still broadly
+> representative — against a library ~20% smaller than today's.
+
 ## Measurement environment
 
 | Item | Value |
 |---|---|
 | Host | Linux 6.18.5, Python 3.11.15, Node v22.22.2 |
 | Deps | Installed fresh from `requirements.txt` for this run (fastapi 0.136, uvicorn 0.49, httpx 0.28, pandas 3.0, pytest 9.0). ✅ |
-| Dataset | `tracks.jsonl` = 4.32 MB / 2,730 records · `scrobbles.jsonl` = 3.86 MB / 13,669 records (the real committed data) |
+| Dataset | `tracks.jsonl` = 4.32 MB / 2,730 records · `scrobbles.jsonl` = 3.86 MB / 13,669 records (the committed data **at the time of this run** — now 3,336 / 16,549) |
 | Credentials | **None** — `LASTFM_API_KEY`/`DISCOGS_TOKEN` unset, no `.cache/`, no `inputs/` files |
 | Method | `python -X importtime`, `cProfile`, `tracemalloc`/`getrusage`, throwaway timing harnesses, Node V8 micro-bench. All scratch artifacts live in `perf_temp/`. |
 
@@ -77,7 +105,7 @@ number, for larger libraries.
 
 ## 1. Component table
 
-### Backend — Flask/API layer (FastAPI, `app/`)
+### Backend — API layer (FastAPI, `app/`)
 
 | Section | Layer | Load cost | Compute (this dataset) | I/O & network | Memory | Complexity | Conf |
 |---|---|---|---|---|---|---|---|
@@ -114,7 +142,9 @@ number, for larger libraries.
 | `run_full_pipeline` orchestrator | backend | 57 ms import (loads manifest @ import) | sum of phases | — | — | — | ✅ import |
 | `_http.RateLimitedClient` | backend | 153 ms import | per-call `sleep(1/rate − elapsed)` + ≤5 retries, exp-backoff base 0.5 s cap 30 s | disk-backed JSON cache | cache in RAM | — | ✅ static |
 
-### Frontend (`web/`) — browser React SPA, in-browser Babel
+### Frontend (`web/`) — browser React SPA, in-browser Babel  
+**⚠️ SUPERSEDED — this entire table measures the pre-esbuild build. Babel and
+development React were removed; see Part I.**
 
 | Section | Layer | Load cost | Compute | I/O & network | Memory | Complexity | Conf |
 |---|---|---|---|---|---|---|---|
@@ -183,9 +213,11 @@ PIPELINE STARTUP  (python -m pipeline.run_full_pipeline)
   import pipeline.run_full_pipeline
     └─ at MODULE LEVEL: load_manifest()  ← parses pipeline_manifest.yaml (14 phases)
   each phase imported dynamically via importlib in manifest order:
-    1 ingest → 2 dedupe → A apple_library → 3c merge_exportify → 4 enrich_metadata
-    → 4b enrich_discogs → 4c derive_genres → 4d genre_backfill → 5 check_apple_music
-    → 6 classify_moods → 7 apply_taste_profile → 8 update_tracks
+    1 ingest → 2 dedupe → A apple_library → B spotify_ids → 3a/3b/3c merge_exportify
+    → 4 enrich_metadata → 4b enrich_discogs → 4c derive_genres → 4d genre_backfill
+    → 4e resolve_identity → 5 check_apple_music → 6 classify_moods
+    → 7 apply_taste_profile → 8 update_tracks
+    (B and 4e were added after this profiling run and are unmeasured here)
   shared infra: pipeline.config (paths, rate limits), pipeline._http (RateLimitedClient),
                 pipeline.normalize / name_variations (hot inner helpers)
 
@@ -229,10 +261,10 @@ FRONTEND LOAD  (web/index.html)
    42 MB) at *module import*, triggered by `app/main.py:38`. Server cold start is
    ~668 ms, of which the load is synchronous and blocks the event loop before the app
    is ready. (Observation only.)
-2. **Frontend ships development React builds + in-browser Babel.** React-dev/ReactDOM-dev
-   (~1.35 MB) and `@babel/standalone` (~1.5 MB) are downloaded on every load, and 5
-   `.jsx` files are transformed in-browser (373 ms measured). This is the dominant TTI
-   cost alongside the ~3.85 MB CDN payload. (Observation only.)
+2. ~~**Frontend ships development React builds + in-browser Babel.**~~ **RESOLVED by
+   the Part I sweep.** Babel and the development React builds are gone; the `.jsx`
+   are pre-compiled by esbuild. Critical-path JS fell ~1,273 KB → ~72 KB gzipped
+   and FCP ~5,000 ms → ~155 ms.
 3. **Dataset transfer is already gzipped.** *(Correction — an earlier draft wrongly
    implied the raw files were uncompressed.)* FastAPI's `GZipMiddleware` compresses the
    raw `/tracks.jsonl` and `/scrobbles.jsonl` routes too — verified on the wire:
@@ -246,7 +278,7 @@ FRONTEND LOAD  (web/index.html)
    no cache is hours. (Observation only.)
 6. **API endpoints recompute aggregations per request** over the full in-memory lists
    with no precompute/index — fine at 2.7k tracks (<22 ms) but O(N)–O(N·T²) per call.
-   (Observation only.)
+   Tracked as issue #50; deliberately deferred as premature at this scale.
 
 ---
 

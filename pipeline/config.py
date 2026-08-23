@@ -27,10 +27,8 @@ TRACKS_WITH_MOODS_PATH: Path = REPO_ROOT / "tracks_with_moods.jsonl"
 
 # ── Human-edited reference (DO NOT auto-modify) ──────────────────────────
 TASTE_PROFILE_PATH: Path = REPO_ROOT / "taste_profile.md"
-SCROBBLE_REFERENCE_PATH: Path = REPO_ROOT / "scrobble_reference.md"
 
 # ── Directories ──────────────────────────────────────────────────────────
-PLAYLISTS_DIR: Path = REPO_ROOT / "playlists"
 RUNS_DIR: Path = REPO_ROOT / "runs"
 VIEWS_DIR: Path = REPO_ROOT / "views"        # gitignored
 CACHE_DIR: Path = REPO_ROOT / ".cache"       # gitignored
@@ -64,9 +62,12 @@ MOOD_CATEGORIES: tuple[str, ...] = (
     "Fast", "Moody", "Slow", "Heavy Bass", "Dance", "Sad", "Groove",
     "Heartbreak", "Dark", "Love", "Hype", "Uplifting", "Happy", "Sunny",
 )
-# "audit" is the owner's own labelling and the largest source in the library
-# (857 tracks); it was missing here while classify_moods emitted it, so this
-# tuple described a set the data never matched.
+
+# Controlled vocabularies for schema fields that schema.py types as free-form
+# `str | None`. Nothing validates against these — they are the written record of
+# what the allowed values are, so keep them in sync with the writers.
+# "audit" is the owner's own labelling: the training signal the classifier is
+# built on, and the largest single source in the library.
 MOOD_SOURCES: tuple[str, ...] = ("audit", "claude_batch", "centroid", "manual", "inherited")
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
