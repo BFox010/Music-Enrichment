@@ -15,7 +15,7 @@ fast "where are we" pointer between sessions.
 | Phase | Name                          | Module                                                    | Inputs                                                              | Outputs                                                  | Depends on    | Status                          |
 |-------|-------------------------------|-----------------------------------------------------------|---------------------------------------------------------------------|----------------------------------------------------------|---------------|---------------------------------|
 | 0     | scaffolding                   | (config, normalize, _http, schema)                        | —                                                                   | tests + module surface                                   | —             | DONE                            |
-| 1     | scrobble ingest               | [pipeline/ingest_scrobbles.py](pipeline/ingest_scrobbles.py) | `inputs/lastfm_export.json`                                         | `scrobbles.jsonl`                                        | 0             | DONE (13,669 rows)              |
+| 1     | scrobble ingest               | [pipeline/ingest_scrobbles.py](pipeline/ingest_scrobbles.py) | `inputs/lastfm_export.json`                                         | `scrobbles.jsonl`                                        | 0             | DONE (16,549 rows, additive)    |
 | 2     | dedupe                        | [pipeline/dedupe.py](pipeline/dedupe.py)                  | `scrobbles.jsonl`                                                   | `tracks_skeleton.jsonl`                                  | 1             | DONE (2,730 unique tracks)      |
 | A     | iTunes XML enrichment         | [pipeline/enrich_apple_library.py](pipeline/enrich_apple_library.py) | `tracks_skeleton.jsonl`, `inputs/apple_music_library.xml`           | `tracks_with_apple.jsonl`                                | 2             | DONE (122/2,730 matched)        |
 | 3a    | TuneMyMusic export            | [pipeline/export_tunemymusic.py](pipeline/export_tunemymusic.py) | `tracks_with_apple.jsonl`                                           | `inputs/tunemymusic_upload.csv`                          | A             | DONE                            |
@@ -129,6 +129,24 @@ inputs/lastfm_export.json
        ▼
    Phase 8  tracks.jsonl                ← canonical output
 ```
+
+**Phase 1 is additive.** The owner's export workflow is a partial pull covering
+"today back to the last pull", so ingest merges into `scrobbles.jsonl` and dedupes
+on `(scrobbled_at, artist_normalized, track_normalized)` rather than overwriting.
+A write that would leave *fewer* rows than are already on disk is refused —
+`scrobbles.jsonl` is the base record every play-weighted number derives from, and
+Phase 2 recomputes `play_count`, `first_scrobbled`, `last_scrobbled` and
+`peak_year` from whatever survives.
+
+```
+python -m pipeline.ingest_scrobbles                        # merge (default)
+python -m pipeline.ingest_scrobbles --replace              # rebuild; still refuses to shrink
+python -m pipeline.ingest_scrobbles --replace --allow-shrink   # genuinely drop history
+```
+
+For incremental updates without a manual export at all, `POST /api/lastfm/sync`
+([app/lastfm_sync.py](app/lastfm_sync.py)) fetches from the last stored timestamp
+and appends through the same guarded path.
 
 Run end-to-end:
 
