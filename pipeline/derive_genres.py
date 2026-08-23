@@ -3,9 +3,9 @@
 Derives canonical genre labels for every track by mapping three already-present
 sources (in priority order):
 
-  1. ``itunes_genre``   — authoritative when present; only 120 tracks but exact
-  2. ``discogs_styles`` — release-level styles, very genre-specific (~1,923 tracks)
-  3. ``lastfm_tags``    — community tags, broader but high-coverage (~843 tracks)
+  1. ``itunes_genre``   — exact but rare; authoritative wherever it exists
+  2. ``discogs_styles`` — release-level styles, very genre-specific
+  3. ``lastfm_tags``    — community tags, broadest coverage, loosest
 
 Maps each source against GENRE_TAG_MAP to produce a de-duplicated list of
 canonical genres (e.g. ``["Hip-Hop / Rap", "Electronic"]``).  Tracks with none

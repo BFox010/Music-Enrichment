@@ -26,9 +26,9 @@ _COVERAGE_FIELDS: list[tuple[str, str]] = [
     ("apple_music_available", "apple_music_available"),
     ("itunes_match", "itunes_persistent_id"),
     # saturation_tier deliberately absent: it is a curation choice from the
-    # taste profile, not an enrichment. Counting it here reported ~36%
-    # "coverage" when the other ~64% simply have no tier because their artist
-    # isn't in the owner's rotation list — nothing was missing.
+    # taste profile, not an enrichment. Counting it here reported a low
+    # "coverage" for what is really an untiered majority — those artists just
+    # aren't in the owner's rotation list. Nothing was missing.
 ]
 
 _HISTOGRAM_FEATURES: list[str] = [

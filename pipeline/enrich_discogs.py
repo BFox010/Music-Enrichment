@@ -2,8 +2,8 @@
 
 For each track, queries the Discogs ``database/search`` endpoint and pulls the
 ``style`` list off the best-matching release. Discogs is release/album-oriented,
-so we search by ``artist`` + ``release_title`` (the track's album) — which our
-data has for ~99% of tracks — and fall back to an ``artist`` + ``track`` search
+so we search by ``artist`` + ``release_title`` (the track's album), which
+almost every track carries, and fall back to an ``artist`` + ``track`` search
 for the handful with no album. Sets:
   - discogs_styles: list[str]   (e.g. ["Conscious", "Boom Bap"]; [] if no match)
 

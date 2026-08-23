@@ -22,7 +22,7 @@ stored because ReccoBeats also accepts it, not as the identifier of record.
 
 Standing on that: this phase is the **last-resort resolver**. Issue #37 plans a
 Spotify-free chain, and cheaper routes should run first — MusicBrainz
-(``musicbrainz_id`` → ISRC, already on 78% of the library and needing no auth),
+(``musicbrainz_id`` → ISRC, already on most of the library and needing no auth),
 then Deezer. Phase B is for whatever those leave unresolved, and should be
 retired outright if they get coverage high enough.
 
