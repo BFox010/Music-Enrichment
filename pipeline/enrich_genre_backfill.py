@@ -1,10 +1,10 @@
 """Phase 4d — genre backfill from artist-level sources.
 
 Phase 4c derives genres from a track's *own* iTunes genre, Discogs styles, and
-Last.fm *track* tags. ~662 tracks come out with ``genres: []`` — but most of
-them aren't genuinely genre-less; we simply never asked the artist-level
-sources. 63% of the gap has a MusicBrainz ID and 66% a Spotify ID; the genre
-data exists, just one level up.
+Last.fm *track* tags. Whatever it leaves with ``genres: []`` is mostly not
+genuinely genre-less — we simply never asked the artist-level sources. Most of
+that gap already carries a MusicBrainz or Spotify ID, so the genre data exists,
+just one level up.
 
 This phase backfills ONLY the gap tracks (``genres == []``) from two sources
 that need no new auth, cheapest first:

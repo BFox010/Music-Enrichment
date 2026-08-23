@@ -6,8 +6,9 @@ played 106 times and one played once cost the same to label but are worth very
 different amounts to the dashboard's accuracy.
 
 This ranks every unlabeled track by play count, so a short labeling session
-buys back the largest possible share of listening. On the current library the
-top 25 tracks account for ~6% of all plays and the top 100 for ~14%.
+buys back the largest possible share of listening. The script prints the share
+each slice covers when it runs — the head of the queue is worth many times its
+length.
 
 Output mirrors the payload shape of ``classify_moods.write_claude_batch`` so the
 results can be pasted back as ``inputs/claude_mood_results.jsonl`` and picked up

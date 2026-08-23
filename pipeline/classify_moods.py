@@ -460,6 +460,16 @@ def classify(
     if chosen_input is None:
         log.error("No tracks file found — run earlier phases first.")
         raise FileNotFoundError("tracks_with_audio.jsonl or tracks_with_metadata.jsonl")
+
+    # inputs/ is gitignored, so a fresh clone has no audit CSV and Phase 6 would
+    # train on nothing. Fall back to the committed root copy — same recovery the
+    # deepest-intermediate lookup above does for tracks.
+    if not audit_path.exists():
+        root_audit = REPO_ROOT / "mood_audit.csv"
+        if root_audit.exists():
+            log.info("%s missing — using committed %s", audit_path, root_audit)
+            audit_path = root_audit
+
     log.info("Tracks input: %s", chosen_input)
     log.info("Audit input : %s (exists=%s)", audit_path, audit_path.exists())
     log.info("Output      : %s", output_path)

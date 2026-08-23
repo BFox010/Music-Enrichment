@@ -373,3 +373,77 @@ class TestOwnerLabelRecovery:
         rows = [{"artist_normalized": "", "track_normalized": "",
                  "mood_tags": ["Fast"], "mood_source": "audit"}]
         assert _recover_owner_labels(rows) == {}
+
+
+class TestAuditFallbackToCommittedCSV:
+    """Phase 6 must find owner labels on a fresh clone.
+
+    ``inputs/`` is gitignored, so ``inputs/existing_audit.csv`` is absent after a
+    clone. ``_recover_owner_labels`` covers labels already written into the
+    tracks file, but cannot recover a label for a track that never carried one —
+    which is exactly what the committed ``mood_audit.csv`` supplies.
+    """
+
+    @staticmethod
+    def _track(artist: str, track: str, **over) -> dict:
+        row = {
+            "artist": artist, "track": track,
+            "artist_normalized": artist.lower(), "track_normalized": track.lower(),
+            "audio_features": _features(),
+            "mood_tags": None, "mood_source": None,
+        }
+        row.update(over)
+        return row
+
+    def _run(self, tmp: Path, *, write_root_csv: bool) -> list[dict]:
+        import pipeline.classify_moods as cm
+
+        library = [
+            self._track("Portishead", "Roads", audio_features=_features(energy=0.2, valence=0.1)),
+            self._track("Daft Punk", "One More Time", audio_features=_features(energy=0.9, valence=0.9)),
+        ]
+        tracks_file = tmp / "tracks_with_availability.jsonl"
+        tracks_file.write_text(
+            "".join(json.dumps(r) + "\n" for r in library), encoding="utf-8"
+        )
+
+        if write_root_csv:
+            (tmp / "mood_audit.csv").write_text(
+                "artist,track,mood_tags\n"
+                "Portishead,Roads,\"Sad, Slow\"\n"
+                "Daft Punk,One More Time,\"Dance, Hype\"\n",
+                encoding="utf-8",
+            )
+
+        out = tmp / "out.jsonl"
+        # Redirect the Claude-batch write too: it resolves from INPUTS_DIR at
+        # import, so patching REPO_ROOT alone would leave it writing into the
+        # real repo. The suite must not touch the working tree.
+        original, original_batch = cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH
+        cm.REPO_ROOT = tmp
+        cm.CLAUDE_BATCH_PATH = tmp / "claude_mood_batch.jsonl"
+        try:
+            cm.classify(
+                audit_path=tmp / "inputs" / "existing_audit.csv",   # deliberately absent
+                tracks_path=tracks_file,
+                output_path=out,
+                claude_results_path=tmp / "nonexistent_claude.jsonl",
+                run_log_path=tmp / "run.log",
+            )
+        finally:
+            cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH = original, original_batch
+        return [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+    def test_committed_csv_is_used_when_inputs_csv_is_absent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = self._run(Path(tmp), write_root_csv=True)
+        by = {r["track_normalized"]: r for r in rows}
+        assert by["roads"]["mood_source"] == "audit"
+        assert by["roads"]["mood_tags"] == ["Sad", "Slow"]
+        assert by["one more time"]["mood_source"] == "audit"
+
+    def test_without_the_committed_csv_there_is_no_owner_label(self) -> None:
+        """Guards the test above: absent the CSV, nothing supplies 'audit'."""
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = self._run(Path(tmp), write_root_csv=False)
+        assert all(r.get("mood_source") != "audit" for r in rows)
