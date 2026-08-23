@@ -38,7 +38,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from pipeline._http import RateLimitedClient
+from pipeline._http import FORCE_OFF, RateLimitedClient
 from pipeline.config import (
     LASTFM_API_ROOT,
     LASTFM_CACHE,
@@ -117,8 +117,14 @@ def enrich(
     run_log_path: Path | None = None,
     *,
     limit: int | None = None,
+    force: str = FORCE_OFF,
 ) -> dict[str, int]:
-    """Backfill genres for tracks left empty by phase 4c, from artist sources."""
+    """Backfill genres for tracks left empty by phase 4c, from artist sources.
+
+    ``force`` (see ``pipeline._http.FORCE_MODES``) applies to both the Last.fm
+    and MusicBrainz caches. It does not widen the candidate set — this phase
+    only ever touches tracks that still have no genre.
+    """
     configure_logging(run_log_path)
     log.info("=== Phase 4d: genre backfill (artist-level sources) ===")
 
@@ -152,12 +158,14 @@ def enrich(
 
     lastfm = RateLimitedClient(
         LASTFM_CACHE, rate_per_second=LASTFM_RATE_LIMIT,
-        user_agent="MusicEnrichment/1.0", flush_every=100,
+        user_agent="MusicEnrichment/1.0", flush_every=100, force=force,
     )
     musicbrainz = RateLimitedClient(
         MUSICBRAINZ_CACHE, rate_per_second=MUSICBRAINZ_RATE_LIMIT,
-        user_agent=mb_user_agent, flush_every=25,
+        user_agent=mb_user_agent, flush_every=25, force=force,
     )
+    lastfm.warn_if_forced(len(gap))
+    musicbrainz.warn_if_forced(len(gap))
 
     stats = {
         "total": len(tracks),
@@ -169,57 +177,60 @@ def enrich(
     }
     t0 = time.monotonic()
 
-    for i, track in enumerate(gap, start=1):
-        # 1 — Last.fm artist tags. Try the full credit first; if a collab string
-        # (e.g. "A$AP NAST & D33J") yields nothing, retry on the primary artist,
-        # which Last.fm indexes the genre under.
-        candidates = [(track["artist"], track["artist_normalized"])]
-        primary = first_artist(track["artist"])
-        if primary != track["artist"]:
-            candidates.append((primary, normalize_artist(primary)))
+    # finally, not trailing calls: an interrupt mid-loop must still persist
+    # every response already paid for — MusicBrainz is capped at 1 req/s.
+    try:
+        for i, track in enumerate(gap, start=1):
+            # 1 — Last.fm artist tags. Try the full credit first; if a collab string
+            # (e.g. "A$AP NAST & D33J") yields nothing, retry on the primary artist,
+            # which Last.fm indexes the genre under.
+            candidates = [(track["artist"], track["artist_normalized"])]
+            primary = first_artist(track["artist"])
+            if primary != track["artist"]:
+                candidates.append((primary, normalize_artist(primary)))
 
-        la_tags: list[str] = []
-        genres: list[str] = []
-        via_first_artist = False
-        for idx, (cand_artist, cand_norm) in enumerate(candidates):
-            tags = _fetch_lastfm_artist_tags(lastfm, api_key, cand_artist, cand_norm)
-            if idx == 0:
-                la_tags = tags  # keep the full-credit tags for transparency
-            mapped = _genres_from_tags(tags)
-            if mapped:
-                genres = mapped
-                la_tags = tags
-                via_first_artist = idx > 0
-                break
-        track["lastfm_artist_tags"] = la_tags
+            la_tags: list[str] = []
+            genres: list[str] = []
+            via_first_artist = False
+            for idx, (cand_artist, cand_norm) in enumerate(candidates):
+                tags = _fetch_lastfm_artist_tags(lastfm, api_key, cand_artist, cand_norm)
+                if idx == 0:
+                    la_tags = tags  # keep the full-credit tags for transparency
+                mapped = _genres_from_tags(tags)
+                if mapped:
+                    genres = mapped
+                    la_tags = tags
+                    via_first_artist = idx > 0
+                    break
+            track["lastfm_artist_tags"] = la_tags
 
-        if genres:
-            stats["recovered_lastfm_artist"] += 1
-            if via_first_artist:
-                stats["recovered_via_first_artist"] += 1
-        elif track.get("artist_mbid"):
-            # 2 — MusicBrainz artist genres (slow, only when Last.fm missed)
-            mb_names = _fetch_musicbrainz_artist_genres(musicbrainz, track["artist_mbid"])
-            track["musicbrainz_genres"] = mb_names
-            genres = _genres_from_tags(mb_names)
             if genres:
-                stats["recovered_musicbrainz"] += 1
+                stats["recovered_lastfm_artist"] += 1
+                if via_first_artist:
+                    stats["recovered_via_first_artist"] += 1
+            elif track.get("artist_mbid"):
+                # 2 — MusicBrainz artist genres (slow, only when Last.fm missed)
+                mb_names = _fetch_musicbrainz_artist_genres(musicbrainz, track["artist_mbid"])
+                track["musicbrainz_genres"] = mb_names
+                genres = _genres_from_tags(mb_names)
+                if genres:
+                    stats["recovered_musicbrainz"] += 1
 
-        track["genres"] = genres
-        if not genres:
-            stats["still_empty"] += 1
+            track["genres"] = genres
+            if not genres:
+                stats["still_empty"] += 1
 
-        if i % 100 == 0 or i == len(gap):
-            elapsed = time.monotonic() - t0
-            rate = i / elapsed if elapsed > 0 else 0
-            log.info(
-                "Progress: %d/%d gap tracks — %.1f/sec — lastfm=%d mb=%d empty=%d",
-                i, len(gap), rate, stats["recovered_lastfm_artist"],
-                stats["recovered_musicbrainz"], stats["still_empty"],
-            )
-
-    lastfm.flush()
-    musicbrainz.flush()
+            if i % 100 == 0 or i == len(gap):
+                elapsed = time.monotonic() - t0
+                rate = i / elapsed if elapsed > 0 else 0
+                log.info(
+                    "Progress: %d/%d gap tracks — %.1f/sec — lastfm=%d mb=%d empty=%d",
+                    i, len(gap), rate, stats["recovered_lastfm_artist"],
+                    stats["recovered_musicbrainz"], stats["still_empty"],
+                )
+    finally:
+        lastfm.flush()
+        musicbrainz.flush()
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -235,6 +246,8 @@ def enrich(
         stats["recovered_lastfm_artist"], stats["recovered_via_first_artist"],
         stats["recovered_musicbrainz"], stats["still_empty"],
     )
+    log.info("  %s", lastfm.cache_summary())
+    log.info("  %s", musicbrainz.cache_summary())
     log.info("Wrote → %s", output_path)
     return stats
 

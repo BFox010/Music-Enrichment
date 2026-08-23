@@ -29,7 +29,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from pipeline._http import RateLimitedClient
+from pipeline._http import FORCE_OFF, RateLimitedClient
 from pipeline.config import (
     DISCOGS_API_ROOT,
     DISCOGS_CACHE,
@@ -102,6 +102,7 @@ def enrich(
     run_log_path: Path | None = None,
     *,
     limit: int | None = None,
+    force: str = FORCE_OFF,
 ) -> dict[str, int]:
     """Enrich tracks with Discogs styles.
 
@@ -112,6 +113,8 @@ def enrich(
         back to the skeleton.
     limit: int | None
         Process only the first N tracks (debug/dry-run). None = all.
+    force: str
+        Cache force mode — see ``pipeline._http.FORCE_MODES``.
     """
     configure_logging(run_log_path)
     log.info("=== Phase 4b: Discogs styles ===")
@@ -152,7 +155,9 @@ def enrich(
         rate_per_second=DISCOGS_RATE_LIMIT,
         user_agent=user_agent,
         flush_every=25,
+        force=force,
     )
+    client.warn_if_forced(len(tracks))
 
     stats = {
         "total": len(tracks),
@@ -164,34 +169,38 @@ def enrich(
     t0 = time.monotonic()
     enriched: list[dict] = []
 
-    for i, track in enumerate(tracks, start=1):
-        params, cache_key = _query_for_track(track, token)
-        response = client.get(DISCOGS_SEARCH_URL, params, cache_key)
+    # finally, not a trailing call: an interrupt mid-loop must still persist
+    # every response already paid for at the Discogs rate limit.
+    try:
+        for i, track in enumerate(tracks, start=1):
+            params, cache_key = _query_for_track(track, token)
+            response = client.get(DISCOGS_SEARCH_URL, params, cache_key)
 
-        if isinstance(response, dict) and response.get("_error"):
-            stats["errors"] += 1
-            track["discogs_styles"] = []
-        else:
-            styles = _extract_discogs_styles(response)
-            track["discogs_styles"] = styles
-            if styles:
-                stats["with_styles"] += 1
+            if isinstance(response, dict) and response.get("_error"):
+                stats["errors"] += 1
+                track["discogs_styles"] = []
             else:
-                stats["no_styles"] += 1
-        # Keep downstream genre field present without overwriting it
-        track.setdefault("genres", [])
-        enriched.append(track)
+                styles = _extract_discogs_styles(response)
+                track["discogs_styles"] = styles
+                if styles:
+                    stats["with_styles"] += 1
+                else:
+                    stats["no_styles"] += 1
+            # Keep downstream genre field present without overwriting it
+            track.setdefault("genres", [])
+            enriched.append(track)
 
-        if i % 250 == 0 or i == len(tracks):
-            elapsed = time.monotonic() - t0
-            rate = i / elapsed if elapsed > 0 else 0
-            log.info(
-                "Progress: %d/%d (%.1f%%) — %.2f tracks/sec — with_styles=%d no_styles=%d errors=%d",
-                i, len(tracks), 100 * i / len(tracks),
-                rate, stats["with_styles"], stats["no_styles"], stats["errors"],
-            )
-
-    client.flush()
+            if i % 250 == 0 or i == len(tracks):
+                elapsed = time.monotonic() - t0
+                rate = i / elapsed if elapsed > 0 else 0
+                log.info(
+                    "Progress: %d/%d (%.1f%%) — %.2f tracks/sec — with_styles=%d no_styles=%d errors=%d",
+                    i, len(tracks), 100 * i / len(tracks),
+                    rate, stats["with_styles"], stats["no_styles"], stats["errors"],
+                )
+    finally:
+        client.flush()
+    stats.update(client.stats)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -204,6 +213,7 @@ def enrich(
         100 * stats["with_styles"] / stats["total"] if stats["total"] else 0,
         stats["no_styles"], stats["errors"],
     )
+    log.info("  %s", client.cache_summary())
     log.info("Wrote → %s", output_path)
     return stats
 

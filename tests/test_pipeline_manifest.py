@@ -7,6 +7,7 @@ order. Any divergence between manifest and orchestrator must fail loudly here.
 from __future__ import annotations
 
 import importlib
+import inspect
 
 import pytest
 
@@ -183,6 +184,98 @@ class TestModuleImports:
             "The following manifest callables could not be resolved:\n"
             + "\n".join(f"  {f}" for f in failures)
         )
+
+
+# ── Anti-drift: accepts_force matches the real signatures ─────────────────
+
+
+class TestAcceptsForceAntiDrift:
+    """``--force`` is dispatched off the manifest flag, so the flag and the
+    callable's signature must never disagree — a phase flagged but not taking
+    ``force`` would blow up at runtime, and an unflagged one silently ignores
+    the flag."""
+
+    def _callables(self, phases):
+        for phase in phases:
+            if phase.get("manual"):
+                continue
+            mod = importlib.import_module(phase["module"])
+            yield phase, getattr(mod, phase["callable"])
+
+    def test_flagged_phases_accept_a_force_kwarg(self, phases):
+        for phase, fn in self._callables(phases):
+            if not phase.get("accepts_force"):
+                continue
+            params = inspect.signature(fn).parameters
+            assert "force" in params, (
+                f"Phase {phase['id']!r} is flagged accepts_force but "
+                f"{phase['module']}.{phase['callable']} takes no 'force' parameter"
+            )
+
+    def test_phases_taking_force_are_flagged(self, phases):
+        for phase, fn in self._callables(phases):
+            if "force" not in inspect.signature(fn).parameters:
+                continue
+            assert phase.get("accepts_force"), (
+                f"{phase['module']}.{phase['callable']} takes 'force' but phase "
+                f"{phase['id']!r} is not flagged accepts_force — --force would "
+                f"silently skip it"
+            )
+
+    def test_the_api_phases_are_the_flagged_ones(self, phases):
+        flagged = {str(p["id"]) for p in phases if p.get("accepts_force")}
+        assert flagged == {"4", "4b", "4d", "5"}
+
+    def test_orchestrator_passes_force_only_to_flagged_phases(self, monkeypatch):
+        """run() must not hand force= to a phase whose callable cannot take it."""
+        from pipeline import run_full_pipeline as rfp
+
+        seen: dict[str, dict] = {}
+
+        def fake_phase(phase_id, name, fn, *args, **kwargs):
+            seen[phase_id] = kwargs
+            return rfp.OK
+
+        monkeypatch.setattr(rfp, "_phase", fake_phase)
+        monkeypatch.setattr(rfp, "_run_pytest", lambda: True)
+        rfp.run(skip_tests=True, skip_pause=True, force="errors")
+
+        flagged = {str(p["id"]) for p in rfp._PHASES if p.get("accepts_force")}
+        for phase_id, kwargs in seen.items():
+            if phase_id in flagged:
+                assert kwargs == {"force": "errors"}, phase_id
+            else:
+                assert kwargs == {}, phase_id
+
+    def test_default_run_passes_no_force(self, monkeypatch):
+        from pipeline import run_full_pipeline as rfp
+
+        seen: dict[str, dict] = {}
+        monkeypatch.setattr(
+            rfp, "_phase",
+            lambda pid, name, fn, *a, **kw: (seen.__setitem__(pid, kw), rfp.OK)[1],
+        )
+        rfp.run(skip_tests=True, skip_pause=True)
+        assert all(kwargs == {} for kwargs in seen.values())
+
+
+class TestForceCliParsing:
+    def test_force_maps_to_all(self):
+        from pipeline.run_full_pipeline import _parse_args
+        assert _parse_args(["--force"]).force == "all"
+
+    def test_force_errors_maps_to_errors(self):
+        from pipeline.run_full_pipeline import _parse_args
+        assert _parse_args(["--force-errors"]).force == "errors"
+
+    def test_default_is_off(self):
+        from pipeline.run_full_pipeline import _parse_args
+        assert _parse_args([]).force == "off"
+
+    def test_force_and_force_errors_are_mutually_exclusive(self):
+        from pipeline.run_full_pipeline import _parse_args
+        with pytest.raises(SystemExit):
+            _parse_args(["--force", "--force-errors"])
 
 
 # ── find_phase_index helper ───────────────────────────────────────────────

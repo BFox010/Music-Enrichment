@@ -10,6 +10,7 @@ Usage:
     python -m pipeline.run_full_pipeline --skip-pause
     python -m pipeline.run_full_pipeline --start-from 4
     python -m pipeline.run_full_pipeline --start-from 3c
+    python -m pipeline.run_full_pipeline --force-errors
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from pipeline._http import FORCE_ALL, FORCE_ERRORS, FORCE_OFF
 from pipeline.config import (
     INPUT_LASTFM_EXPORT,
     REPO_ROOT,
@@ -135,12 +137,16 @@ def run(
     skip_tests: bool = False,
     skip_pause: bool = False,
     start_from: str = "1",
+    force: str = FORCE_OFF,
     run_log_path: Path | None = None,
 ) -> dict[str, str]:
     """Run pipeline phases in manifest order; return dict of phase_id → status.
 
     Status is one of OK / SKIPPED / FAILED. Use ``failed_phases()`` to test for
     genuine errors — a SKIPPED phase is an expected no-op, not a failure.
+
+    ``force`` reaches only the phases the manifest flags ``accepts_force`` — the
+    API-backed ones. See ``pipeline._http.FORCE_MODES``.
     """
     if run_log_path is None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
@@ -148,6 +154,8 @@ def run(
     configure_logging(run_log_path)
     log.info("Pipeline run started — log: %s", run_log_path)
     log.info("Execution order: %s", get_execution_order())
+    if force != FORCE_OFF:
+        log.warning("Cache force mode: %s — API phases will re-fetch", force)
 
     results: dict[str, str] = {}
 
@@ -209,7 +217,10 @@ def run(
                 results[phase_id] = FAILED
             continue
 
-        results[phase_id] = _phase(phase_id, phase_def["name"], fn)
+        kwargs = {}
+        if force != FORCE_OFF and phase_def.get("accepts_force"):
+            kwargs["force"] = force
+        results[phase_id] = _phase(phase_id, phase_def["name"], fn, **kwargs)
 
     # ── Summary ──────────────────────────────────────────────────────────
     log.info("=" * 60)
@@ -230,6 +241,18 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
                    help="Don't pause when manual steps are pending.")
     p.add_argument("--start-from", default="1",
                    help="Phase ID to start from (e.g. '1', '3c', 'A'). Default: 1.")
+    force_group = p.add_mutually_exclusive_group()
+    force_group.add_argument(
+        "--force", dest="force", action="store_const", const=FORCE_ALL,
+        default=FORCE_OFF,
+        help="Bypass the HTTP cache entirely on API phases and re-fetch "
+             "everything. Slow — see the per-phase ETA warning.",
+    )
+    force_group.add_argument(
+        "--force-errors", dest="force", action="store_const", const=FORCE_ERRORS,
+        help="Re-fetch only cached failures on API phases, ignoring their TTL. "
+             "The cheap way to clear poisoned cache entries.",
+    )
     return p.parse_args(argv)
 
 
@@ -243,6 +266,7 @@ if __name__ == "__main__":
         skip_tests=args.skip_tests,
         skip_pause=args.skip_pause,
         start_from=args.start_from,
+        force=args.force,
     )
     failed = failed_phases(results)
     if failed:

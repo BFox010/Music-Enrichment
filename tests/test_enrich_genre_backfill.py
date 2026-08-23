@@ -58,6 +58,12 @@ class FakeClient:
     def flush(self) -> None:
         pass
 
+    def warn_if_forced(self, _n_requests: int) -> None:
+        pass
+
+    def cache_summary(self) -> str:
+        return "cache (fake)"
+
 
 def _run(tracks: list[dict], responses: dict[str, dict], monkeypatch) -> tuple[list[dict], dict]:
     FakeClient.responses = responses

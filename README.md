@@ -172,12 +172,24 @@ All phases must preserve `canonical_track_id`. No phase may drop or overwrite it
 Today, the orchestrator supports `--start-from N` to skip earlier phases. Phase
 modules overwrite their output JSONL on each run.
 
-Target state (rolling out in Phase α Step 3 and Phase δ Step 17):
+API enrichment phases (4, 4b, 4d, 5) cache every response — successes *and*
+failures — to a per-API JSON file under `.cache/`, and skip anything already
+cached. Two flags override that:
+
+| Flag | Effect |
+|---|---|
+| `--force-errors` | Re-fetch only cached failures, ignoring their TTL. The cheap way to clear poisoned entries. |
+| `--force`        | Bypass the cache entirely and re-fetch everything. Slow — each phase logs an ETA first. |
+
+Both are dispatched off the manifest's `accepts_force` flag, so a phase only
+receives them if its callable actually takes `force=`; the anti-drift test in
+[tests/test_pipeline_manifest.py](tests/test_pipeline_manifest.py) checks both
+directions.
+
+Still target state (Phase α Step 3 / Phase δ Step 17):
 
 - Phases skip already-completed outputs by default.
-- `--force` flag overwrites completed outputs.
 - `--phase <name>` runs a single phase.
-- API enrichment phases cache to SQLite (`cache.db`) and never re-fetch unless `--force`.
 - All phases are idempotent.
 
 ---
@@ -205,11 +217,25 @@ One phase = one branch = one PR. Branch names mirror plan section names:
 
 Every external enrichment phase implements:
 
-- SQLite caching — no re-fetch unless `--force`.
+- Disk-backed JSON cache per API (`.cache/lastfm.json`, `musicbrainz.json`,
+  `discogs.json`, `apple_music.json`) — no re-fetch unless the entry has expired
+  or `--force` / `--force-errors` is passed.
 - Timeout handling.
-- Exponential backoff, retry max = 3.
+- Exponential backoff, retry max = `HTTP_MAX_RETRIES` (5).
 - Non-fatal failures with structured error logging.
-- Resumable execution — already-cached records are skipped.
+- **Expiring negative cache.** Failures are cached too, so a re-run is cheap, but
+  they carry a `_cached_at` timestamp and expire: a genuine `not_found` after
+  `HTTP_NEGATIVE_TTL_SECONDS` (30 days), anything transient (`max_retries`,
+  `invalid_json`) after `HTTP_TRANSIENT_TTL_SECONDS` (6 hours). A transient
+  network blip therefore heals itself on the next day's run instead of freezing
+  that track's enrichment permanently. Cache entries written before this format
+  have no timestamp and count as expired — the first run after upgrading retries
+  them once.
+- **Crash-safe.** Every phase flushes its cache from a `finally`, so an
+  interrupted run keeps every response it already paid for at the rate limit.
+- Resumable execution — already-cached records are skipped. Each phase logs a
+  cache summary (entries, cached `not_found` vs transient, hits/misses/refetches)
+  so a low coverage number can be traced to genuine no-match versus cached failure.
 
 See [pipeline/_http.py](pipeline/_http.py) for the shared HTTP layer.
 
