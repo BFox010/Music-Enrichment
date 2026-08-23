@@ -29,6 +29,7 @@ from pipeline.config import (
     REPO_ROOT,
     TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_METADATA_PATH,
+    TRACKS_WITH_SPOTIFY_PATH,
     configure_logging,
     get_logger,
 )
@@ -55,10 +56,11 @@ _AUDIO_FEATURE_COLUMNS: dict[str, str] = {
 }
 
 # Read from the DEEPEST existing intermediate so we don't lose downstream data
-# (e.g. apple_music availability set by Phase 5).
+# (e.g. apple_music availability set by Phase 5, or spotify_id set by Phase B).
 _INPUT_PRIORITY = [
     REPO_ROOT / "tracks_with_availability.jsonl",
     TRACKS_WITH_METADATA_PATH,
+    TRACKS_WITH_SPOTIFY_PATH,
     TRACKS_WITH_APPLE_PATH,
     REPO_ROOT / "tracks_skeleton.jsonl",
 ]
