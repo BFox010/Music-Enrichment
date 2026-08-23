@@ -58,7 +58,10 @@ MOOD_CATEGORIES: tuple[str, ...] = (
     "Fast", "Moody", "Slow", "Heavy Bass", "Dance", "Sad", "Groove",
     "Heartbreak", "Dark", "Love", "Hype", "Uplifting", "Happy", "Sunny",
 )
-MOOD_SOURCES: tuple[str, ...] = ("claude_batch", "centroid", "manual", "inherited")
+# "audit" is the owner's own labelling and the largest source in the library
+# (857 tracks); it was missing here while classify_moods emitted it, so this
+# tuple described a set the data never matched.
+MOOD_SOURCES: tuple[str, ...] = ("audit", "claude_batch", "centroid", "manual", "inherited")
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
 AUDIO_FEATURE_SOURCES: tuple[str, ...] = ("exportify", "reccobeats")
@@ -87,6 +90,14 @@ ITUNES_RATE_LIMIT: float = 0.33       # ~20/min (conservative)
 HTTP_MAX_RETRIES: int = 5
 HTTP_BACKOFF_BASE: float = 0.5
 HTTP_BACKOFF_MAX: float = 30.0
+
+# ── Negative-cache expiry ────────────────────────────────────────────────
+# Failures are cached like successes so re-runs stay cheap, but they must not
+# be permanent: one transient blip would otherwise freeze a track's enrichment
+# forever. A genuine 404 is stable and gets a long TTL; anything transient
+# (max_retries, invalid_json, network error) retries on the next day's run.
+HTTP_NEGATIVE_TTL_SECONDS: float = 30 * 24 * 3600   # not_found — genuine no-match
+HTTP_TRANSIENT_TTL_SECONDS: float = 6 * 3600        # max_retries / invalid_json
 
 # ── Cache freshness ──────────────────────────────────────────────────────
 APPLE_MUSIC_CACHE_DAYS: int = 90

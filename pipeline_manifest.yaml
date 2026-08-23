@@ -18,6 +18,9 @@
 #   manual      true = operator action required; orchestrator pauses here
 #   requires_file   Skip (not abort) if this path is missing at runtime
 #   optional    true = skip gracefully on ImportError (module not yet built)
+#   accepts_force   true = the callable takes force= and honours --force /
+#                   --force-errors (API phases only; anti-drift tested against
+#                   the real signature)
 #   instructions    Shown to operator when manual=true and output is missing
 
 schema_version: 5
@@ -110,6 +113,7 @@ phases:
     name: Last.fm + MusicBrainz enrichment
     module: pipeline.enrich_metadata
     callable: enrich
+    accepts_force: true
     inputs:
       - tracks_with_audio.jsonl
     outputs:
@@ -122,6 +126,7 @@ phases:
     name: Discogs styles
     module: pipeline.enrich_discogs
     callable: enrich
+    accepts_force: true
     inputs:
       - tracks_with_metadata.jsonl
     outputs:
@@ -147,6 +152,7 @@ phases:
     name: genre backfill (artist-level)
     module: pipeline.enrich_genre_backfill
     callable: enrich
+    accepts_force: true
     inputs:
       - tracks_with_genres.jsonl
     outputs:
@@ -172,6 +178,7 @@ phases:
     name: Apple Music availability
     module: pipeline.check_apple_music
     callable: check
+    accepts_force: true
     inputs:
       - tracks_resolved.jsonl
     outputs:

@@ -6,9 +6,10 @@ and matches the response back to the track. Sets:
   - apple_music_id: str | None    (Apple's trackId — distinct from iTunes Persistent ID)
   - apple_music_checked_at: str   (ISO date)
 
-Caching: ``.cache/itunes_search.json``, keyed by ``artist_norm|track_norm``.
+Caching: ``.cache/apple_music.json``, keyed by ``artist_norm|track_norm``.
 Re-checks only when ``apple_music_checked_at`` is older than
-``APPLE_MUSIC_CACHE_DAYS`` (90 by default).
+``APPLE_MUSIC_CACHE_DAYS`` (90 by default). Both that gate and the HTTP cache are
+bypassed under ``force`` — see ``pipeline._http``.
 
 Usage:
     python -m pipeline.check_apple_music
@@ -23,7 +24,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from pipeline._http import RateLimitedClient
+from pipeline._http import FORCE_OFF, RateLimitedClient
 from pipeline.config import (
     APPLE_MUSIC_CACHE,
     APPLE_MUSIC_CACHE_DAYS,
@@ -96,8 +97,14 @@ def check(
     run_log_path: Path | None = None,
     *,
     limit: int | None = None,
+    force: str = FORCE_OFF,
 ) -> dict[str, int]:
-    """Probe iTunes Search for each track. Returns stats dict."""
+    """Probe iTunes Search for each track. Returns stats dict.
+
+    ``force`` (see ``pipeline._http.FORCE_MODES``) bypasses both the HTTP cache
+    and the ``apple_music_checked_at`` freshness gate — without the second, a
+    forced run would skip almost every track before the client is consulted.
+    """
     configure_logging(run_log_path)
     log.info("=== Phase 5: Apple Music availability ===")
 
@@ -125,64 +132,71 @@ def check(
         rate_per_second=ITUNES_RATE_LIMIT,
         user_agent="MusicEnrichment/1.0 (q9nf44tycd@privaterelay.appleid.com)",
         flush_every=50,
+        force=force,
     )
+    client.warn_if_forced(len(tracks))
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     stats = {"total": len(tracks), "available": 0, "unavailable": 0, "skipped_fresh": 0, "errors": 0}
     t0 = time.monotonic()
     enriched: list[dict] = []
 
-    for i, track in enumerate(tracks, start=1):
-        # Skip if checked recently
-        if not _is_stale(track.get("apple_music_checked_at")):
-            stats["skipped_fresh"] += 1
+    # finally, not a trailing call: an interrupt mid-loop must still persist
+    # every response already paid for at the iTunes rate limit (0.33 req/s).
+    try:
+        for i, track in enumerate(tracks, start=1):
+            # Skip if checked recently — unless forced, in which case the
+            # freshness gate would swallow the force before the client sees it.
+            if force == FORCE_OFF and not _is_stale(track.get("apple_music_checked_at")):
+                stats["skipped_fresh"] += 1
+                enriched.append(track)
+                continue
+
+            cache_key = f"{track['artist_normalized']}|{track['track_normalized']}"
+            # Build search term — limit to 200 chars per iTunes API guidance
+            term = f"{track['artist']} {track['track']}"[:200]
+            params = {"term": term, "entity": "song", "country": "us", "limit": 25}
+            response = client.get(ITUNES_SEARCH_API, params, cache_key)
+
+            if isinstance(response, dict) and response.get("_error"):
+                stats["errors"] += 1
+                track.update({
+                    "apple_music_available": False,
+                    "apple_music_id": None,
+                    "apple_music_checked_at": today,
+                })
+                enriched.append(track)
+                continue
+
+            match = _best_match(response, track["artist_normalized"], track["track_normalized"])
+            if match:
+                stats["available"] += 1
+                track.update({
+                    "apple_music_available": True,
+                    "apple_music_id": str(match.get("trackId") or "") or None,
+                    "apple_music_checked_at": today,
+                })
+            else:
+                stats["unavailable"] += 1
+                track.update({
+                    "apple_music_available": False,
+                    "apple_music_id": None,
+                    "apple_music_checked_at": today,
+                })
             enriched.append(track)
-            continue
 
-        cache_key = f"{track['artist_normalized']}|{track['track_normalized']}"
-        # Build search term — limit to 200 chars per iTunes API guidance
-        term = f"{track['artist']} {track['track']}"[:200]
-        params = {"term": term, "entity": "song", "country": "us", "limit": 25}
-        response = client.get(ITUNES_SEARCH_API, params, cache_key)
-
-        if isinstance(response, dict) and response.get("_error"):
-            stats["errors"] += 1
-            track.update({
-                "apple_music_available": False,
-                "apple_music_id": None,
-                "apple_music_checked_at": today,
-            })
-            enriched.append(track)
-            continue
-
-        match = _best_match(response, track["artist_normalized"], track["track_normalized"])
-        if match:
-            stats["available"] += 1
-            track.update({
-                "apple_music_available": True,
-                "apple_music_id": str(match.get("trackId") or "") or None,
-                "apple_music_checked_at": today,
-            })
-        else:
-            stats["unavailable"] += 1
-            track.update({
-                "apple_music_available": False,
-                "apple_music_id": None,
-                "apple_music_checked_at": today,
-            })
-        enriched.append(track)
-
-        if i % 250 == 0 or i == len(tracks):
-            elapsed = time.monotonic() - t0
-            rate = i / elapsed if elapsed > 0 else 0
-            eta_min = (len(tracks) - i) / rate / 60 if rate > 0 else 0
-            log.info(
-                "Progress: %d/%d (%.1f%%) — %.2f tracks/sec — ETA %.1f min — avail=%d unavail=%d errors=%d",
-                i, len(tracks), 100 * i / len(tracks), rate, eta_min,
-                stats["available"], stats["unavailable"], stats["errors"],
-            )
-
-    client.flush()
+            if i % 250 == 0 or i == len(tracks):
+                elapsed = time.monotonic() - t0
+                rate = i / elapsed if elapsed > 0 else 0
+                eta_min = (len(tracks) - i) / rate / 60 if rate > 0 else 0
+                log.info(
+                    "Progress: %d/%d (%.1f%%) — %.2f tracks/sec — ETA %.1f min — avail=%d unavail=%d errors=%d",
+                    i, len(tracks), 100 * i / len(tracks), rate, eta_min,
+                    stats["available"], stats["unavailable"], stats["errors"],
+                )
+    finally:
+        client.flush()
+    stats.update(client.stats)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -194,6 +208,7 @@ def check(
         stats["available"], stats["unavailable"], stats["errors"], stats["skipped_fresh"],
         stats["total"],
     )
+    log.info("  %s", client.cache_summary())
     log.info("Wrote → %s", output_path)
     return stats
 

@@ -78,6 +78,12 @@ def validate_manifest(manifest: dict[str, Any]) -> list[str]:
             if not phase.get("callable"):
                 errors.append(f"phase {pid!r}: missing 'callable'")
 
+        if "accepts_force" in phase and not isinstance(phase["accepts_force"], bool):
+            errors.append(
+                f"phase {pid!r}: 'accepts_force' must be a bool, got "
+                f"{phase['accepts_force']!r}"
+            )
+
         for dep in phase.get("depends_on", []):
             if str(dep) not in ids:
                 # deps must reference phases that appear earlier in the list

@@ -26,7 +26,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from pipeline._http import RateLimitedClient
+from pipeline._http import FORCE_OFF, RateLimitedClient
 from pipeline.config import (
     LASTFM_API_ROOT,
     LASTFM_CACHE,
@@ -140,6 +140,7 @@ def enrich(
     run_log_path: Path | None = None,
     *,
     limit: int | None = None,
+    force: str = FORCE_OFF,
 ) -> dict[str, int]:
     """Enrich tracks with Last.fm tags and MusicBrainz IDs.
 
@@ -149,6 +150,8 @@ def enrich(
         Defaults to ``tracks_with_apple.jsonl`` if it exists, otherwise skeleton.
     limit: int | None
         Process only the first N tracks (debug/dry-run). None = all.
+    force: str
+        Cache force mode — see ``pipeline._http.FORCE_MODES``.
     """
     configure_logging(run_log_path)
     log.info("=== Phase 4: Last.fm + MusicBrainz enrichment ===")
@@ -191,7 +194,9 @@ def enrich(
         rate_per_second=LASTFM_RATE_LIMIT,
         user_agent="MusicEnrichment/1.0",
         flush_every=100,
+        force=force,
     )
+    client.warn_if_forced(len(tracks))
 
     stats = {
         "total": len(tracks),
@@ -205,38 +210,42 @@ def enrich(
     t0 = time.monotonic()
 
     enriched: list[dict] = []
-    for i, track in enumerate(tracks, start=1):
-        fields, response, variation = _lookup_with_variations(
-            client, api_key, track, artist_block
-        )
-
-        if _is_actionable(fields):
-            stats["matched"] += 1
-            if variation != "original":
-                stats["recovered_via_variation"] += 1
-                variation_hits[variation] = variation_hits.get(variation, 0) + 1
-        elif isinstance(response, dict) and response.get("_error") \
-                and response["_error"] != "not_found":
-            stats["errors"] += 1
-        else:
-            stats["no_match"] += 1
-
-        track.update(fields)
-        # Initialise downstream fields if absent
-        track.setdefault("genres", [])
-        track.setdefault("discogs_styles", [])
-        enriched.append(track)
-
-        if i % 250 == 0 or i == len(tracks):
-            elapsed = time.monotonic() - t0
-            rate = i / elapsed if elapsed > 0 else 0
-            log.info(
-                "Progress: %d/%d (%.1f%%) — %.1f tracks/sec — matched=%d no_match=%d errors=%d",
-                i, len(tracks), 100 * i / len(tracks),
-                rate, stats["matched"], stats["no_match"], stats["errors"],
+    # finally, not a trailing call: an interrupt mid-loop must still persist
+    # every response already paid for at the Last.fm rate limit.
+    try:
+        for i, track in enumerate(tracks, start=1):
+            fields, response, variation = _lookup_with_variations(
+                client, api_key, track, artist_block
             )
 
-    client.flush()
+            if _is_actionable(fields):
+                stats["matched"] += 1
+                if variation != "original":
+                    stats["recovered_via_variation"] += 1
+                    variation_hits[variation] = variation_hits.get(variation, 0) + 1
+            elif isinstance(response, dict) and response.get("_error") \
+                    and response["_error"] != "not_found":
+                stats["errors"] += 1
+            else:
+                stats["no_match"] += 1
+
+            track.update(fields)
+            # Initialise downstream fields if absent
+            track.setdefault("genres", [])
+            track.setdefault("discogs_styles", [])
+            enriched.append(track)
+
+            if i % 250 == 0 or i == len(tracks):
+                elapsed = time.monotonic() - t0
+                rate = i / elapsed if elapsed > 0 else 0
+                log.info(
+                    "Progress: %d/%d (%.1f%%) — %.1f tracks/sec — matched=%d no_match=%d errors=%d",
+                    i, len(tracks), 100 * i / len(tracks),
+                    rate, stats["matched"], stats["no_match"], stats["errors"],
+                )
+    finally:
+        client.flush()
+    stats.update(client.stats)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -249,6 +258,7 @@ def enrich(
         100 * stats["matched"] / stats["total"] if stats["total"] else 0,
         stats["no_match"], stats["errors"],
     )
+    log.info("  %s", client.cache_summary())
     if stats["recovered_via_variation"]:
         breakdown = ", ".join(
             f"{label} {n}" for label, n in sorted(variation_hits.items(), key=lambda x: -x[1])
