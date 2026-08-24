@@ -36,6 +36,8 @@ from pipeline.config import (
     configure_logging,
     get_logger,
 )
+from pipeline.name_variations import strip_feat
+from pipeline.normalize import normalize_track
 from pipeline.schema import compute_canonical_track_id
 
 log = get_logger(__name__)
@@ -62,6 +64,18 @@ def _name_key(row: dict) -> tuple[str, str]:
     return (row.get("artist_normalized") or "", row.get("track_normalized") or "")
 
 
+def _identity_title(row: dict) -> str:
+    """Feat-stripped, normalized title used to detect credit variants.
+
+    Distinct from ``track_normalized``, which keeps the guest credit — that
+    field is display identity; this one is "the same recording" identity. A
+    guest credit that moved into the title ("FML" vs "FML (feat. The
+    Weeknd)") never surfaces as a different ``artist_normalized``, so the
+    title is the only place left to strip it.
+    """
+    return normalize_track(strip_feat(row.get("track") or ""))
+
+
 class _Union:
     """Minimal union-find over row indices."""
 
@@ -80,36 +94,78 @@ class _Union:
             self.parent[max(ra, rb)] = min(ra, rb)
 
 
-def is_credit_variant(a: dict, b: dict) -> bool:
-    """Do two rows look like the same recording under different credits?
+def _shape_matches(a: dict, b: dict) -> bool:
+    """Do two rows *look* like the same recording under different credits?
 
-    Requires the same normalized title *and* one artist name to be a
-    word-boundary prefix of the other — the shape a featured-artist expansion
-    takes ("clipse" ⊂ "clipse pharrell williams pusha t malice").
+    Compares on the feat-stripped ``_identity_title`` rather than
+    ``track_normalized``, so a guest credit that moved into the title
+    ("FML" vs "FML (feat. The Weeknd)") is recognised as the same shape.
 
-    Conflicting strong identifiers veto the merge: if both rows carry a
-    MusicBrainz ID or both carry an ISRC and they disagree, these are two
-    different recordings that happen to share a title, however similar the
-    credits look.
+    Two ways the artist side can show that shape:
+
+    - one artist name is a word-boundary prefix of the other — the shape a
+      featured-artist expansion takes ("clipse" ⊂ "clipse pharrell williams
+      pusha t malice")
+    - the artists are identical and only the title differs — the shape a
+      feat-in-title split takes, since the guest never touched the artist
+      field at all
+
+    Ignores strong identifiers (MusicBrainz ID, ISRC) entirely — those are a
+    separate veto, checked by the caller, so a conflict there can be told
+    apart from "this never looked like a variant in the first place".
     """
-    if a.get("track_normalized") != b.get("track_normalized"):
+    title_a, title_b = _identity_title(a), _identity_title(b)
+    if not title_a or title_a != title_b:
         return False
-    if not a.get("track_normalized"):
-        return False
-
-    for field in ("musicbrainz_id", "isrc"):
-        va, vb = a.get(field), b.get(field)
-        if va and vb and va != vb:
-            return False
 
     x, y = a.get("artist_normalized") or "", b.get("artist_normalized") or ""
-    if not x or not y or x == y:
+    if not x or not y:
         return False
+    if x == y:
+        # Same artist: only a variant if the raw titles actually differ
+        # (otherwise this is a literal duplicate, not a credit variant).
+        return a.get("track_normalized") != b.get("track_normalized")
     short, long = (x, y) if len(x) <= len(y) else (y, x)
     if len(short) < MIN_PREFIX_LEN:
         return False
     # Word boundary, so "the doors" never absorbs "the doors tribute".
     return long.startswith(short) and long[len(short)] == " "
+
+
+def _conflicts(a: dict, b: dict, field: str) -> bool:
+    va, vb = a.get(field), b.get(field)
+    return bool(va and vb and va != vb)
+
+
+def is_credit_variant(a: dict, b: dict) -> bool:
+    """Do two rows look like the same recording under different credits?
+
+    Requires ``_shape_matches`` *and* no conflicting ISRC — ISRCs genuinely
+    identify recordings, so a disagreement there is decisive: these are two
+    different recordings that happen to share a title, however similar the
+    credits look.
+
+    A conflicting MBID is weaker evidence — Last.fm routinely returns a
+    different recording MBID for one recording under a different credit
+    string — and is treated differently depending on *which* credit changed:
+
+    - same artist, guest only in the title ("FML" vs "FML (feat. The
+      Weeknd)"): the artist field never gave Last.fm a different string to
+      hash a different MBID from, so a conflict here is expected noise, not
+      signal. Merges anyway.
+    - different artist strings (the Clipse-style prefix expansion): the
+      credit itself changed, so a conflicting MBID is more informative. The
+      caller routes this case to ``identity_review.jsonl`` instead of
+      merging blind.
+    """
+    if not _shape_matches(a, b):
+        return False
+    if _conflicts(a, b, "isrc"):
+        return False
+    x, y = a.get("artist_normalized") or "", b.get("artist_normalized") or ""
+    if x != y and _conflicts(a, b, "musicbrainz_id"):
+        return False
+    return True
 
 
 def _cluster(tracks: list[dict]) -> tuple[list[list[int]], list[dict]]:
@@ -127,10 +183,12 @@ def _cluster(tracks: list[dict]) -> tuple[list[list[int]], list[dict]]:
             for j in members[1:]:
                 uf.union(members[0], j)
 
-    # Then name-shape evidence, compared only within the same title.
+    # Then name-shape evidence, compared only within the same feat-stripped
+    # title — this is what lets a guest credit that moved into the *title*
+    # ("FML" vs "FML (feat. The Weeknd)") ever meet its pair at all.
     by_title: dict[str, list[int]] = defaultdict(list)
     for i, t in enumerate(tracks):
-        title = t.get("track_normalized")
+        title = _identity_title(t)
         if title:
             by_title[title].append(i)
 
@@ -140,17 +198,28 @@ def _cluster(tracks: list[dict]) -> tuple[list[list[int]], list[dict]]:
             continue
         for pos, i in enumerate(members):
             for j in members[pos + 1:]:
-                if is_credit_variant(tracks[i], tracks[j]):
+                ta, tb = tracks[i], tracks[j]
+                if is_credit_variant(ta, tb):
                     uf.union(i, j)
-                elif tracks[i].get("artist_normalized") != tracks[j].get("artist_normalized"):
-                    rejected.append({
-                        "track": tracks[i].get("track"),
-                        "artist_a": tracks[i].get("artist"),
-                        "artist_b": tracks[j].get("artist"),
-                        "plays_a": tracks[i].get("play_count"),
-                        "plays_b": tracks[j].get("play_count"),
-                        "reason": "same title, credits not a prefix variant",
-                    })
+                    continue
+                if _shape_matches(ta, tb) and not _conflicts(ta, tb, "isrc"):
+                    # Everything about the credits lines up; only a
+                    # disagreeing MBID stopped the merge. Demoted from a veto
+                    # to a tiebreak — surfaced for the owner rather than
+                    # merged blind.
+                    reason = "same title, credit shape matches, but MusicBrainz IDs conflict"
+                elif ta.get("artist_normalized") != tb.get("artist_normalized"):
+                    reason = "same title, credits not a prefix variant"
+                else:
+                    continue
+                rejected.append({
+                    "track": ta.get("track"),
+                    "artist_a": ta.get("artist"),
+                    "artist_b": tb.get("artist"),
+                    "plays_a": ta.get("play_count"),
+                    "plays_b": tb.get("play_count"),
+                    "reason": reason,
+                })
 
     grouped: dict[int, list[int]] = defaultdict(list)
     for i in range(len(tracks)):

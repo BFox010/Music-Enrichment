@@ -281,9 +281,18 @@ down here.
 
 ## Tests
 
+CI pins Python 3.13. Install once per interpreter, then run:
+
 ```bash
-python -m pytest tests/ -q
+py -3.13 -m pip install -r requirements.txt
+py -3.13 -m pytest tests/ -q
 ```
+
+(`python -m pytest` works too, as long as `python` already resolves to 3.13 —
+`py -3.13` is explicit so it does the right thing regardless of what a bare
+`python` picks up on your PATH.) Running under an older interpreter fails fast
+with one clear message rather than a cascade of unrelated failures — see
+[tests/conftest.py](tests/conftest.py).
 
 Self-contained — temp fixtures, no network, no secrets. CI runs the full suite on
 every push to `main` and every pull request

@@ -447,37 +447,83 @@ def parse_simple_taste_profile(markdown: str) -> dict:
 # ── apply manifest to tracks ─────────────────────────────────────────────
 
 
+def _track_identity_keys(track: dict) -> list[tuple[str, str]]:
+    """Every (artist_normalized, track_normalized) this track has ever been
+    scrobbled under — its own key plus whatever Phase 4e folded into it.
+
+    Without this, a taste_profile.md entry written against a credit variant
+    that Phase 4e later merged away (a different artist-credit string, or a
+    guest that used to live only in the title) would silently stop matching
+    the moment identity resolution folds the two rows together.
+    """
+    own = (track.get("artist_normalized") or "", track.get("track_normalized") or "")
+    keys = [own]
+    for alias in track.get("identity_aliases") or []:
+        if isinstance(alias, (list, tuple)) and len(alias) == 2:
+            pair = (alias[0], alias[1])
+            if pair not in keys:
+                keys.append(pair)
+    return keys
+
+
 def apply_manifest(tracks: Iterable[dict], manifest: dict) -> dict[str, int]:
-    """Mutate ``tracks`` in-place; return counts of how many fields were set."""
+    """Mutate ``tracks`` in-place; return counts of how many fields were set.
+
+    Checked against every identity the track has ever carried (its own key
+    plus ``identity_aliases``), not just its current display key — see
+    ``_track_identity_keys``. Where *different* aliases disagree — one credit
+    string is blacklisted, another sits in a playlist, because Phase 4e only
+    just folded them into the same row — blacklist wins: a track flagged for
+    suppression should not also carry a locked-playlist tag. A single
+    identity that the owner already judged both ways under one name is left
+    exactly as taste_profile.md says; that's pre-existing and none of this
+    phase's business to arbitrate.
+    """
     stats = {"tiered": 0, "blacklisted": 0, "in_playlists": 0, "curation_set": 0}
     for track in tracks:
-        artist_norm = track["artist_normalized"]
-        track_norm = track["track_normalized"]
-        key = (artist_norm, track_norm)
+        keys = _track_identity_keys(track)
+        artists = [k[0] for k in keys]
 
-        # Tier
-        tier = manifest["tier_by_artist"].get(artist_norm)
+        # Tier — keyed on artist alone, so any alias's artist credit counts.
+        tier = None
+        for artist_norm in artists:
+            tier = manifest["tier_by_artist"].get(artist_norm)
+            if tier is not None:
+                break
         track["saturation_tier"] = tier
         if tier is not None:
             stats["tiered"] += 1
 
-        # Blacklist
-        is_black = (
-            artist_norm in manifest["blacklist_artists"]
-            or key in manifest["blacklist_tracks"]
-        )
+        # Blacklist — remember which identity produced the hit, so a playlist
+        # hit under that same identity isn't mistaken for a cross-alias conflict.
+        black_key = None
+        for artist_norm, key in zip(artists, keys):
+            if artist_norm in manifest["blacklist_artists"] or key in manifest["blacklist_tracks"]:
+                black_key = key
+                break
+        is_black = black_key is not None
         track["blacklisted"] = is_black
         if is_black:
             stats["blacklisted"] += 1
 
         # Playlists
-        plist = manifest["playlists"].get(key)
+        plist_key = plist = None
+        for key in keys:
+            candidate = manifest["playlists"].get(key)
+            if candidate:
+                plist_key, plist = key, candidate
+                break
+        if plist is not None and is_black and plist_key != black_key:
+            plist = None
         if plist:
             track["playlists"] = list(plist["playlists"])
             track["curation_state"] = plist["curation_state"]
             stats["in_playlists"] += 1
             if plist["curation_state"]:
                 stats["curation_set"] += 1
+        else:
+            track["playlists"] = []
+            track["curation_state"] = None
     return stats
 
 

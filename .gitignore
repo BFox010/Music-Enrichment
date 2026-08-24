@@ -242,9 +242,13 @@ tracks_with_metadata.jsonl
 tracks_with_discogs.jsonl
 tracks_with_genres.jsonl
 tracks_with_genre_backfill.jsonl
+tracks_resolved.jsonl
 tracks_with_availability.jsonl
 tracks_with_moods.jsonl
 tracks_with_taste.jsonl
+
+# Phase 4e near-miss log — regenerable, for the owner to eyeball locally
+identity_review.jsonl
 
 # Scratch / temp files
 *.tmp.txt

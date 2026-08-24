@@ -40,6 +40,15 @@ class TestNormalizeArtist:
         assert normalize_artist("Drake FT. Future") == "drake feat future"
         assert normalize_artist("Drake Ft. Future") == "drake feat future"
 
+    def test_ampersand_joins_with_spelled_out_and(self) -> None:
+        assert normalize_artist("J Roddy Walston & The Business") == \
+            normalize_artist("J Roddy Walston and The Business")
+        assert normalize_artist("Big Data & Joywave") == "big data and joywave"
+
+    def test_ampersand_collapses_surrounding_whitespace(self) -> None:
+        assert normalize_artist("Simon&Garfunkel") == "simon and garfunkel"
+        assert normalize_artist("Simon  &  Garfunkel") == "simon and garfunkel"
+
     def test_whitespace_collapsed(self) -> None:
         assert normalize_artist("  the   beatles   ") == "beatles"
 

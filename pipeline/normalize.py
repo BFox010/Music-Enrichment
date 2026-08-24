@@ -22,6 +22,8 @@ _FEAT_RE = re.compile(
 )
 # Leading "the " on artist names only
 _LEADING_THE_RE = re.compile(r"^the\s+", flags=re.IGNORECASE)
+# "&" → " and " on artist names only, so "X & Y" and "X and Y" join.
+_AMPERSAND_RE = re.compile(r"\s*&\s*")
 
 
 def _fold(text: str) -> str:
@@ -41,13 +43,14 @@ def _strip_punct(text: str) -> str:
 def normalize_artist(artist: str) -> str:
     """Normalize an artist name for use as a join key.
 
-    Steps: fold → collapse leading/inner whitespace → collapse "feat" variants
-    → drop leading "the " → strip punct.
+    Steps: fold → collapse leading/inner whitespace → collapse "&" into "and"
+    → collapse "feat" variants → drop leading "the " → strip punct.
     """
     if not artist:
         return ""
     text = _fold(artist)
     text = _WHITESPACE_RE.sub(" ", text).strip()
+    text = _AMPERSAND_RE.sub(" and ", text)
     text = _FEAT_RE.sub("feat", text)
     text = _LEADING_THE_RE.sub("", text)
     return _strip_punct(text)

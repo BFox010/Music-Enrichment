@@ -69,12 +69,50 @@ class TestExtractLastfmFields:
     def test_error_response(self) -> None:
         response = {"_error": "not_found"}
         out = _extract_lastfm_fields(response)
-        assert out == {"lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None}
+        assert out == {
+            "lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None,
+            "lastfm_duration_ms": None, "lastfm_listeners": None, "lastfm_playcount": None,
+        }
 
     def test_garbage_response(self) -> None:
         # Not even a dict
         out = _extract_lastfm_fields("nope")  # type: ignore[arg-type]
-        assert out == {"lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None}
+        assert out == {
+            "lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None,
+            "lastfm_duration_ms": None, "lastfm_listeners": None, "lastfm_playcount": None,
+        }
+
+    def test_duration_listeners_playcount_captured(self) -> None:
+        """#41 — already-fetched fields that were previously discarded."""
+        response = {
+            "track": {
+                "mbid": "abc-123",
+                "duration": "245000",
+                "listeners": "918234",
+                "playcount": "5102934",
+                "artist": {"mbid": "def-456"},
+            }
+        }
+        out = _extract_lastfm_fields(response)
+        assert out["lastfm_duration_ms"] == 245000
+        assert out["lastfm_listeners"] == 918234
+        assert out["lastfm_playcount"] == 5102934
+
+    def test_zero_duration_means_unknown_not_zero(self) -> None:
+        """Last.fm returns "0" for duration/listeners/playcount when it does
+        not know the value, not to mean the value is actually zero."""
+        response = {"track": {"duration": "0", "listeners": "0", "playcount": "0"}}
+        out = _extract_lastfm_fields(response)
+        assert out["lastfm_duration_ms"] is None
+        assert out["lastfm_listeners"] is None
+        assert out["lastfm_playcount"] is None
+
+    def test_missing_or_unparseable_popularity_fields_are_none(self) -> None:
+        response = {"track": {"duration": "not-a-number"}}
+        out = _extract_lastfm_fields(response)
+        assert out["lastfm_duration_ms"] is None
+        assert out["lastfm_listeners"] is None
+        assert out["lastfm_playcount"] is None
 
     def test_tag_without_name_skipped(self) -> None:
         response = {
@@ -148,3 +186,72 @@ class TestInterruptedRunPersistsCache:
             # Everything fetched before the interrupt survived.
             assert cache_path.exists(), "cache was never flushed"
             assert len(json.loads(cache_path.read_text(encoding="utf-8"))) == 3
+
+
+# ── #41: duration/listeners/playcount gap-fill at the enrich() level ──────
+
+
+class _FakeClient:
+    """Serves one canned response to every request. No network, no retries."""
+
+    def __init__(self, response: dict) -> None:
+        self.response = response
+        self.cache: dict = {}
+        self.stats: dict = {}
+
+    def get(self, _url, _params, cache_key):
+        self.cache[cache_key] = self.response
+        return self.response
+
+    def flush(self) -> None:
+        pass
+
+    def warn_if_forced(self, _n_requests: int) -> None:
+        pass
+
+    def cache_summary(self) -> str:
+        return "cache (fake)"
+
+
+class TestPopularityGapFill:
+    def _run(self, monkeypatch, tracks: list[dict], response: dict) -> list[dict]:
+        monkeypatch.setenv("LASTFM_API_KEY", "test-key")
+        monkeypatch.setattr(mod, "RateLimitedClient", lambda *a, **kw: _FakeClient(response))
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "in.jsonl"
+            out = Path(tmp) / "out.jsonl"
+            with open(inp, "w", encoding="utf-8") as fh:
+                for t in tracks:
+                    fh.write(json.dumps(t) + "\n")
+            mod.enrich(input_path=inp, output_path=out)
+            return [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+
+    def test_null_duration_is_filled_from_lastfm(self, monkeypatch) -> None:
+        track = _track_row(0)
+        track["duration_ms"] = None
+        response = {"track": {"mbid": "x", "duration": "180000"}}
+        written = self._run(monkeypatch, [track], response)
+        assert written[0]["duration_ms"] == 180000
+
+    def test_existing_duration_is_never_overwritten(self, monkeypatch) -> None:
+        """Exportify/ReccoBeats values must win over Last.fm's gap-fill."""
+        track = _track_row(0)
+        track["duration_ms"] = 200000
+        response = {"track": {"mbid": "x", "duration": "999999"}}
+        written = self._run(monkeypatch, [track], response)
+        assert written[0]["duration_ms"] == 200000
+
+    def test_listeners_and_playcount_are_stored(self, monkeypatch) -> None:
+        track = _track_row(0)
+        response = {"track": {"mbid": "x", "listeners": "1000", "playcount": "50000"}}
+        written = self._run(monkeypatch, [track], response)
+        assert written[0]["lastfm_listeners"] == 1000
+        assert written[0]["lastfm_playcount"] == 50000
+
+    def test_no_response_data_leaves_fields_absent(self, monkeypatch) -> None:
+        track = _track_row(0)
+        response = {"_error": "not_found"}
+        written = self._run(monkeypatch, [track], response)
+        assert written[0].get("lastfm_listeners") is None
+        assert written[0].get("lastfm_playcount") is None
+        assert written[0].get("duration_ms") is None

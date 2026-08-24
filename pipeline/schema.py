@@ -70,6 +70,10 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "lastfm_tags": [],
     "discogs_styles": [],
     "itunes_genre": None,
+    # Global-popularity signal from Last.fm track.getInfo — already fetched
+    # for tags/MBIDs, so capturing these costs no extra API calls (#41).
+    "lastfm_listeners": None,
+    "lastfm_playcount": None,
     # Mood (Phase 6)
     "mood_tags": None,
     "mood_source": None,
@@ -155,6 +159,8 @@ class TrackV5:
     lastfm_tags: list[str] = field(default_factory=list)
     discogs_styles: list[str] = field(default_factory=list)
     itunes_genre: str | None = None
+    lastfm_listeners: int | None = None
+    lastfm_playcount: int | None = None
     mood_tags: list[str] | None = None
     mood_source: str | None = None
     mood_confidence: str | None = None

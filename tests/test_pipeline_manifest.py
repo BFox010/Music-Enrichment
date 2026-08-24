@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import importlib
 import inspect
+import re
+from pathlib import Path
 
 import pytest
 
-from pipeline.config import SCHEMA_VERSION
+from pipeline.config import REPO_ROOT, SCHEMA_VERSION
 from pipeline.manifest import (
     find_phase_index,
     get_phase_ids,
@@ -112,6 +114,66 @@ class TestExpectedPhases:
             f"  Expected: {self.EXPECTED_IDS}\n"
             f"  Got:      {ids}"
         )
+
+
+# ── Anti-drift: README phase table matches manifest ────────────────────────
+
+_README_ROW_RE = re.compile(
+    r"^\|\s*(\S+)\s*\|\s*(?:\[(\w+)\]\([^)]+\)|_\(manual[^)]*\)_)\s*\|",
+)
+
+
+def _parse_readme_phase_table() -> list[tuple[str, str | None]]:
+    """Extract (phase_id, module_short_name) pairs from README's phase table.
+
+    ``module_short_name`` is None for a manual phase's ``_(manual — owner)_``
+    cell. Stops at the first blank line after the header, so a follow-on table
+    elsewhere in the doc is never swept in by accident.
+    """
+    lines = (REPO_ROOT / "README.md").read_text(encoding="utf-8").splitlines()
+    start = next(
+        i for i, l in enumerate(lines) if l.startswith("| Phase | Module")
+    )
+    rows: list[tuple[str, str | None]] = []
+    for line in lines[start + 2:]:  # skip header + separator row
+        if not line.startswith("|"):
+            break
+        m = _README_ROW_RE.match(line)
+        assert m, f"README phase table row doesn't parse: {line!r}"
+        rows.append((m.group(1), m.group(2)))
+    return rows
+
+
+class TestReadmeAntiDrift:
+    """The README's hand-maintained phase table must not drift from the
+    manifest — the manifest is the single source of truth for phase order,
+    modules, and dependencies (#44)."""
+
+    def test_readme_lists_every_manifest_phase_in_order(self, manifest):
+        readme_ids = [pid for pid, _module in _parse_readme_phase_table()]
+        assert readme_ids == get_phase_ids(manifest), (
+            f"README phase table has drifted from pipeline_manifest.yaml.\n"
+            f"  Manifest: {get_phase_ids(manifest)}\n"
+            f"  README:   {readme_ids}"
+        )
+
+    def test_readme_module_links_match_the_manifest(self, phases):
+        readme_rows = dict(_parse_readme_phase_table())
+        for phase in phases:
+            pid = str(phase["id"])
+            assert pid in readme_rows, f"Phase {pid!r} missing from README table"
+            readme_module = readme_rows[pid]
+            if phase.get("manual"):
+                assert readme_module is None, (
+                    f"Phase {pid!r} is manual in the manifest but README "
+                    f"links a module ({readme_module!r})"
+                )
+            else:
+                expected = phase["module"].rsplit(".", 1)[-1]
+                assert readme_module == expected, (
+                    f"Phase {pid!r}: README links {readme_module!r}, "
+                    f"manifest module is {expected!r}"
+                )
 
 
 # ── Anti-drift: orchestrator execution order matches manifest ─────────────
