@@ -157,15 +157,42 @@ def ingest_from_records(
                         existing.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
+        # Re-derive the normalized fields on rows already on disk before using
+        # them as the dedupe key. They are *derived*, so a change to
+        # normalize_artist/normalize_track silently redefines the key and every
+        # previously-ingested scrobble stops matching itself: the export
+        # re-delivers it and it lands a second time. That is not hypothetical —
+        # `&` → "and" (#27) re-added 1102 historical plays across 104 artists,
+        # inflating play_count and splitting 28 recordings into two rows each.
+        # Recomputing both sides makes the key immune to that, and refreshing
+        # the stored values lets scrobbles.jsonl heal itself on the next ingest.
+        renormalized = 0
+        for row in existing:
+            artist_norm = normalize_artist(row.get("artist", ""))
+            track_norm = normalize_track(row.get("track", ""))
+            if (row.get("artist_normalized"), row.get("track_normalized")) != (
+                artist_norm, track_norm
+            ):
+                renormalized += 1
+            row["artist_normalized"] = artist_norm
+            row["track_normalized"] = track_norm
+        if renormalized:
+            log.info(
+                "Re-normalized %d existing rows whose stored keys were stale",
+                renormalized,
+            )
+
         seen = {
-            (r["scrobbled_at"], r.get("artist_normalized", ""), r.get("track_normalized", ""))
+            (r["scrobbled_at"], r["artist_normalized"], r["track_normalized"])
             for r in existing
         }
-        new_only = [
-            r for r in parsed
-            if (r["scrobbled_at"], r.get("artist_normalized", ""), r.get("track_normalized", ""))
-            not in seen
-        ]
+        new_only = []
+        for row in parsed:
+            key = (row["scrobbled_at"], row["artist_normalized"], row["track_normalized"])
+            if key in seen:
+                continue
+            seen.add(key)   # the export itself can repeat a play
+            new_only.append(row)
         log.info(
             "Existing: %d  |  New: %d  |  Duplicates dropped: %d",
             len(existing), len(new_only), len(parsed) - len(new_only),

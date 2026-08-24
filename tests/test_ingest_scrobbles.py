@@ -337,6 +337,77 @@ class TestIngestDefaultsToAppend:
                            run_log_path=logp, mode="replace")
 
 
+class TestDedupeSurvivesNormalizationChange:
+    """The dedupe key is derived, so our own code can redefine it.
+
+    ``normalize_artist`` gaining `&` → "and" (#27) meant every scrobble already
+    on disk stopped matching its own re-export: 1102 historical plays across 104
+    artists were appended a second time, inflating play_count and splitting 28
+    recordings into two rows. Recomputing the key on both sides is what makes a
+    normalization change safe.
+    """
+
+    def _rec(self, uts: int, artist: str = "Of Mice & Men"):
+        return {
+            "artist": {"#text": artist, "mbid": ""},
+            "name": "O.G. Loko",
+            "album": {"#text": "The Flood", "mbid": ""},
+            "date": {"uts": str(uts), "#text": ""},
+        }
+
+    def _write(self, path: Path, rows: list[dict]) -> None:
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+
+    def test_stale_normalization_does_not_re_add_the_play(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            ingest_from_records([self._rec(1700000000)], output_path=out, mode="replace")
+
+            # Simulate history written before normalize_artist changed: the raw
+            # fields are untouched, only the derived key is from the old rules.
+            rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+            assert rows[0]["artist_normalized"] == "of mice and men"
+            rows[0]["artist_normalized"] = "of mice men"
+            self._write(out, rows)
+
+            # Re-delivering the same play must not append a duplicate.
+            total = ingest_from_records([self._rec(1700000000)], output_path=out)
+            assert total == 1, "the same play was ingested twice"
+
+    def test_stale_rows_are_healed_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            ingest_from_records([self._rec(1700000000)], output_path=out, mode="replace")
+            rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+            rows[0]["artist_normalized"] = "of mice men"
+            self._write(out, rows)
+
+            ingest_from_records([self._rec(1700003600)], output_path=out)
+
+            healed = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+            assert len(healed) == 2
+            assert {r["artist_normalized"] for r in healed} == {"of mice and men"}, (
+                "the stale key should be re-derived, not left to split the track"
+            )
+
+    def test_a_repeated_play_inside_one_export_is_dropped(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            ingest_from_records([self._rec(1700000000)], output_path=out, mode="replace")
+            total = ingest_from_records(
+                [self._rec(1700000000), self._rec(1700000000)], output_path=out
+            )
+            assert total == 1
+
+    def test_genuinely_new_plays_still_append(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "s.jsonl"
+            ingest_from_records([self._rec(1700000000)], output_path=out, mode="replace")
+            assert ingest_from_records([self._rec(1700007200)], output_path=out) == 2
+
+
 class TestCliArgs:
     def test_default_is_append_without_shrink(self) -> None:
         args = _parse_args([])
