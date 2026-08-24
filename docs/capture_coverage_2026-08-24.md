@@ -54,10 +54,14 @@ ReccoBeats had no data for.
 
 Two things worth acting on:
 
-- **Deezer outperforms MusicBrainz roughly 5:1**, inverting the order the
-  `resolve_isrcs` docstring describes ("MusicBrainz primary, Deezer for what it
-  misses"). MusicBrainz is also the slow leg at 1 req/sec — Phase 5a took
-  ~2.5 hours cold, and trying Deezer first would cut most of that.
+- **Deezer resolves ~5x more tracks than MusicBrainz, but that is volume, not
+  quality — the documented order is right.** MusicBrainz only runs for tracks
+  carrying an MBID, so Deezer naturally handles the rest. Measured on 150
+  tracks MusicBrainz had resolved, Deezer agreed on 84%, disagreed on 8.7%, and
+  found nothing for 7.3%. The disagreements are genuinely different releases
+  (boygenius "Not Strong Enough" `USUG12209242` vs `USUG12300710`), and since an
+  ISRC identifies a specific recording, taking Deezer's answer first would feed
+  ReccoBeats a different master. MusicBrainz's MBID→ISRC join stays first.
 - **The manual Exportify step (3a/3b/3c) is close to retirable.** Exportify
   matched 2236/3375 (66%) this run; 5a/5b covered 93% needing no account, no
   playlist round-trip, and no manual step. The 2235 Exportify rows persist only
@@ -109,5 +113,7 @@ before 5a resolves ISRCs.
   chain re-run to notice.
 - **The suite needs Python 3.13**, and bare `python` on the owner's machine is
   3.9. Use `py -3.13`.
-- A cold full run is ~7 hours, dominated by Phase 5 (iTunes, ~3.3h) and Phase 5a
-  (MusicBrainz at 1 req/sec, ~2.5h). Warm, the same chain is minutes.
+- A cold full run was ~7 hours, dominated by Phase 5 (iTunes at 0.33 req/sec,
+  ~3.3h) and Phase 5a (~2.5h, split between MusicBrainz's hard 1 req/sec and
+  Deezer's then-2 req/sec). Raising Deezer to 5 req/sec should take roughly 30
+  minutes off 5a; the rest is rate limits we do not control. Warm, minutes.
