@@ -120,10 +120,10 @@ half being missing.
 | 4b | [enrich_discogs](pipeline/enrich_discogs.py) | `tracks_with_metadata.jsonl` | `tracks_with_discogs.jsonl` |
 | 4c | [derive_genres](pipeline/derive_genres.py) | `tracks_with_discogs.jsonl` | `tracks_with_genres.jsonl` |
 | 4d | [enrich_genre_backfill](pipeline/enrich_genre_backfill.py) | `tracks_with_genres.jsonl` | `tracks_with_genre_backfill.jsonl` |
-| 4e | [resolve_identity](pipeline/resolve_identity.py) | `tracks_with_genre_backfill.jsonl` | `tracks_resolved.jsonl` |
+| 5a | [resolve_isrcs](pipeline/resolve_isrcs.py) | `tracks_with_genre_backfill.jsonl` | `tracks_with_isrcs.jsonl` |
+| 4e | [resolve_identity](pipeline/resolve_identity.py) | `tracks_with_isrcs.jsonl` | `tracks_resolved.jsonl` |
 | 5 | [check_apple_music](pipeline/check_apple_music.py) | `tracks_resolved.jsonl` | `tracks_with_availability.jsonl` |
-| 5a | [resolve_isrcs](pipeline/resolve_isrcs.py) | `tracks_with_availability.jsonl` | `tracks_with_isrcs.jsonl` |
-| 5b | [enrich_audio_features](pipeline/enrich_audio_features.py) | `tracks_with_isrcs.jsonl` | `tracks_with_features.jsonl` |
+| 5b | [enrich_audio_features](pipeline/enrich_audio_features.py) | `tracks_with_availability.jsonl` | `tracks_with_features.jsonl` |
 | 6 | [classify_moods](pipeline/classify_moods.py) | + `inputs/existing_audit.csv` | `tracks_with_moods.jsonl` |
 | 7 | [apply_taste_profile](pipeline/apply_taste_profile.py) | + [taste_profile.md](taste_profile.md) | `tracks_with_taste.jsonl` |
 | 8 | [update_tracks](pipeline/update_tracks.py) | `tracks_with_taste.jsonl` | `tracks.jsonl` |
@@ -185,9 +185,12 @@ See the module docstring.
 
 These look like playlist machinery. They aren't:
 
-- **3a/3b/3c** exist to acquire *audio features*, and are legacy since #37 —
-  5a/5b acquire the same data without the manual round-trip. The playlist
-  detour was always a means, never a feature.
+- **3a/3b/3c** exist to acquire *audio features*. The playlist detour was
+  always a means, never a feature. #37 superseded them there — ReccoBeats
+  returns features for 98.7% of the tracks Exportify covers (measured
+  2026-08-24) — but they are **not** retirable: the Exportify CSV is also the
+  only bulk source of `explicit`, `release_year`, and `spotify_id`, which
+  otherwise fall to ~4%, ~4%, and 0%.
 - **Phase 7** produces `saturation_tier` and `curation_state` — dashboard-facing
   curation metadata. Its `playlists` field is a grouping label read out of
   `taste_profile.md`, not a generated playlist.

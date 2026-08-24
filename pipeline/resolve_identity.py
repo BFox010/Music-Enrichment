@@ -14,9 +14,12 @@ rewritten: ``scrobbles.jsonl`` stays an immutable record of what was played,
 and the aggregation layer resolves an alias to its canonical track at read
 time.
 
-Runs after enrichment (4d) rather than after dedupe, because the decisive
-evidence — ISRC and MusicBrainz recording IDs — does not exist until Phase 4
-has fetched it. Name-shape evidence alone would be a much weaker test.
+Runs after enrichment rather than after dedupe, because the decisive evidence —
+ISRC and MusicBrainz recording IDs — does not exist until Phase 4 has fetched
+it. Name-shape evidence alone would be a much weaker test. Phase 5a is ordered
+ahead of this phase for the same reason: it resolves the ISRCs this clustering
+reads, and it is where ``canonical_track_id`` gets a durable identifier rather
+than a normalized name that moves whenever normalization improves.
 
 Usage:
     python -m pipeline.resolve_identity
@@ -35,6 +38,7 @@ from pipeline.config import (
     TRACKS_PATH,
     TRACKS_RESOLVED_PATH,
     TRACKS_WITH_GENRE_BACKFILL_PATH,
+    TRACKS_WITH_ISRCS_PATH,
     configure_logging,
     get_logger,
 )
@@ -44,7 +48,7 @@ from pipeline.schema import compute_canonical_track_id
 
 log = get_logger(__name__)
 
-INPUT_PATH: Path = TRACKS_WITH_GENRE_BACKFILL_PATH
+INPUT_PATH: Path = TRACKS_WITH_ISRCS_PATH
 OUTPUT_PATH: Path = TRACKS_RESOLVED_PATH
 
 # Pairs the name test proposed but that were rejected, written out so the
@@ -139,13 +143,33 @@ def _conflicts(a: dict, b: dict, field: str) -> bool:
     return bool(va and vb and va != vb)
 
 
+# An ISRC only overrules matching credit shape when it came from an exact
+# identifier join. Deezer's comes from a name search, and searching two title
+# variants of one recording routinely lands on two different releases — against
+# MusicBrainz it disagreed on 8.7% of a 150-track sample (2026-08-24). Letting
+# that veto a merge splits recordings the credit evidence correctly paired.
+# Unknown provenance counts as trusted: a wrong veto leaves a visible duplicate,
+# a wrong merge silently folds two recordings and sums their plays.
+_FUZZY_ISRC_SOURCES = frozenset({"deezer"})
+
+
+def _isrc_vetoes_merge(a: dict, b: dict) -> bool:
+    if not _conflicts(a, b, "isrc"):
+        return False
+    return not (
+        a.get("isrc_source") in _FUZZY_ISRC_SOURCES
+        or b.get("isrc_source") in _FUZZY_ISRC_SOURCES
+    )
+
+
 def is_credit_variant(a: dict, b: dict) -> bool:
     """Do two rows look like the same recording under different credits?
 
-    Requires ``_shape_matches`` *and* no conflicting ISRC — ISRCs genuinely
-    identify recordings, so a disagreement there is decisive: these are two
-    different recordings that happen to share a title, however similar the
-    credits look.
+    Requires ``_shape_matches`` *and* no conflicting ISRC from a source precise
+    enough to be decisive — an ISRC genuinely identifies a recording, so a
+    disagreement between two exact joins means two different recordings that
+    happen to share a title. A Deezer-derived ISRC does not carry that weight;
+    see ``_isrc_vetoes_merge``.
 
     A conflicting MBID is weaker evidence — Last.fm routinely returns a
     different recording MBID for one recording under a different credit
@@ -162,7 +186,7 @@ def is_credit_variant(a: dict, b: dict) -> bool:
     """
     if not _shape_matches(a, b):
         return False
-    if _conflicts(a, b, "isrc"):
+    if _isrc_vetoes_merge(a, b):
         return False
     x, y = a.get("artist_normalized") or "", b.get("artist_normalized") or ""
     if x != y and _conflicts(a, b, "musicbrainz_id"):
@@ -204,7 +228,7 @@ def _cluster(tracks: list[dict]) -> tuple[list[list[int]], list[dict]]:
                 if is_credit_variant(ta, tb):
                     uf.union(i, j)
                     continue
-                if _shape_matches(ta, tb) and not _conflicts(ta, tb, "isrc"):
+                if _shape_matches(ta, tb) and not _isrc_vetoes_merge(ta, tb):
                     # Everything about the credits lines up; only a
                     # disagreeing MBID stopped the merge. Demoted from a veto
                     # to a tiebreak — surfaced for the owner rather than
@@ -324,6 +348,13 @@ def merge_cluster(rows: list[dict]) -> dict:
     if len(rows) == 1:
         single = dict(rows[0])
         single["identity_aliases"] = _collect_aliases(rows)
+        # Stamped here too, not just on merged clusters. This is the phase that
+        # decides identity, so leaving singletons blank meant only the handful
+        # of rows 4e actually folded carried an id (163 of 3255 on 2026-08-24)
+        # and everything else waited for fill_defaults() at Phase 8 — deriving
+        # it from fields several phases had changed by then. Invariant 4 asks
+        # every phase to preserve canonical_track_id; something has to set it.
+        single["canonical_track_id"] = compute_canonical_track_id(single)
         return single
 
     ordered = sorted(rows, key=lambda r: -int(r.get("play_count") or 0))

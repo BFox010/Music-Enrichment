@@ -128,6 +128,93 @@ class TestIsCreditVariant:
         assert is_credit_variant(a, b)
 
 
+class TestIsrcVetoRespectsProvenance:
+    """Only an exact-join ISRC may overrule matching credit shape.
+
+    Phase 5a now runs before this phase, so most rows carry a Deezer ISRC from a
+    name search — and searching two title variants of one recording lands on two
+    different releases. Treating that as decisive split three recordings the
+    credit evidence had correctly paired ("DARE" vs "DARE (feat. Shaun Ryder &
+    Roses Gabor)"). A MusicBrainz ISRC is an MBID join and still vetoes.
+    """
+
+    def _pair(self, **extra_b):
+        a = _row("Gorillaz", "DARE", isrc="GBAAA0000001",
+                 isrc_source=extra_b.pop("a_source", None))
+        b = _row("Gorillaz", "DARE (feat. Shaun Ryder)", **extra_b)
+        return a, b
+
+    def test_conflicting_musicbrainz_isrcs_still_veto(self):
+        a, b = self._pair(a_source="musicbrainz", isrc="GBAAA0000002",
+                          isrc_source="musicbrainz")
+        assert not is_credit_variant(a, b)
+
+    def test_conflicting_deezer_isrcs_do_not_veto(self):
+        a, b = self._pair(a_source="deezer", isrc="GBAAA0000002",
+                          isrc_source="deezer")
+        assert is_credit_variant(a, b)
+
+    def test_one_deezer_side_is_enough_to_lift_the_veto(self):
+        a, b = self._pair(a_source="musicbrainz", isrc="GBAAA0000002",
+                          isrc_source="deezer")
+        assert is_credit_variant(a, b)
+
+    def test_unknown_provenance_is_treated_as_decisive(self):
+        """A wrong veto leaves a visible duplicate; a wrong merge sums plays."""
+        a, b = self._pair(isrc="GBAAA0000002")
+        assert not is_credit_variant(a, b)
+
+    def test_matching_isrcs_never_veto(self):
+        a, b = self._pair(a_source="deezer", isrc="GBAAA0000001",
+                          isrc_source="musicbrainz")
+        assert is_credit_variant(a, b)
+
+
+class TestCanonicalIdIsStampedOnEveryRow:
+    """4e is the phase that decides identity, so it must set it on every row.
+
+    Only merged clusters used to get one — 163 of 3255 rows on 2026-08-24 —
+    leaving the rest to fill_defaults() at Phase 8, which derived the id from
+    fields several later phases had already changed. Invariant 4 asks every
+    phase to preserve canonical_track_id; this is where it comes from.
+    """
+
+    def test_singleton_row_gets_an_id(self):
+        merged = merge_cluster([_row("portishead", "roads", play_count=5)])
+        assert merged["canonical_track_id"] == "norm:portishead|roads"
+
+    def test_merged_cluster_gets_an_id(self):
+        rows = [_row("clipse", "so far ahead", play_count=2),
+                _row("clipse pharrell", "so far ahead", play_count=22)]
+        assert merge_cluster(rows)["canonical_track_id"]
+
+    def test_mbid_outranks_the_name_for_a_singleton(self):
+        merged = merge_cluster(
+            [_row("portishead", "roads", play_count=5, musicbrainz_id="abc-123")]
+        )
+        assert merged["canonical_track_id"] == "mbid:abc-123"
+
+    def test_every_resolved_row_carries_one(self, tmp_path):
+        rows = [
+            _row("portishead", "roads", play_count=5),
+            _row("clipse", "so far ahead", play_count=2),
+            _row("clipse pharrell", "so far ahead", play_count=22),
+            _row("boards of canada", "roygbiv", play_count=9),
+        ]
+        src = tmp_path / "in.jsonl"
+        src.write_text(
+            "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+        )
+        out = tmp_path / "out.jsonl"
+        resolve(input_path=src, output_path=out,
+                review_path=tmp_path / "review.jsonl",
+                run_log_path=tmp_path / "run.log")
+        written = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
+        assert written, "phase produced no rows"
+        blank = [r for r in written if not r.get("canonical_track_id")]
+        assert not blank, f"{len(blank)} row(s) left without a canonical_track_id"
+
+
 class TestMergeCluster:
     def test_plays_are_summed(self):
         rows = [_row("clipse", "so far ahead", play_count=2),

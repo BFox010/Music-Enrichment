@@ -62,10 +62,15 @@ Two things worth acting on:
   (boygenius "Not Strong Enough" `USUG12209242` vs `USUG12300710`), and since an
   ISRC identifies a specific recording, taking Deezer's answer first would feed
   ReccoBeats a different master. MusicBrainz's MBID→ISRC join stays first.
-- **The manual Exportify step (3a/3b/3c) is close to retirable.** Exportify
-  matched 2236/3375 (66%) this run; 5a/5b covered 93% needing no account, no
-  playlist round-trip, and no manual step. The 2235 Exportify rows persist only
-  because 5b will not overwrite an existing block.
+- **The manual Exportify step (3a/3b/3c) is not retirable, though it looked it.**
+  For audio features it is superseded: sampling 300 Exportify-covered tracks,
+  ReccoBeats returned features for 296 (98.7%), which extrapolates to ~94% of
+  the library standalone — *above* the 92.5% blend. But the Exportify CSV has no
+  ISRC column (Phase 5a resolves every ISRC itself, `already_had=0`) and is the
+  only bulk source of `explicit`, `release_year`, and `spotify_id`. Without it
+  the first two fall to the iTunes XML's ~4% of rows and the third to zero,
+  since Phase B needs credentials. Retiring 3c means finding those three
+  elsewhere first.
 
 Both API response shapes were unverified before this run (the modules were
 written without outbound access). They were confirmed correct against live

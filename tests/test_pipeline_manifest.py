@@ -97,9 +97,12 @@ class TestManifestStructure:
 
 
 class TestExpectedPhases:
+    # 5a sits before 4e on purpose: identity resolution clusters on `isrc`, so
+    # it has to run after something resolves one. The ids are stable labels,
+    # not an ordering — execution order is this list's order.
     EXPECTED_IDS = [
-        "1", "2", "A", "B", "3a", "3b", "3c", "4", "4b", "4c", "4d", "4e",
-        "5", "5a", "5b", "6", "7", "8",
+        "1", "2", "A", "B", "3a", "3b", "3c", "4", "4b", "4c", "4d",
+        "5a", "4e", "5", "5b", "6", "7", "8",
     ]
 
     def test_all_expected_phase_ids_present(self, manifest):

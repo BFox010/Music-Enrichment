@@ -52,20 +52,25 @@ from pipeline.config import (
     RECCOBEATS_CACHE,
     RECCOBEATS_RATE_LIMIT,
     REPO_ROOT,
+    TRACKS_RESOLVED_PATH,
+    TRACKS_WITH_AVAILABILITY_PATH,
+    TRACKS_WITH_FEATURES_PATH,
+    TRACKS_WITH_ISRCS_PATH,
     configure_logging,
     get_logger,
 )
-from pipeline.resolve_isrcs import TRACKS_WITH_ISRCS_PATH
 from pipeline.schema import read_jsonl, write_jsonl
 
 log = get_logger(__name__)
 
-TRACKS_WITH_FEATURES_PATH: Path = REPO_ROOT / "tracks_with_features.jsonl"
-
+# Phase 5 (iTunes availability) is the immediate predecessor — 5a resolved the
+# ISRCs further upstream, ahead of 4e, so its output is no longer adjacent.
 _INPUT_PRIORITY = [
+    TRACKS_WITH_AVAILABILITY_PATH,
+    TRACKS_RESOLVED_PATH,
     TRACKS_WITH_ISRCS_PATH,
 ]
-DEFAULT_INPUT = TRACKS_WITH_ISRCS_PATH
+DEFAULT_INPUT = TRACKS_WITH_AVAILABILITY_PATH
 
 # How many ISRCs go in one resolve request. Conservative — no published cap.
 _BATCH_SIZE = 40

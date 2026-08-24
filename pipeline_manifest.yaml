@@ -185,15 +185,36 @@ phases:
     resumable: true
     optional: true
 
+  # 5a runs here, ahead of 4e, despite the "5" in its id. Execution order is
+  # this list's order — the id is a stable label that --start-from, depends_on
+  # and every existing issue reference use, so it was not renumbered when the
+  # phase moved. 4e clusters on `isrc` as a strong identifier (resolve_identity
+  # `_cluster`), and with 5a downstream it never saw one: identity fell back to
+  # normalized names, which meant a change to normalize_artist re-keyed tracks
+  # and orphaned their human-edited fields. Resolving ISRCs first makes
+  # canonical_track_id durable for the ~95% of rows that get one.
+  - id: "5a"
+    name: "ISRC resolution (MusicBrainz -> Deezer)"
+    module: pipeline.resolve_isrcs
+    callable: enrich
+    accepts_force: true
+    inputs:
+      - tracks_with_genre_backfill.jsonl
+    outputs:
+      - tracks_with_isrcs.jsonl
+    depends_on: ["4d"]
+    schema_version: 6
+    resumable: true
+
   - id: "4e"
     name: identity resolution
     module: pipeline.resolve_identity
     callable: resolve
     inputs:
-      - tracks_with_genre_backfill.jsonl
+      - tracks_with_isrcs.jsonl
     outputs:
       - tracks_resolved.jsonl
-    depends_on: ["4d"]
+    depends_on: ["5a"]
     schema_version: 6
     resumable: true
 
@@ -210,29 +231,16 @@ phases:
     schema_version: 6
     resumable: true
 
-  - id: "5a"
-    name: "ISRC resolution (MusicBrainz -> Deezer)"
-    module: pipeline.resolve_isrcs
-    callable: enrich
-    accepts_force: true
-    inputs:
-      - tracks_with_availability.jsonl
-    outputs:
-      - tracks_with_isrcs.jsonl
-    depends_on: ["5"]
-    schema_version: 6
-    resumable: true
-
   - id: "5b"
     name: "ReccoBeats audio features"
     module: pipeline.enrich_audio_features
     callable: enrich
     accepts_force: true
     inputs:
-      - tracks_with_isrcs.jsonl
+      - tracks_with_availability.jsonl
     outputs:
       - tracks_with_features.jsonl
-    depends_on: ["5a"]
+    depends_on: ["5"]
     schema_version: 6
     resumable: true
 

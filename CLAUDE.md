@@ -40,7 +40,10 @@ Two things look like playlist machinery but are not:
    that would leave fewer rows than are on disk is refused.
 4. **`canonical_track_id` is preserved by every phase.** No phase may drop or
    overwrite it. Identity priority: MusicBrainz recording MBID → ISRC →
-   normalized artist+track → fallback hash.
+   normalized artist+track → fallback hash. **Phase 4e sets it** — on every
+   row, singletons included — which is why 5a resolves ISRCs before 4e runs:
+   an id derived from a normalized name moves whenever normalization improves,
+   and a moved id orphans the row's human-edited fields at the Phase 8 merge.
 5. **The manifest drives the orchestrator.** Adding a phase means adding it to
    `pipeline_manifest.yaml` *and* implementing the module. The anti-drift test in
    `tests/test_pipeline_manifest.py` fails otherwise.
@@ -78,9 +81,9 @@ inputs/lastfm_export.json
   4b enrich_discogs        → tracks_with_discogs.jsonl      ← Discogs (styles, optional)
   4c derive_genres         → tracks_with_genres.jsonl       (no API — maps existing tags)
   4d enrich_genre_backfill → tracks_with_genre_backfill.jsonl ← artist-level, gap only
-  4e resolve_identity      → tracks_resolved.jsonl
-  5  check_apple_music     → tracks_with_availability.jsonl ← iTunes Search
   5a resolve_isrcs         → tracks_with_isrcs.jsonl        ← MusicBrainz → ISRC, then Deezer
+  4e resolve_identity      → tracks_resolved.jsonl          (clusters on the ISRC 5a just resolved)
+  5  check_apple_music     → tracks_with_availability.jsonl ← iTunes Search
   5b enrich_audio_features → tracks_with_features.jsonl     ← ReccoBeats, keyed by ISRC
   6  classify_moods        → tracks_with_moods.jsonl        ← inputs/existing_audit.csv
   7  apply_taste_profile   → tracks_with_taste.jsonl        ← taste_profile.md
@@ -90,10 +93,17 @@ inputs/lastfm_export.json
 Phase B's real output is the **ISRC**; `spotify_id` is incidental and stored only
 because ReccoBeats accepts it. B is the last-resort resolver: 5a/5b (#37) are
 the primary route now — MusicBrainz `musicbrainz_id` → ISRC, needing no auth,
-then Deezer name search, then ReccoBeats for the feature vector. B, and the
-3a/3b/3c TuneMyMusic/Exportify round-trip, stay in the manifest as an optional
-fallback for whatever 5a/5b miss; retire them outright once 5a/5b reach
-adequate coverage. See the module docstrings.
+then Deezer name search, then ReccoBeats for the feature vector. B stays in the
+manifest, `optional: true`, for whatever those miss.
+
+**3a/3b/3c cannot be retired, despite #37 superseding them for audio features.**
+Measured 2026-08-24: ReccoBeats returns features for 98.7% of the tracks
+Exportify covers, so it *does* replace them there. But `inputs/exportify.csv`
+carries no ISRC column and is the only bulk source of three other fields —
+`explicit` and `release_year` (otherwise only the iTunes XML, ~4% of rows) and
+`spotify_id` (otherwise only Phase B, which needs credentials). Dropping 3c
+trades a ~1.5pt audio-feature gain for collapsing three fields from ~69% to
+near zero. Retiring it needs a replacement source for those first.
 
 ## Commands
 
