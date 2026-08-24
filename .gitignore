@@ -244,6 +244,8 @@ tracks_with_genres.jsonl
 tracks_with_genre_backfill.jsonl
 tracks_resolved.jsonl
 tracks_with_availability.jsonl
+tracks_with_isrcs.jsonl
+tracks_with_features.jsonl
 tracks_with_moods.jsonl
 tracks_with_taste.jsonl
 
