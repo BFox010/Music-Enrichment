@@ -527,7 +527,7 @@ function TagCloud({ items, activeKey, onPick }) {
     <div className="tagcloud" ref={ref}>
       {items.map((t) => (
         <div key={t.key} data-flip-key={t.key} className={"tagchip" + (activeKey === t.key ? " active" : "")} onClick={() => onPick && onPick(t.key)}>
-          {t.key}<span className="tc-n num">{t.value}</span>
+          {t.key}<span className="tc-n num">{Math.round(t.value).toLocaleString()}</span>
         </div>
       ))}
     </div>

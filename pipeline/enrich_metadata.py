@@ -54,15 +54,40 @@ _INPUT_PRIORITY = [
 DEFAULT_INPUT = TRACKS_WITH_AUDIO_PATH
 
 
+_EMPTY_LASTFM_FIELDS: dict[str, Any] = {
+    "lastfm_tags": [],
+    "musicbrainz_id": None,
+    "artist_mbid": None,
+    "lastfm_duration_ms": None,
+    "lastfm_listeners": None,
+    "lastfm_playcount": None,
+}
+
+
+def _parse_positive_int(value: Any) -> int | None:
+    """Last.fm returns numeric strings, and 0 for "unknown" — normalize both."""
+    try:
+        if value is None:
+            return None
+        n = int(value)
+        return n if n > 0 else None
+    except (TypeError, ValueError):
+        return None
+
+
 def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
-    """Pull the fields we care about out of a track.getInfo response."""
+    """Pull the fields we care about out of a track.getInfo response.
+
+    ``duration``/``listeners``/``playcount`` ride along on the same cached
+    response already being fetched for tags/MBIDs — no extra API calls (#41).
+    """
     if not isinstance(response, dict):
-        return {"lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None}
+        return dict(_EMPTY_LASTFM_FIELDS)
     if response.get("_error"):
-        return {"lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None}
+        return dict(_EMPTY_LASTFM_FIELDS)
     track = response.get("track") or {}
     if not isinstance(track, dict):
-        return {"lastfm_tags": [], "musicbrainz_id": None, "artist_mbid": None}
+        return dict(_EMPTY_LASTFM_FIELDS)
 
     toptags = (track.get("toptags") or {}).get("tag") or []
     if isinstance(toptags, dict):  # single-tag responses can come as dict
@@ -78,6 +103,9 @@ def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
         "lastfm_tags": tags,
         "musicbrainz_id": track_mbid or None,
         "artist_mbid": artist_mbid or None,
+        "lastfm_duration_ms": _parse_positive_int(track.get("duration")),
+        "lastfm_listeners": _parse_positive_int(track.get("listeners")),
+        "lastfm_playcount": _parse_positive_int(track.get("playcount")),
     }
 
 
@@ -227,7 +255,21 @@ def enrich(
             else:
                 stats["no_match"] += 1
 
+            # Gap-fill only: Last.fm's duration backs duration_ms up only
+            # where a prior phase (Exportify) left it null, and never
+            # overwrites an existing value. listeners/playcount are new
+            # fields with no other source, so they're stored outright.
+            lastfm_duration_ms = fields.pop("lastfm_duration_ms")
+            lastfm_listeners = fields.pop("lastfm_listeners")
+            lastfm_playcount = fields.pop("lastfm_playcount")
+
             track.update(fields)
+            if not track.get("duration_ms") and lastfm_duration_ms:
+                track["duration_ms"] = lastfm_duration_ms
+            if lastfm_listeners is not None:
+                track["lastfm_listeners"] = lastfm_listeners
+            if lastfm_playcount is not None:
+                track["lastfm_playcount"] = lastfm_playcount
             # Initialise downstream fields if absent
             track.setdefault("genres", [])
             track.setdefault("discogs_styles", [])

@@ -193,3 +193,105 @@ class TestApplyManifest:
         apply_manifest(tracks, manifest)
         assert tracks[0]["playlists"] == ["soak"]
         assert tracks[0]["curation_state"] == "locked"
+
+    def test_no_match_clears_playlist_fields(self) -> None:
+        """apply_manifest recomputes fully from scratch each run — a track
+        carrying stale playlists/curation_state from before a Phase 4e merge
+        must not keep them once its identities no longer match anything."""
+        manifest = {
+            "tier_by_artist": {}, "blacklist_artists": set(),
+            "blacklist_tracks": set(), "playlists": {},
+        }
+        tracks = [self._track("Portishead", "Roads",
+                               playlists=["stale"], curation_state="locked")]
+        apply_manifest(tracks, manifest)
+        assert tracks[0]["playlists"] == []
+        assert tracks[0]["curation_state"] is None
+
+    def test_blacklist_matches_via_identity_alias(self) -> None:
+        """A merged row's own display key is the most-played variant's; an
+        older credit that taste_profile.md blacklisted must still match via
+        identity_aliases (#61) — otherwise the merge silently un-blacklists
+        the very track the owner flagged."""
+        manifest = {
+            "tier_by_artist": {}, "blacklist_artists": set(),
+            "blacklist_tracks": {("freddie dredd", "in my blood")},
+            "playlists": {},
+        }
+        tracks = [self._track(
+            "Freddie Dredd", "In My Blood (feat. Genshin & Slim Guerilla)",
+            identity_aliases=[
+                ["freddie dredd", "in my blood feat genshin slim guerilla"],
+                ["freddie dredd", "in my blood"],
+            ],
+        )]
+        apply_manifest(tracks, manifest)
+        assert tracks[0]["blacklisted"] is True
+
+    def test_playlist_matches_via_identity_alias(self) -> None:
+        manifest = {
+            "tier_by_artist": {}, "blacklist_artists": set(), "blacklist_tracks": set(),
+            "playlists": {("clipse", "so far ahead"):
+                          {"playlists": ["throwbacks"], "curation_state": "locked"}},
+        }
+        tracks = [self._track(
+            "Clipse, Pharrell Williams, Pusha T & Malice", "So Far Ahead",
+            identity_aliases=[
+                ["clipse pharrell williams pusha t malice", "so far ahead"],
+                ["clipse", "so far ahead"],
+            ],
+        )]
+        apply_manifest(tracks, manifest)
+        assert tracks[0]["playlists"] == ["throwbacks"]
+
+    def test_blacklist_on_one_alias_beats_playlist_on_another(self) -> None:
+        """The Highjack/In My Blood shape found in the real library: the same
+        recording judged two different ways under two different credit
+        strings before Phase 4e folded them together. Blacklist wins — a
+        suppressed track should not also carry a locked-playlist tag."""
+        manifest = {
+            "tier_by_artist": {}, "blacklist_artists": set(),
+            "blacklist_tracks": {("a ap rocky", "highjack")},
+            "playlists": {("a ap rocky", "highjack feat jessica pratt"):
+                          {"playlists": ["fast", "bass"], "curation_state": "locked"}},
+        }
+        tracks = [self._track(
+            "A$AP Rocky", "Highjack (feat. Jessica Pratt)",
+            identity_aliases=[
+                ["a ap rocky", "highjack feat jessica pratt"],
+                ["a ap rocky", "highjack"],
+            ],
+        )]
+        apply_manifest(tracks, manifest)
+        assert tracks[0]["blacklisted"] is True
+        assert tracks[0]["playlists"] == []
+        assert tracks[0]["curation_state"] is None
+
+    def test_single_identity_double_judgment_is_left_alone(self) -> None:
+        """A track the owner already blacklisted AND playlisted under one
+        single name is a pre-existing taste_profile.md fact, not a Phase 4e
+        merge conflict — this phase must not silently pick a side for it."""
+        manifest = {
+            "tier_by_artist": {}, "blacklist_artists": set(),
+            "blacklist_tracks": {("a ap rocky", "goldie")},
+            "playlists": {("a ap rocky", "goldie"):
+                          {"playlists": ["fast", "dark", "bass"], "curation_state": "locked"}},
+        }
+        tracks = [self._track("A$AP Rocky", "Goldie",
+                               identity_aliases=[["a ap rocky", "goldie"]])]
+        apply_manifest(tracks, manifest)
+        assert tracks[0]["blacklisted"] is True
+        assert tracks[0]["playlists"] == ["fast", "dark", "bass"]
+        assert tracks[0]["curation_state"] == "locked"
+
+    def test_tier_matches_via_alias_artist(self) -> None:
+        manifest = {
+            "tier_by_artist": {"clipse": 1}, "blacklist_artists": set(),
+            "blacklist_tracks": set(), "playlists": {},
+        }
+        tracks = [self._track(
+            "Clipse, Pharrell Williams, Pusha T & Malice", "So Far Ahead",
+            identity_aliases=[["clipse", "so far ahead"]],
+        )]
+        apply_manifest(tracks, manifest)
+        assert tracks[0]["saturation_tier"] == 1

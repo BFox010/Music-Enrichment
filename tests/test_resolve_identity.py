@@ -13,6 +13,9 @@ from pathlib import Path
 
 import pytest
 
+from pipeline.config import TRACKS_PATH
+from pipeline.name_variations import strip_feat
+from pipeline.normalize import normalize_artist, normalize_track
 from pipeline.resolve_identity import (
     _deconflict_aliases,
     is_credit_variant,
@@ -25,8 +28,8 @@ def _row(artist, track, **extra):
     row = {
         "artist": artist,
         "track": track,
-        "artist_normalized": artist.lower(),
-        "track_normalized": track.lower(),
+        "artist_normalized": normalize_artist(artist),
+        "track_normalized": normalize_track(track),
         "play_count": extra.pop("play_count", 1),
     }
     row.update(extra)
@@ -79,6 +82,50 @@ class TestIsCreditVariant:
     def test_identical_artists_are_not_variants(self):
         a = _row("artist", "song")
         assert not is_credit_variant(a, dict(a))
+
+    def test_feat_in_title_merges_when_artist_is_unchanged(self):
+        """The far more common shape: the guest credit never left the title,
+        so the artist field is identical on both rows."""
+        a = _row("kanye west", "FML")
+        b = _row("kanye west", "FML (feat. The Weeknd)")
+        assert is_credit_variant(a, b)
+        assert is_credit_variant(b, a)
+
+    def test_feat_in_title_merges_across_bracket_style(self):
+        a = _row("a$ap rocky", "Highjack")
+        b = _row("a$ap rocky", "Highjack (feat. Jessica Pratt)")
+        assert is_credit_variant(a, b)
+
+    def test_feat_in_title_still_requires_matching_stripped_title(self):
+        a = _row("kanye west", "FML")
+        b = _row("kanye west", "Waves (feat. Chris Brown)")
+        assert not is_credit_variant(a, b)
+
+    def test_conflicting_isrc_vetoes_a_feat_in_title_merge(self):
+        a = _row("kanye west", "FML", isrc="AAA111")
+        b = _row("kanye west", "FML (feat. The Weeknd)", isrc="BBB222")
+        assert not is_credit_variant(a, b)
+
+    def test_conflicting_mbid_is_demoted_from_veto_to_tiebreak(self):
+        """MusicBrainz recording IDs are demoted from a hard veto to a
+        tiebreak: Last.fm routinely returns different recording MBIDs for the
+        same recording under different credit strings, so a disagreement here
+        should route to review, not silently block a merge the credit shape
+        otherwise supports."""
+        a = _row("clipse", "so far ahead", musicbrainz_id="aaa")
+        b = _row("clipse pharrell williams pusha t malice", "so far ahead",
+                  musicbrainz_id="bbb")
+        assert not is_credit_variant(a, b)  # still doesn't auto-merge...
+        from pipeline.resolve_identity import _shape_matches
+        assert _shape_matches(a, b)          # ...but the shape is recognised
+
+    def test_conflicting_mbid_does_not_block_a_same_artist_feat_in_title_merge(self):
+        """The artist field never changed, so Last.fm had no different string
+        to hash a different MBID from — a conflict here is expected noise,
+        not evidence of a different recording."""
+        a = _row("kendrick lamar", "Money Trees", musicbrainz_id="aaa")
+        b = _row("kendrick lamar", "Money Trees (feat. Jay Rock)", musicbrainz_id="bbb")
+        assert is_credit_variant(a, b)
 
 
 class TestMergeCluster:
@@ -173,6 +220,48 @@ class TestResolve:
                 _row("the beatles", "something in the way", play_count=3)]
         stats, _ = self._run(rows)
         assert stats["output"] == 2
+
+    def test_feat_in_title_split_collapses(self):
+        """The shape the audit found most: same artist, guest credit only in
+        the title, never entered the comparison loop before because the two
+        rows landed in different title buckets."""
+        rows = [_row("kendrick lamar", "Money Trees", play_count=8),
+                _row("kendrick lamar", "Money Trees (feat. Jay Rock)", play_count=25)]
+        stats, written = self._run(rows)
+        assert stats["output"] == 1
+        assert written[0]["play_count"] == 33
+
+    def test_feat_in_title_split_collapses_regardless_of_which_row_has_it(self):
+        rows = [_row("kanye west", "Waves", play_count=20),
+                _row("kanye west", "Waves (feat. Chris Brown & Kid Cudi)", play_count=7)]
+        stats, written = self._run(rows)
+        assert stats["output"] == 1
+        assert written[0]["play_count"] == 27
+
+    def test_mbid_conflict_on_a_matching_shape_goes_to_review_not_a_merge(self):
+        """Prefix-artist case: the credit itself changed, so a conflicting
+        MBID is informative — held for review rather than merged blind."""
+        rows = [_row("clipse", "so far ahead", play_count=2, musicbrainz_id="aaa"),
+                _row("clipse pharrell williams pusha t malice", "so far ahead",
+                     play_count=22, musicbrainz_id="bbb")]
+        with tempfile.TemporaryDirectory() as tmp:
+            src, out = Path(tmp) / "in.jsonl", Path(tmp) / "out.jsonl"
+            review = Path(tmp) / "review.jsonl"
+            src.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            stats = resolve(input_path=src, output_path=out, review_path=review)
+            assert stats["output"] == 2  # not merged
+            assert "MusicBrainz IDs conflict" in review.read_text(encoding="utf-8")
+
+    def test_mbid_conflict_on_a_same_artist_feat_split_still_merges(self):
+        """Same-artist case: the artist field never changed, so a conflicting
+        MBID is expected Last.fm noise, not evidence of a different
+        recording — merges anyway rather than sitting in review forever."""
+        rows = [_row("kendrick lamar", "Money Trees", play_count=8, musicbrainz_id="aaa"),
+                _row("kendrick lamar", "Money Trees (feat. Jay Rock)", play_count=25,
+                     musicbrainz_id="bbb")]
+        stats, written = self._run(rows)
+        assert stats["output"] == 1
+        assert written[0]["play_count"] == 33
 
     def test_total_plays_are_conserved(self):
         rows = [_row("clipse", "x", play_count=2),
@@ -325,3 +414,35 @@ class TestAliasUniqueness:
         _deconflict_aliases(rows)
         assert a["identity_aliases"] == [["artist", "song"]]
         assert ["artist", "song"] not in b["identity_aliases"]
+
+
+class TestCommittedLibraryHasNoResidualSplits:
+    """Regression guard for the 87-cluster feat-in-title split (#61).
+
+    ``tracks.jsonl`` is Phase 8 output — it should already reflect a Phase 4e
+    run under the current rules. If two rows share an
+    (artist_normalized, feat-stripped title) pair, either the merge rule
+    regressed or the committed file is stale relative to the pipeline.
+    """
+
+    @pytest.mark.skipif(not TRACKS_PATH.exists(), reason="tracks.jsonl not present")
+    def test_no_two_rows_share_artist_and_feat_stripped_title(self):
+        seen: dict[tuple[str, str], str] = {}
+        dupes: list[str] = []
+        with open(TRACKS_PATH, "r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                row = json.loads(line)
+                key = (
+                    row.get("artist_normalized") or "",
+                    normalize_track(strip_feat(row.get("track") or "")),
+                )
+                if key == ("", ""):
+                    continue
+                if key in seen:
+                    dupes.append(f"{key} — {seen[key]!r} / {row.get('track')!r}")
+                else:
+                    seen[key] = row.get("track")
+        assert not dupes, f"{len(dupes)} unresolved credit-variant split(s): {dupes[:5]}"
