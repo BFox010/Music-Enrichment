@@ -27,10 +27,6 @@ class TestFillDefaults:
         out = fill_defaults({"artist": "x", "track": "y", "custom_field": "kept"})
         assert out["custom_field"] == "kept"
 
-    def test_blacklisted_default_is_false(self) -> None:
-        out = fill_defaults({})
-        assert out["blacklisted"] is False
-
 
 class TestValidateRow:
     def _good_row(self) -> dict:
@@ -40,7 +36,6 @@ class TestValidateRow:
             "artist_normalized": "portishead",
             "track_normalized": "roads",
             "play_count": 47,
-            "blacklisted": False,
             "genres": [],
             "lastfm_tags": [],
             "playlists": [],
@@ -61,12 +56,6 @@ class TestValidateRow:
         errs = validate_row(row)
         assert any("genres" in e for e in errs)
 
-    def test_blacklisted_must_be_bool(self) -> None:
-        row = self._good_row()
-        row["blacklisted"] = "no"
-        errs = validate_row(row)
-        assert any("blacklisted" in e for e in errs)
-
     def test_negative_play_count(self) -> None:
         row = self._good_row()
         row["play_count"] = -1
@@ -79,7 +68,7 @@ class TestValidateDataset:
         rows = [
             {"artist": "x", "track": "y",
              "artist_normalized": "x", "track_normalized": "y",
-             "play_count": 1, "blacklisted": False,
+             "play_count": 1,
              "genres": [], "lastfm_tags": [], "playlists": []}
         ]
         result = validate_dataset(rows)
@@ -90,10 +79,10 @@ class TestValidateDataset:
         rows = [
             {"artist": "x", "track": "y",
              "artist_normalized": "x", "track_normalized": "y",
-             "blacklisted": False, "genres": [], "lastfm_tags": [], "playlists": []},
+             "genres": [], "lastfm_tags": [], "playlists": []},
             {"artist": "", "track": "y",
              "artist_normalized": "", "track_normalized": "y",
-             "blacklisted": False, "genres": [], "lastfm_tags": [], "playlists": []},
+             "genres": [], "lastfm_tags": [], "playlists": []},
         ]
         result = validate_dataset(rows)
         assert result["valid_count"] == 1

@@ -13,6 +13,7 @@ were used once to produce or repair data that now lives in `tracks.jsonl` /
 | `build_mood_spotcheck.py` | Generated the 2026-05-25 mood-quality spot-check sample. |
 | `add_mood_dump.py` | One-time mood-batch listing dump for Claude classification. |
 | `flatten_audit.py` | Flattened the audit CSV during Phase 6 bootstrap. |
+| `migrate_v5_to_v6.py` | Dropped `blacklisted`/`rejected_reason` from every row of `tracks.jsonl` (#63, schema v5 → v6). |
 
 If you need to re-run one, move it back up to `scripts/` first — paths inside
 assume the repo root.

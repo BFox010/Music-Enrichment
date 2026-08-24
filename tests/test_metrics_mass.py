@@ -236,16 +236,18 @@ class TestAliasResolution:
             assert "Fast" not in mass
 
 
-class TestBlacklistNeverFilters:
-    def test_blacklisted_plays_are_still_counted(self):
+class TestCurationNeverFilters:
+    def test_rejected_plays_are_still_counted(self):
         """A dashboard must report music that was demonstrably played.
 
-        ``blacklisted`` is a playlist-generation exclusion inherited from this
-        project's origin as a recommender. Wiring it into a count would delete
-        real listening history from the record.
+        ``curation_state`` is dashboard-facing curation metadata, not a
+        playlist-generation exclusion — this project has no generator.
+        Wiring it into a count would delete real listening history from the
+        record. (Formerly guarded by the now-removed ``blacklisted`` field,
+        issue #63; the property this test protects outlives that field.)
         """
         tracks = [
-            _track("A", "one", ["Fast"], blacklisted=True),
+            _track("A", "one", ["Fast"], curation_state="rejected"),
             _track("B", "two", ["Slow"]),
         ]
         scrobbles = [_scrobble("A", "one", "2025-01-01"),

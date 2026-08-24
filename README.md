@@ -122,14 +122,19 @@ half being missing.
 | 4d | [enrich_genre_backfill](pipeline/enrich_genre_backfill.py) | `tracks_with_genres.jsonl` | `tracks_with_genre_backfill.jsonl` |
 | 4e | [resolve_identity](pipeline/resolve_identity.py) | `tracks_with_genre_backfill.jsonl` | `tracks_resolved.jsonl` |
 | 5 | [check_apple_music](pipeline/check_apple_music.py) | `tracks_resolved.jsonl` | `tracks_with_availability.jsonl` |
+| 5a | [resolve_isrcs](pipeline/resolve_isrcs.py) | `tracks_with_availability.jsonl` | `tracks_with_isrcs.jsonl` |
+| 5b | [enrich_audio_features](pipeline/enrich_audio_features.py) | `tracks_with_isrcs.jsonl` | `tracks_with_features.jsonl` |
 | 6 | [classify_moods](pipeline/classify_moods.py) | + `inputs/existing_audit.csv` | `tracks_with_moods.jsonl` |
 | 7 | [apply_taste_profile](pipeline/apply_taste_profile.py) | + [taste_profile.md](taste_profile.md) | `tracks_with_taste.jsonl` |
 | 8 | [update_tracks](pipeline/update_tracks.py) | `tracks_with_taste.jsonl` | `tracks.jsonl` |
 
 **Optional phases** (`B`, `4b`, `4d`, `6`, `7`) skip gracefully when their
-credentials or input files are absent. **Phase 3b is blocked** on owner action;
-[#37](https://github.com/BFox010/Music-Enrichment/issues/37) plans to replace the
-TuneMyMusic/Exportify round-trip with a chain that doesn't need it.
+credentials or input files are absent. **`B` and `3a`/`3b`/`3c` are legacy** —
+[#37](https://github.com/BFox010/Music-Enrichment/issues/37) replaced the
+Spotify-dependent TuneMyMusic/Exportify round-trip with `5a`/`5b`, a chain that
+needs no owner action and no Spotify account. All four are `optional: true` and
+keep working for tracks the automated chain misses; `3b` no longer pauses a run
+when its output is absent.
 
 Phases that read a JSONL pick the **deepest existing intermediate** rather than a
 fixed path, so skipping an optional phase doesn't silently drop the fields a
@@ -169,19 +174,23 @@ MusicBrainz and AcousticBrainz alike, which keeps the audio-feature source
 swappable. `spotify_id` is stored because ReccoBeats also accepts it, not as the
 identifier of record.
 
-B is the **last-resort resolver**: cheaper routes (MusicBrainz `musicbrainz_id` →
-ISRC, needing no auth; then Deezer) should run first, and B should be retired
-outright if they reach adequate coverage. See the module docstring.
+B is the **last-resort resolver**. Phases 5a/5b (issue #37) implement the
+cheaper routes — MusicBrainz `musicbrainz_id` → ISRC needing no auth, then
+Deezer name search, then ReccoBeats for the feature vector itself — and run
+first in the chain. B stays in the manifest, `optional: true`, for whatever
+those two don't resolve; retire it outright once they reach adequate coverage.
+See the module docstring.
 
 ### On phases 3a/3c and 7
 
 These look like playlist machinery. They aren't:
 
-- **3a/3b/3c** exist to acquire *audio features*. The playlist round-trip is the
-  means, not a feature.
-- **Phase 7** produces `saturation_tier`, `blacklisted` and `curation_state` —
-  dashboard-facing curation metadata. Its `playlists` field is a grouping label
-  read out of `taste_profile.md`, not a generated playlist.
+- **3a/3b/3c** exist to acquire *audio features*, and are legacy since #37 —
+  5a/5b acquire the same data without the manual round-trip. The playlist
+  detour was always a means, never a feature.
+- **Phase 7** produces `saturation_tier` and `curation_state` — dashboard-facing
+  curation metadata. Its `playlists` field is a grouping label read out of
+  `taste_profile.md`, not a generated playlist.
 
 An earlier iteration aimed at a natural-language playlist builder that pushed to
 Spotify/Apple. That direction was dropped.
@@ -222,7 +231,7 @@ Every enrichment phase writes per-field provenance — `source`, `retrieved_at`,
 ## Schema
 
 Canonical version lives in `SCHEMA_VERSION` ([pipeline/config.py](pipeline/config.py)),
-currently `5`, mirrored in the manifest. Integer, monotonic.
+currently `6`, mirrored in the manifest. Integer, monotonic.
 
 - Every record emits `_schema_version` as its **first** field. `read_jsonl` also
   loads legacy records without it.
@@ -231,7 +240,13 @@ currently `5`, mirrored in the manifest. Integer, monotonic.
 - Readers ignore unknown fields; `fill_defaults()` preserves forward-compat.
 - Additive fields **do not** bump the version. Breaking renames or removals
   **do**, and require migration tests
-  ([tests/test_schema_v5.py](tests/test_schema_v5.py)).
+  ([tests/test_schema_v6.py](tests/test_schema_v6.py); v5 stays covered as a
+  legacy-read compat test in
+  [tests/test_schema_v5.py](tests/test_schema_v5.py)).
+- v6 (#63) dropped `blacklisted`/`rejected_reason` — playlist-generator
+  leftovers computed on every run but rendered nowhere on the dashboard — and
+  added `isrc_source`/`isrc_retrieved_at` (#37) as provenance for Phase 5a's
+  resolved ISRCs.
 
 Canonical track identity, used for every cross-phase join:
 

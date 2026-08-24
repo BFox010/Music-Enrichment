@@ -18,10 +18,14 @@ fix it rather than building toward it.
 Two things look like playlist machinery but are not:
 
 - **Phases 3a/3b/3c** (TuneMyMusic → Exportify) acquire *audio features*. The
-  playlist round-trip is a means of getting them, not a feature. See #37.
-- **Phase 7** (`apply_taste_profile`) produces `saturation_tier`, `blacklisted`,
+  playlist round-trip was a means of getting them, not a feature — #37
+  replaced it with 5a/5b (MusicBrainz/Deezer → ISRC, then ReccoBeats), and
+  3a/3b/3c now sit in the manifest only as an optional legacy fallback.
+- **Phase 7** (`apply_taste_profile`) produces `saturation_tier` and
   `curation_state` — dashboard-facing curation metadata. Its `playlists` field
   is a grouping label read out of `taste_profile.md`, not a generated playlist.
+  (`blacklisted` was a third such field until #63 removed it — a
+  playlist-generator leftover with no consumer; see `docs/blacklist_archive_2026-08.md`.)
 
 ## Invariants
 
@@ -66,24 +70,30 @@ inputs/lastfm_export.json
   1  ingest_scrobbles      → scrobbles.jsonl                (additive; refuses to shrink)
   2  dedupe                → tracks_skeleton.jsonl
   A  enrich_apple_library  → tracks_with_apple.jsonl        ← inputs/apple_music_library.xml
-  B  enrich_spotify_ids    → tracks_with_spotify.jsonl      ← Spotify Search (optional)
-  3a export_tunemymusic    → inputs/tunemymusic_upload.csv
-  3b (manual — owner)      → inputs/exportify.csv           BLOCKED
-  3c merge_exportify       → tracks_with_audio.jsonl        (reads deepest existing intermediate)
+  B  enrich_spotify_ids    → tracks_with_spotify.jsonl      ← Spotify Search (optional, legacy last resort)
+  3a export_tunemymusic    → inputs/tunemymusic_upload.csv  LEGACY (optional)
+  3b (manual — owner)      → inputs/exportify.csv           LEGACY (optional; no longer blocks a run)
+  3c merge_exportify       → tracks_with_audio.jsonl        LEGACY (reads deepest existing intermediate)
   4  enrich_metadata       → tracks_with_metadata.jsonl     ← Last.fm track.getInfo (tags + MBIDs)
   4b enrich_discogs        → tracks_with_discogs.jsonl      ← Discogs (styles, optional)
   4c derive_genres         → tracks_with_genres.jsonl       (no API — maps existing tags)
   4d enrich_genre_backfill → tracks_with_genre_backfill.jsonl ← artist-level, gap only
   4e resolve_identity      → tracks_resolved.jsonl
   5  check_apple_music     → tracks_with_availability.jsonl ← iTunes Search
+  5a resolve_isrcs         → tracks_with_isrcs.jsonl        ← MusicBrainz → ISRC, then Deezer
+  5b enrich_audio_features → tracks_with_features.jsonl     ← ReccoBeats, keyed by ISRC
   6  classify_moods        → tracks_with_moods.jsonl        ← inputs/existing_audit.csv
   7  apply_taste_profile   → tracks_with_taste.jsonl        ← taste_profile.md
   8  update_tracks         → tracks.jsonl                   canonical
 ```
 
 Phase B's real output is the **ISRC**; `spotify_id` is incidental and stored only
-because ReccoBeats accepts it. B is the last-resort resolver — cheaper routes
-(MusicBrainz → ISRC, then Deezer) should run first. See its module docstring.
+because ReccoBeats accepts it. B is the last-resort resolver: 5a/5b (#37) are
+the primary route now — MusicBrainz `musicbrainz_id` → ISRC, needing no auth,
+then Deezer name search, then ReccoBeats for the feature vector. B, and the
+3a/3b/3c TuneMyMusic/Exportify round-trip, stay in the manifest as an optional
+fallback for whatever 5a/5b miss; retire them outright once 5a/5b reach
+adequate coverage. See the module docstrings.
 
 ## Commands
 
@@ -123,7 +133,7 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
 
 ## Schema
 
-`SCHEMA_VERSION` lives in `pipeline/config.py` (currently `5`) and is mirrored in
+`SCHEMA_VERSION` lives in `pipeline/config.py` (currently `6`) and is mirrored in
 `pipeline_manifest.yaml`. Integer, monotonic.
 
 - Every record emits `_schema_version` first. `read_jsonl` also loads legacy

@@ -2,7 +2,6 @@
 
 Parses the human-edited ``taste_profile.md`` and derives per-track:
   - saturation_tier  (1, 2, 3, or None)
-  - blacklisted      (bool)
   - playlists        (list of slugs)
   - curation_state   ("locked", "approved", "rejected", or None)
 
@@ -193,33 +192,6 @@ def _inline_dot_list(text: str) -> list[str]:
     return out
 
 
-def _blacklist_table_entries(text: str) -> list[tuple[str, str]]:
-    """Parse '| Plays | Track |' table. Track cells use 'Artist – \"Track\"' (en-dash)."""
-    out: list[tuple[str, str]] = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line.startswith("|"):
-            continue
-        cells = [c.strip() for c in line.strip("|").split("|")]
-        if len(cells) < 2:
-            continue
-        track_cell = cells[-1]
-        if track_cell.lower() == "track" or set(track_cell) <= set("-: "):
-            continue
-        # Multi-track rows: 'Artist – "T1" / Artist2 – "T2" / Artist3 – "T3"'
-        for entry in track_cell.split(" / "):
-            entry = entry.strip()
-            for sep in (" – ", " — ", " - "):
-                if sep in entry:
-                    artist, _, rest = entry.partition(sep)
-                    # Strip surrounding quotes (straight + curly variants)
-                    track = rest.strip().strip('"“”„‘’')
-                    if artist and track:
-                        out.append((artist.strip(), track))
-                    break
-    return out
-
-
 def _playlist_prose_entries(text: str) -> dict[tuple[str, str], dict]:
     """Parse playlist sections from rich prose format.
 
@@ -284,8 +256,6 @@ def _playlist_prose_entries(text: str) -> dict[tuple[str, str], dict]:
 def parse_rich_taste_profile(markdown: str) -> dict:
     """Parse the v4 rich taste-profile format (tables, inline dot-lists, prose)."""
     tier_by_artist: dict[str, int] = {}
-    blacklist_artists: set[str] = set()
-    blacklist_tracks: set[tuple[str, str]] = set()
 
     # Saturation tiers — end at next H2 section, not the next `---` (which can
     # match `|---|` inside a markdown table separator row).
@@ -308,19 +278,12 @@ def parse_rich_taste_profile(markdown: str) -> dict:
         if norm not in tier_by_artist:
             tier_by_artist[norm] = 3
 
-    # Blacklist — same trick, end at next H2 section
-    bl_section = _slice_section(markdown, "## TRACK BLACKLIST", "\n## ")
-    for artist, track in _blacklist_table_entries(bl_section):
-        blacklist_tracks.add((normalize_artist(artist), normalize_track(track)))
-
     # Existing playlists (prose with `**Name:**` headers and Locked/Rejected segments)
     pl_section = _slice_section(markdown, "## EXISTING PLAYLIST DNA", "\n## ")
     playlists = _playlist_prose_entries(pl_section)
 
     return {
         "tier_by_artist": tier_by_artist,
-        "blacklist_artists": blacklist_artists,
-        "blacklist_tracks": blacklist_tracks,
         "playlists": playlists,
     }
 
@@ -341,18 +304,14 @@ def parse_simple_taste_profile(markdown: str) -> dict:
     Returns:
         {
             "tier_by_artist": {artist_norm: int},
-            "blacklist_artists": set[str],
-            "blacklist_tracks": set[(str, str)],
             "playlists": {(artist_norm, track_norm): {"playlists": [slug], "curation_state": str}},
         }
     """
     tier_by_artist: dict[str, int] = {}
-    blacklist_artists: set[str] = set()
-    blacklist_tracks: set[tuple[str, str]] = set()
     playlists: dict[tuple[str, str], dict] = {}
 
     # State machine: which top-level section are we in?
-    section: str = "unknown"          # "tiers", "blacklist", "playlists", "unknown"
+    section: str = "unknown"          # "tiers", "playlists", "unknown"
     current_tier: int | None = None
     current_playlist: tuple[str, str] | None = None  # (slug, state)
 
@@ -380,10 +339,6 @@ def parse_simple_taste_profile(markdown: str) -> dict:
                 section = "tiers"
                 current_tier = None
                 continue
-            if "blacklist" in text:
-                section = "blacklist"
-                current_tier = None
-                continue
             if "playlist" in text and "playlists" in text:
                 section = "playlists"
                 current_tier = None
@@ -409,15 +364,6 @@ def parse_simple_taste_profile(markdown: str) -> dict:
                 tier_by_artist[artist_norm] = current_tier
             continue
 
-        if section == "blacklist":
-            track, artist = _split_track_artist(item)
-            artist_norm = normalize_artist(artist)
-            if track:
-                blacklist_tracks.add((artist_norm, normalize_track(track)))
-            else:
-                blacklist_artists.add(artist_norm)
-            continue
-
         if section == "playlists" and current_playlist:
             slug, state = current_playlist
             track, artist = _split_track_artist(item)
@@ -438,8 +384,6 @@ def parse_simple_taste_profile(markdown: str) -> dict:
 
     return {
         "tier_by_artist": tier_by_artist,
-        "blacklist_artists": blacklist_artists,
-        "blacklist_tracks": blacklist_tracks,
         "playlists": playlists,
     }
 
@@ -471,15 +415,9 @@ def apply_manifest(tracks: Iterable[dict], manifest: dict) -> dict[str, int]:
 
     Checked against every identity the track has ever carried (its own key
     plus ``identity_aliases``), not just its current display key — see
-    ``_track_identity_keys``. Where *different* aliases disagree — one credit
-    string is blacklisted, another sits in a playlist, because Phase 4e only
-    just folded them into the same row — blacklist wins: a track flagged for
-    suppression should not also carry a locked-playlist tag. A single
-    identity that the owner already judged both ways under one name is left
-    exactly as taste_profile.md says; that's pre-existing and none of this
-    phase's business to arbitrate.
+    ``_track_identity_keys``.
     """
-    stats = {"tiered": 0, "blacklisted": 0, "in_playlists": 0, "curation_set": 0}
+    stats = {"tiered": 0, "in_playlists": 0, "curation_set": 0}
     for track in tracks:
         keys = _track_identity_keys(track)
         artists = [k[0] for k in keys]
@@ -494,27 +432,13 @@ def apply_manifest(tracks: Iterable[dict], manifest: dict) -> dict[str, int]:
         if tier is not None:
             stats["tiered"] += 1
 
-        # Blacklist — remember which identity produced the hit, so a playlist
-        # hit under that same identity isn't mistaken for a cross-alias conflict.
-        black_key = None
-        for artist_norm, key in zip(artists, keys):
-            if artist_norm in manifest["blacklist_artists"] or key in manifest["blacklist_tracks"]:
-                black_key = key
-                break
-        is_black = black_key is not None
-        track["blacklisted"] = is_black
-        if is_black:
-            stats["blacklisted"] += 1
-
         # Playlists
-        plist_key = plist = None
+        plist = None
         for key in keys:
             candidate = manifest["playlists"].get(key)
             if candidate:
-                plist_key, plist = key, candidate
+                plist = candidate
                 break
-        if plist is not None and is_black and plist_key != black_key:
-            plist = None
         if plist:
             track["playlists"] = list(plist["playlists"])
             track["curation_state"] = plist["curation_state"]
@@ -543,6 +467,8 @@ def apply(
     if input_path is None:
         for candidate in (
             TRACKS_WITH_MOODS_PATH,
+            REPO_ROOT / "tracks_with_features.jsonl",
+            REPO_ROOT / "tracks_with_isrcs.jsonl",
             TRACKS_WITH_AVAILABILITY_PATH,
             TRACKS_WITH_METADATA_PATH,
             TRACKS_PATH,
@@ -560,11 +486,8 @@ def apply(
     markdown = profile_path.read_text(encoding="utf-8")
     manifest = parse_taste_profile(markdown)
     log.info(
-        "Parsed: %d tier entries, %d blacklist artists, %d blacklist tracks, "
-        "%d playlist entries",
+        "Parsed: %d tier entries, %d playlist entries",
         len(manifest["tier_by_artist"]),
-        len(manifest["blacklist_artists"]),
-        len(manifest["blacklist_tracks"]),
         len(manifest["playlists"]),
     )
 
@@ -583,10 +506,8 @@ def apply(
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     log.info(
-        "Phase 7 done: tiered=%d  blacklisted=%d  in_playlists=%d  curation_set=%d  "
-        "/  %d total",
-        stats["tiered"], stats["blacklisted"], stats["in_playlists"],
-        stats["curation_set"], len(tracks),
+        "Phase 7 done: tiered=%d  in_playlists=%d  curation_set=%d  /  %d total",
+        stats["tiered"], stats["in_playlists"], stats["curation_set"], len(tracks),
     )
     return stats
 

@@ -16,7 +16,7 @@ DISPLAY_COLUMNS: list[str] = [
     "genres", "mood_tags", "mood_confidence", "saturation_tier",
     "audio_features.energy", "audio_features.valence",
     "audio_features.danceability", "audio_features.tempo",
-    "curation_state", "playlists", "blacklisted",
+    "curation_state", "playlists",
     "first_scrobbled", "last_scrobbled",
 ]
 

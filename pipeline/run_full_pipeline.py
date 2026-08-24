@@ -179,7 +179,8 @@ def run(
         if phase_def.get("manual"):
             outputs = phase_def.get("outputs", [])
             output_exists = any((REPO_ROOT / f).exists() for f in outputs)
-            if not output_exists and not skip_pause:
+            optional = phase_def.get("optional", False)
+            if not output_exists and not skip_pause and not optional:
                 log.info("PAUSE: Phase %s is manual.", phase_id)
                 instructions = phase_def.get("instructions", "").strip()
                 if instructions:
@@ -187,6 +188,10 @@ def run(
                         log.info("  %s", line)
                 log.info("Stopping pipeline — re-run with --start-from %s once complete.", phase_id)
                 break
+            if not output_exists and optional:
+                log.info(
+                    "Phase %s SKIPPED — manual+optional, no output present.", phase_id
+                )
             results[phase_id] = OK if output_exists else SKIPPED
             continue
 

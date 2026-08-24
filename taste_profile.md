@@ -1,6 +1,6 @@
 ﻿# Taste Profile — FoxXg
 
-> Parsed by `pipeline/apply_taste_profile.py` on every pipeline run to derive `saturation_tier`, `blacklisted`, `playlists`, and `curation_state` per track.
+> Parsed by `pipeline/apply_taste_profile.py` on every pipeline run to derive `saturation_tier`, `playlists`, and `curation_state` per track.
 > The full taste-reference document — Three-Axis Model, mood→sound matrix, calibration findings, discovery vectors, production rules — lives outside this repo as `foxXg_taste_profile_v5.md`. This file is structural only: just what the pipeline consumes.
 
 ## Saturation Tiers
@@ -47,39 +47,6 @@ Lower tier = more saturated. Pipeline uses these to cap repeat-artist density in
 - Steve Lacy
 - Oliver Tree
 - Twenty One Pilots
-
-## Blacklist
-
-Top oversaturated tracks. Never include in any curated playlist.
-
-- "Grown Up" by Danny Brown
-- "Goldie" by A$AP Rocky
-- "Severed Head" by Gorillaz
-- "MELTDOWN" by Travis Scott
-- "Lost and Found Freestyle 2019" by A$AP Rocky
-- "Sundress" by A$AP Rocky
-- "Feel The Fiyaaaah" by Metro Boomin & A$AP Rocky
-- "LPFJ2" by A$AP Rocky
-- "In My Blood" by Freddie Dredd
-- "Matte Black" by $uicideboy$
-- "Good Luck" by Broken Bells
-- "Image" by Magdalena Bay
-- "You Broke My Heart" by Drake
-- "Strangers" by Danger Mouse & Black Thought
-- "Machu Picchu" by The Strokes
-- "Functional Addict" by Pharrell Williams, Gunna & Nigo
-- "#RICHAXXHAITIAN" by Mach-Hommy
-- "Highjack" by A$AP Rocky
-- "Why Won't They Talk to Me?" by Tame Impala
-- "Rich N***a Problems" by A$AP Rocky
-- "No Static" by Nappy Roots
-- "STATS" by Baby Keem
-- "So Good at Being in Trouble" by Unknown Mortal Orchestra
-- "Sofia" by Clairo
-- "Slide" by Calvin Harris
-- "Disappear" by Dehd
-- "Like Acid Rain" by Unknown Mortal Orchestra
-- "Basement Jack" by Steve Lacy
 
 ## Playlists
 

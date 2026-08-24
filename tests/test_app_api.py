@@ -45,10 +45,8 @@ _TRACK = {
     },
     "discogs_styles": ["Trip Hop", "Downtempo"],
     "saturation_tier": 1,
-    "blacklisted": False,
     "playlists": [],
     "curation_state": None,
-    "rejected_reason": None,
     "enriched_at": "2026-01-01T00:00:00Z",
     "first_scrobbled": "2020-06-15",
     "last_scrobbled": "2020-06-15",
@@ -455,7 +453,7 @@ class TestTracksMinJsonl:
         # id-presence flags collapsed to booleans
         assert row["musicbrainz_id"] is False and row["spotify_id"] is False
         # trimmed fields must be absent
-        for gone in ("enriched_at", "rejected_reason", "blacklisted", "curation_state"):
+        for gone in ("enriched_at", "curation_state"):
             assert gone not in row
 
     def test_conditional_304(self, client):

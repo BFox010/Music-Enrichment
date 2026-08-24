@@ -38,8 +38,8 @@ COLUMNS: list[str] = [
     "audio_features.loudness",
     "mood_tags", "mood_source", "mood_confidence",
     "itunes_play_count", "itunes_skip_count", "itunes_date_added",
-    "saturation_tier", "blacklisted", "playlists",
-    "curation_state", "rejected_reason",
+    "saturation_tier", "playlists",
+    "curation_state",
     "enriched_at",
 ]
 

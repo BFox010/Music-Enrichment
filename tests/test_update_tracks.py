@@ -27,12 +27,6 @@ class TestMergeWithExisting:
         merged = _merge_with_existing(new, existing)
         assert merged["curation_state"] == "locked"
 
-    def test_preserves_rejected_reason(self) -> None:
-        new = {"artist": "x", "track": "y", "rejected_reason": None}
-        existing = {"artist": "x", "track": "y", "rejected_reason": "too overplayed"}
-        merged = _merge_with_existing(new, existing)
-        assert merged["rejected_reason"] == "too overplayed"
-
     def test_preserves_claude_batch_moods(self) -> None:
         new = {
             "artist": "x", "track": "y",
@@ -145,7 +139,6 @@ class TestUpdate:
             # Manually edit curation_state on disk (simulates user edit)
             rows = self._load_jsonl(out)
             rows[0]["curation_state"] = "locked"
-            rows[0]["rejected_reason"] = "kept for soak playlist"
             self._write_jsonl(out, rows)
 
             # Second run: same input
@@ -153,7 +146,6 @@ class TestUpdate:
             assert stats["updated"] == 1
             rows = self._load_jsonl(out)
             assert rows[0]["curation_state"] == "locked"
-            assert rows[0]["rejected_reason"] == "kept for soak playlist"
 
     def test_enriched_at_preserved_when_row_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
