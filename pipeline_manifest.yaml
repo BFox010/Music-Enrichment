@@ -17,13 +17,15 @@
 #   resumable   Whether the phase can safely be re-run from scratch
 #   manual      true = operator action required; orchestrator pauses here
 #   requires_file   Skip (not abort) if this path is missing at runtime
-#   optional    true = skip gracefully on ImportError (module not yet built)
+#   optional    true = skip gracefully on ImportError (module not yet built),
+#               and for a manual phase, don't pause the run when its output
+#               is missing — mark it SKIPPED and continue instead
 #   accepts_force   true = the callable takes force= and honours --force /
 #                   --force-errors (API phases only; anti-drift tested against
 #                   the real signature)
 #   instructions    Shown to operator when manual=true and output is missing
 
-schema_version: 5
+schema_version: 6
 
 phases:
 
@@ -36,7 +38,7 @@ phases:
     outputs:
       - scrobbles.jsonl
     depends_on: []
-    schema_version: 5
+    schema_version: 6
     resumable: true
 
   - id: "2"
@@ -48,7 +50,7 @@ phases:
     outputs:
       - tracks_skeleton.jsonl
     depends_on: ["1"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
 
   - id: "A"
@@ -61,11 +63,11 @@ phases:
     outputs:
       - tracks_with_apple.jsonl
     depends_on: ["2"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
 
   - id: "B"
-    name: Spotify ID resolution
+    name: "Spotify ID resolution (legacy last-resort)"
     module: pipeline.enrich_spotify_ids
     callable: enrich
     inputs:
@@ -73,12 +75,12 @@ phases:
     outputs:
       - tracks_with_spotify.jsonl
     depends_on: ["A"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
     optional: true   # skips gracefully when no Spotify credentials are present
 
   - id: "3a"
-    name: TuneMyMusic export
+    name: "TuneMyMusic export (legacy)"
     module: pipeline.export_tunemymusic
     callable: export
     inputs:
@@ -88,11 +90,12 @@ phases:
     outputs:
       - inputs/tunemymusic_upload.csv
     depends_on: ["A"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
+    optional: true
 
   - id: "3b"
-    name: "TuneMyMusic + Exportify (manual)"
+    name: "TuneMyMusic + Exportify (manual, legacy)"
     module: ~
     callable: ~
     inputs:
@@ -103,7 +106,11 @@ phases:
     schema_version: ~
     resumable: false
     manual: true
+    optional: true   # #37: Phase 5a/5b supersede this route; no longer blocks a run
     instructions: |
+      Superseded by Phase 5a/5b (issue #37) — this manual round-trip is no
+      longer required to get audio features. Still supported for tracks the
+      automated chain misses:
       1. Upload inputs/tunemymusic_upload.csv to TuneMyMusic (https://tunemymusic.com)
       2. Transfer the playlist to Spotify
       3. Run Exportify (https://exportify.net) on that Spotify playlist
@@ -111,7 +118,7 @@ phases:
       5. Re-run with --start-from 3c
 
   - id: "3c"
-    name: Exportify merge
+    name: "Exportify merge (legacy)"
     module: pipeline.merge_exportify
     callable: merge
     inputs:
@@ -120,8 +127,9 @@ phases:
     outputs:
       - tracks_with_audio.jsonl
     depends_on: ["3b"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
+    optional: true
     requires_file: inputs/exportify.csv
 
   - id: "4"
@@ -134,7 +142,7 @@ phases:
     outputs:
       - tracks_with_metadata.jsonl
     depends_on: ["A"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
 
   - id: "4b"
@@ -147,7 +155,7 @@ phases:
     outputs:
       - tracks_with_discogs.jsonl
     depends_on: ["4"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
     optional: true
 
@@ -160,7 +168,7 @@ phases:
     outputs:
       - tracks_with_genres.jsonl
     depends_on: ["4b"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
 
   - id: "4d"
@@ -173,7 +181,7 @@ phases:
     outputs:
       - tracks_with_genre_backfill.jsonl
     depends_on: ["4c"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
     optional: true
 
@@ -186,7 +194,7 @@ phases:
     outputs:
       - tracks_resolved.jsonl
     depends_on: ["4d"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
 
   - id: "5"
@@ -199,7 +207,33 @@ phases:
     outputs:
       - tracks_with_availability.jsonl
     depends_on: ["4e"]
-    schema_version: 5
+    schema_version: 6
+    resumable: true
+
+  - id: "5a"
+    name: "ISRC resolution (MusicBrainz -> Deezer)"
+    module: pipeline.resolve_isrcs
+    callable: enrich
+    accepts_force: true
+    inputs:
+      - tracks_with_availability.jsonl
+    outputs:
+      - tracks_with_isrcs.jsonl
+    depends_on: ["5"]
+    schema_version: 6
+    resumable: true
+
+  - id: "5b"
+    name: "ReccoBeats audio features"
+    module: pipeline.enrich_audio_features
+    callable: enrich
+    accepts_force: true
+    inputs:
+      - tracks_with_isrcs.jsonl
+    outputs:
+      - tracks_with_features.jsonl
+    depends_on: ["5a"]
+    schema_version: 6
     resumable: true
 
   - id: "6"
@@ -207,12 +241,12 @@ phases:
     module: pipeline.classify_moods
     callable: classify
     inputs:
-      - tracks_with_availability.jsonl
+      - tracks_with_features.jsonl
       - inputs/existing_audit.csv
     outputs:
       - tracks_with_moods.jsonl
-    depends_on: ["5", "3c"]
-    schema_version: 5
+    depends_on: ["5b", "3c"]
+    schema_version: 6
     resumable: true
     optional: true
 
@@ -226,7 +260,7 @@ phases:
     outputs:
       - tracks_with_taste.jsonl
     depends_on: ["6"]
-    schema_version: 5
+    schema_version: 6
     resumable: true
     optional: true
     requires_file: taste_profile.md
@@ -240,5 +274,5 @@ phases:
     outputs:
       - tracks.jsonl
     depends_on: ["7"]
-    schema_version: 5
+    schema_version: 6
     resumable: true

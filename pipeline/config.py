@@ -51,12 +51,14 @@ LASTFM_CACHE: Path = CACHE_DIR / "lastfm.json"
 MUSICBRAINZ_CACHE: Path = CACHE_DIR / "musicbrainz.json"
 DISCOGS_CACHE: Path = CACHE_DIR / "discogs.json"
 SPOTIFY_CACHE: Path = CACHE_DIR / "spotify_search.json"
+DEEZER_CACHE: Path = CACHE_DIR / "deezer.json"
+RECCOBEATS_CACHE: Path = CACHE_DIR / "reccobeats.json"
 
 # ── Schema ───────────────────────────────────────────────────────────────
 # Integer, monotonic. Bump only on breaking renames/removals — additive fields
 # don't bump (readers ignore unknowns). See pipeline/schema.py for the registry.
 # Mirrors manifest schema_version.
-SCHEMA_VERSION: int = 5
+SCHEMA_VERSION: int = 6
 
 MOOD_CATEGORIES: tuple[str, ...] = (
     "Fast", "Moody", "Slow", "Heavy Bass", "Dance", "Sad", "Groove",
@@ -72,6 +74,10 @@ MOOD_SOURCES: tuple[str, ...] = ("audit", "claude_batch", "centroid", "manual", 
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
 AUDIO_FEATURE_SOURCES: tuple[str, ...] = ("exportify", "reccobeats")
+# isrc_source values actually written by pipeline/resolve_isrcs.py (Phase 5a).
+# An Exportify-sourced isrc predates this field and leaves isrc_source None —
+# see the field comment in pipeline/schema.py.
+ISRC_SOURCES: tuple[str, ...] = ("musicbrainz", "deezer")
 
 # Month-number → season name. Winter = Dec/Jan/Feb, etc.
 SEASON_BY_MONTH: dict[int, str] = {
@@ -90,6 +96,17 @@ ITUNES_SEARCH_API: str = "https://itunes.apple.com/search"
 # open to new apps). Token via Client-Credentials flow (no user login).
 SPOTIFY_API_ROOT: str = "https://api.spotify.com/v1/"
 SPOTIFY_TOKEN_URL: str = "https://accounts.spotify.com/api/token"
+# Deezer — no auth, no key. Used by Phase 5a as the name-search ISRC fallback
+# for tracks a MusicBrainz recording ID doesn't cover.
+DEEZER_API_ROOT: str = "https://api.deezer.com/"
+# ReccoBeats — no auth, no key, mirrors the pre-deprecation Spotify
+# audio-features corpus (validated bit-identical on 33 Exportify rows, see
+# issue #37). Endpoint shape below is unverified against a live response —
+# the sandbox this was built in has no outbound access to reccobeats.com —
+# so it is isolated in pipeline/enrich_audio_features.py's
+# _resolve_track_ids/_fetch_audio_features helpers for a one-line fix if the
+# real API disagrees. Confirm on the first real run.
+RECCOBEATS_API_ROOT: str = "https://api.reccobeats.com/v1/"
 
 # ── Rate limits (req/sec) ────────────────────────────────────────────────
 LASTFM_RATE_LIMIT: float = 5.0
@@ -97,6 +114,8 @@ MUSICBRAINZ_RATE_LIMIT: float = 1.0   # 1 req/sec hard
 DISCOGS_RATE_LIMIT: float = 1.0       # 60/min
 ITUNES_RATE_LIMIT: float = 0.33       # ~20/min (conservative)
 SPOTIFY_RATE_LIMIT: float = 3.0       # conservative; Spotify uses a 30s rolling window
+DEEZER_RATE_LIMIT: float = 2.0        # conservative; documented limit is ~50 req/5s
+RECCOBEATS_RATE_LIMIT: float = 2.0    # conservative; no published limit
 
 # Backoff: tries × base × 2^attempt up to max_sleep
 HTTP_MAX_RETRIES: int = 5

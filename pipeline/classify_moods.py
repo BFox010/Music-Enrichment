@@ -440,14 +440,17 @@ def classify(
     log.info("=== Phase 6: mood classification ===")
 
     # Resolve input — pick the DEEPEST intermediate so we carry every upstream
-    # field forward (Phase 5 availability, Phase 4b discogs_styles, ...). Since
-    # Phase 4 now reads the audio branch, tracks_with_availability carries
-    # audio_features too, so the centroid still has what it needs.
+    # field forward (Phase 5b ReccoBeats features, Phase 5 availability, Phase
+    # 4b discogs_styles, ...). tracks_with_features (5b) and tracks_with_isrcs
+    # (5a) come first since #37 — a track resolved through that chain needs
+    # its audio_features to reach the centroid classifier.
     # tracks.jsonl is the last resort: the intermediates are gitignored, so a
     # fresh clone has only the canonical file. Re-running the phase against it
     # must still work rather than dead-ending.
     chosen_input = None
     for candidate in (
+        REPO_ROOT / "tracks_with_features.jsonl",
+        REPO_ROOT / "tracks_with_isrcs.jsonl",
         REPO_ROOT / "tracks_with_availability.jsonl",
         REPO_ROOT / "tracks_resolved.jsonl",
         tracks_path,

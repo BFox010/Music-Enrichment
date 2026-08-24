@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pipeline.apply_taste_profile import (
-    _blacklist_table_entries,
     _inline_dot_list,
     _is_rich_format,
     _playlist_prose_entries,
@@ -58,37 +57,6 @@ class TestInlineDotList:
         assert _inline_dot_list(text) == [
             "Kings of Leon", "Clairo", "Dehd", "Beck", "alt-J"
         ]
-
-
-class TestBlacklistTableEntries:
-    def test_single_track_row(self) -> None:
-        text = """
-| Plays | Track |
-|---|---|
-| 105 | Danny Brown – "Grown Up" |
-"""
-        assert _blacklist_table_entries(text) == [("Danny Brown", "Grown Up")]
-
-    def test_multi_track_row(self) -> None:
-        text = """
-| Plays | Track |
-|---|---|
-| 39 | Tame Impala – "Why Won't They Talk to Me?" / A$AP Rocky – "Rich N***a Problems" / Nappy Roots – "No Static" |
-"""
-        result = _blacklist_table_entries(text)
-        assert len(result) == 3
-        assert ("Tame Impala", "Why Won't They Talk to Me?") in result
-        assert ("Nappy Roots", "No Static") in result
-
-    def test_en_dash_em_dash_hyphen(self) -> None:
-        text = """
-| 1 | A – "T1" |
-| 2 | B — "T2" |
-| 3 | C - "T3" |
-"""
-        result = _blacklist_table_entries(text)
-        artists = {a for a, _ in result}
-        assert artists == {"A", "B", "C"}
 
 
 class TestPlaylistProseEntries:
@@ -174,7 +142,7 @@ end
         assert manifest["tier_by_artist"]["umo"] == 2
         assert manifest["tier_by_artist"]["kings of leon"] == 3
         assert manifest["tier_by_artist"]["clairo"] == 3
-        assert ("danny brown", "grown up") in manifest["blacklist_tracks"]
+        assert "blacklist_tracks" not in manifest  # #63: no longer parsed
         assert manifest["playlists"][("dehd", "disappear")]["curation_state"] == "locked"
         assert manifest["playlists"][("sohn", "ransom notes")]["curation_state"] == "rejected"
 

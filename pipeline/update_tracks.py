@@ -2,7 +2,7 @@
 
 Reads the latest available intermediate (preferring the deepest in the
 enrichment chain) and writes/updates ``tracks.jsonl``. On re-runs:
-  - Human-edited fields (curation_state, rejected_reason) are PRESERVED
+  - Human-edited fields (curation_state) are PRESERVED
   - Higher-confidence mood data is PRESERVED over fresher centroid passes
   - All other enrichment fields are UPDATED from the new pass
   - enrichment_sources is recomputed each run; enriched_at is bumped only for
@@ -48,6 +48,8 @@ log = get_logger(__name__)
 _INPUT_PRIORITY: list[Path] = [
     TRACKS_WITH_TASTE_PATH,
     TRACKS_WITH_MOODS_PATH,
+    REPO_ROOT / "tracks_with_features.jsonl",
+    REPO_ROOT / "tracks_with_isrcs.jsonl",
     TRACKS_WITH_AVAILABILITY_PATH,
     TRACKS_WITH_METADATA_PATH,
     TRACKS_WITH_AUDIO_PATH,
@@ -60,7 +62,6 @@ _SOURCE_TRIGGERS: dict[str, list[str]] = {
     "lastfm_tags": ["lastfm_tags"],
     "musicbrainz_id": ["musicbrainz"],
     "discogs_styles": ["discogs"],     # populated in Phase 4b
-    "audio_features": ["exportify"],   # populated in Phase 3c
     "itunes_persistent_id": ["itunes_xml"],
     "apple_music_checked_at": ["itunes_search"],
     "mood_source": ["mood_classifier"],
@@ -114,6 +115,17 @@ def _enrichment_sources(row: dict) -> list[str]:
             for src in src_list:
                 if src not in sources:
                     sources.append(src)
+
+    # audio_features and isrc each carry their own provenance (Exportify vs.
+    # ReccoBeats; MusicBrainz vs. Deezer vs. Spotify Search) rather than a
+    # fixed trigger — read the actual source instead of assuming one.
+    af = row.get("audio_features")
+    if isinstance(af, dict) and af.get("source") and af["source"] not in sources:
+        sources.append(af["source"])
+    isrc_source = row.get("isrc_source")
+    if isrc_source and isrc_source not in sources:
+        sources.append(isrc_source)
+
     return sources
 
 

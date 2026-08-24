@@ -1,7 +1,8 @@
 """Canonical schema + registry for tracks.jsonl.
 
 Defines:
-- Versioned dataclass (TrackV5) describing the canonical Track shape
+- Versioned dataclasses (TrackV5 legacy, TrackV6 current) describing the
+  canonical Track shape
 - A schema registry: version → dataclass
 - FIELD_DEFAULTS with stable emit order (_schema_version FIRST, then
   canonical_track_id, then identity, then enrichment groups)
@@ -60,6 +61,10 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "musicbrainz_id": None,
     "artist_mbid": None,
     "isrc": None,
+    # Provenance for isrc — which resolver found it (Phase 5a) and when.
+    # Absent (None) for an Exportify-sourced ISRC, which predates this field.
+    "isrc_source": None,
+    "isrc_retrieved_at": None,
     "apple_music_available": None,
     "apple_music_id": None,
     "apple_music_checked_at": None,
@@ -99,10 +104,8 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "itunes_kind": None,
     # Curation (Phase 7 — derived from taste_profile.md)
     "saturation_tier": None,
-    "blacklisted": False,
     "playlists": [],
     "curation_state": None,
-    "rejected_reason": None,
     # Provenance
     "enriched_at": None,
     "enrichment_sources": [],
@@ -111,7 +114,6 @@ FIELD_DEFAULTS: dict[str, Any] = {
 # Fields that are human-edited and MUST be preserved across re-runs of Phase 8
 HUMAN_EDITED_FIELDS: tuple[str, ...] = (
     "curation_state",
-    "rejected_reason",
 )
 
 # Fields whose existing values should win over a fresh enrichment pass —
@@ -130,14 +132,20 @@ PROTECTED_WHEN_HIGHER_QUALITY: dict[str, dict[str, str]] = {
 
 @dataclass
 class TrackV5:
-    """Canonical Track schema, version 5.
+    """Canonical Track schema, version 5 — SUPERSEDED, kept for legacy reads.
 
-    Field order mirrors FIELD_DEFAULTS. Use to_dict() to emit a JSONL-ready
+    v6 (issue #63) dropped ``blacklisted`` and ``rejected_reason``, both
+    playlist-generator leftovers with no consumer. This dataclass exists only
+    so a pre-migration v5 row can still be parsed; new code should use
+    ``TrackV6``. ``_schema_version`` is hardcoded to 5 rather than tracking
+    ``pipeline.config.SCHEMA_VERSION`` — that constant now means 6.
+
+    Field order mirrors the v5 shape. Use to_dict() to emit a JSONL-ready
     dict with stable key order; use from_dict() to parse one (extra fields
     are preserved on the dataclass as `_extras`).
     """
 
-    _schema_version: int = SCHEMA_VERSION
+    _schema_version: int = 5
     canonical_track_id: str = ""
     artist: str = ""
     track: str = ""
@@ -205,9 +213,90 @@ class TrackV5:
         return out
 
 
+@dataclass
+class TrackV6:
+    """Canonical Track schema, version 6 — current.
+
+    v5 minus ``blacklisted``/``rejected_reason`` (issue #63: playlist-generator
+    leftovers, computed and validated but rendered nowhere), plus
+    ``isrc_source``/``isrc_retrieved_at`` (issue #37: provenance for Phase 5a's
+    MusicBrainz/Deezer ISRC resolution). Field order mirrors FIELD_DEFAULTS.
+    """
+
+    _schema_version: int = SCHEMA_VERSION
+    canonical_track_id: str = ""
+    artist: str = ""
+    track: str = ""
+    artist_normalized: str = ""
+    track_normalized: str = ""
+    album: str = ""
+    release_year: int | None = None
+    duration_ms: int | None = None
+    explicit: bool | None = None
+    spotify_id: str | None = None
+    musicbrainz_id: str | None = None
+    artist_mbid: str | None = None
+    isrc: str | None = None
+    isrc_source: str | None = None
+    isrc_retrieved_at: str | None = None
+    apple_music_available: bool | None = None
+    apple_music_id: str | None = None
+    apple_music_checked_at: str | None = None
+    audio_features: dict[str, Any] | None = None
+    genres: list[str] = field(default_factory=list)
+    lastfm_tags: list[str] = field(default_factory=list)
+    discogs_styles: list[str] = field(default_factory=list)
+    itunes_genre: str | None = None
+    lastfm_listeners: int | None = None
+    lastfm_playcount: int | None = None
+    mood_tags: list[str] | None = None
+    mood_source: str | None = None
+    mood_confidence: str | None = None
+    mood_distance: float | None = None
+    identity_aliases: list[list[str]] = field(default_factory=list)
+    play_count: int = 0
+    first_scrobbled: str | None = None
+    last_scrobbled: str | None = None
+    peak_year: int | None = None
+    itunes_play_count: int = 0
+    itunes_skip_count: int = 0
+    itunes_date_added: str | None = None
+    itunes_last_played: str | None = None
+    itunes_persistent_id: str | None = None
+    itunes_kind: str | None = None
+    saturation_tier: str | None = None
+    playlists: list[str] = field(default_factory=list)
+    curation_state: str | None = None
+    enriched_at: str | None = None
+    enrichment_sources: list[str] = field(default_factory=list)
+    # Unknown-but-preserved fields (forward compat). Not emitted as a single
+    # blob — to_dict() spreads them at the end of the record.
+    _extras: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, row: dict[str, Any]) -> "TrackV6":
+        known = {f.name for f in fields(cls) if f.name != "_extras"}
+        kwargs = {k: v for k, v in row.items() if k in known}
+        extras = {k: v for k, v in row.items() if k not in known}
+        return cls(**kwargs, _extras=extras)
+
+    def to_dict(self) -> dict[str, Any]:
+        out: dict[str, Any] = {}
+        for f in fields(self):
+            if f.name == "_extras":
+                continue
+            out[f.name] = getattr(self, f.name)
+        # Spread unknown-but-preserved fields at the end
+        for k, v in self._extras.items():
+            if k not in out:
+                out[k] = v
+        return out
+
+
 # Schema registry — version → dataclass. Extend additively when bumping.
 SCHEMA_REGISTRY: dict[int, type] = {
     5: TrackV5,
+    6: TrackV6,
 }
 
 
@@ -307,8 +396,6 @@ def validate_row(row: dict[str, Any]) -> list[str]:
         errors.append("lastfm_tags must be a list")
     if not isinstance(row.get("playlists", []), list):
         errors.append("playlists must be a list")
-    if not isinstance(row.get("blacklisted", False), bool):
-        errors.append("blacklisted must be a bool")
 
     pc = row.get("play_count")
     if pc is not None and (not isinstance(pc, int) or pc < 0):

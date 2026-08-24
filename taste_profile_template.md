@@ -4,12 +4,12 @@ Copy this file to `taste_profile.md` and fill it in.
 
 **This file is truth; the JSONL is derived.** Phase 7
 (`pipeline/apply_taste_profile.py`) reads it on every run to set
-`saturation_tier`, `blacklisted`, `playlists` and `curation_state` on each
-track. Nothing in the pipeline ever writes back to it — edit it by hand.
+`saturation_tier`, `playlists` and `curation_state` on each track. Nothing in
+the pipeline ever writes back to it — edit it by hand.
 
-Those four fields are **dashboard metadata**, not instructions to a playlist
+Those three fields are **dashboard metadata**, not instructions to a playlist
 generator. They drive the Coverage view's saturation breakdown and let you mark
-tracks so the dashboard can group or exclude them. `playlists` is a grouping
+tracks so the dashboard can group them. `playlists` is a grouping
 label read out of the sections below — no playlist is generated or pushed
 anywhere.
 
@@ -31,15 +31,6 @@ as the saturation breakdown on the dashboard's Coverage view.
 
 ### Tier 3 — limited / special-context only
 - Frank Ocean
-
-## Blacklist
-
-Sets `blacklisted: true` so the dashboard can exclude these. Whole artists go on
-their own line; specific tracks use `"Track" by Artist` or `Track — Artist`.
-
-- Ed Sheeran
-- "Wonderwall" by Oasis
-- Hey Soul Sister — Train
 
 ## Groupings
 

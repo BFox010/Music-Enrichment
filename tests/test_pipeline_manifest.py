@@ -99,7 +99,7 @@ class TestManifestStructure:
 class TestExpectedPhases:
     EXPECTED_IDS = [
         "1", "2", "A", "B", "3a", "3b", "3c", "4", "4b", "4c", "4d", "4e",
-        "5", "6", "7", "8",
+        "5", "5a", "5b", "6", "7", "8",
     ]
 
     def test_all_expected_phase_ids_present(self, manifest):
@@ -289,7 +289,7 @@ class TestAcceptsForceAntiDrift:
 
     def test_the_api_phases_are_the_flagged_ones(self, phases):
         flagged = {str(p["id"]) for p in phases if p.get("accepts_force")}
-        assert flagged == {"4", "4b", "4d", "5"}
+        assert flagged == {"4", "4b", "4d", "5", "5a", "5b"}
 
     def test_orchestrator_passes_force_only_to_flagged_phases(self, monkeypatch):
         """run() must not hand force= to a phase whose callable cannot take it."""
@@ -322,6 +322,59 @@ class TestAcceptsForceAntiDrift:
         )
         rfp.run(skip_tests=True, skip_pause=True)
         assert all(kwargs == {} for kwargs in seen.values())
+
+
+class TestManualOptionalPhaseDoesNotBlock:
+    """Phase 3b (TuneMyMusic/Exportify) is manual + optional since #37 — the
+    automated 5a/5b chain supersedes it, so a missing exportify.csv must no
+    longer pause the whole run (the pre-#37 behaviour)."""
+
+    def test_missing_output_skips_without_pausing(self, monkeypatch, tmp_path):
+        from pipeline import run_full_pipeline as rfp
+
+        assert not (rfp.REPO_ROOT / "inputs" / "exportify.csv").exists(), (
+            "test assumes no Exportify CSV is present in this checkout"
+        )
+
+        seen: list[str] = []
+        monkeypatch.setattr(
+            rfp, "_phase",
+            lambda pid, name, fn, *a, **kw: (seen.append(pid), rfp.OK)[1],
+        )
+        results = rfp.run(skip_tests=True, skip_pause=False)
+
+        assert results["3b"] == rfp.SKIPPED
+        # The run must not have stopped at 3b — later phases still ran.
+        assert "8" in results
+
+    def test_non_optional_manual_phase_still_pauses(self, monkeypatch):
+        """Guard the other half: a manual phase without optional: true must
+        still break the run when its output is missing and skip_pause=False —
+        the behaviour this test's sibling is deliberately changing for 3b
+        only, not for manual phases in general."""
+        from pipeline import run_full_pipeline as rfp
+
+        fake_phases = [
+            {"id": "1", "name": "p1", "module": "pipeline.config",
+             "callable": "get_logger", "outputs": [], "manual": False,
+             "depends_on": []},
+            {"id": "2", "name": "manual step", "module": None, "callable": None,
+             "outputs": ["this/path/does/not/exist.csv"], "manual": True,
+             "depends_on": ["1"]},
+            {"id": "3", "name": "p3", "module": "pipeline.config",
+             "callable": "get_logger", "outputs": [], "manual": False,
+             "depends_on": ["2"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        seen: list[str] = []
+        monkeypatch.setattr(
+            rfp, "_phase",
+            lambda pid, name, fn, *a, **kw: (seen.append(pid), rfp.OK)[1],
+        )
+        results = rfp.run(skip_tests=True, skip_pause=False)
+
+        assert "2" not in results  # broke before recording an outcome for it
+        assert "3" not in results  # and never reached the next phase
 
 
 class TestForceCliParsing:
