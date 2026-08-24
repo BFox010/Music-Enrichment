@@ -43,7 +43,9 @@ files and purchases), while Last.fm has scrobbled everything ever streamed. The
 overlap is genuinely small.
 
 Compute the current rate rather than quoting one — it moves whenever either side
-grows. Issue #42 proposes matching on `apple_music_id` to improve it.
+grows. Issue #42 proposes matching on `apple_music_id` to improve it;
+`scripts/measure_itunes_ceiling.py` measures what any matcher could reach
+(it needs the XML, so it only runs on the owner's machine).
 
 ## Naming note
 
