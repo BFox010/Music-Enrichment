@@ -6,6 +6,8 @@ import json
 import tempfile
 from pathlib import Path
 
+from tests.conftest import close_run_log_handlers
+
 from pipeline.classify_moods import (
     _split_moods,
     calibrate_thresholds,
@@ -432,6 +434,10 @@ class TestAuditFallbackToCommittedCSV:
             )
         finally:
             cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH = original, original_batch
+            # run.log lives in tmp and configure_logging only closes stale
+            # handlers on its *next* call, so this one is still open. Windows
+            # refuses to delete an open file, failing the tempdir cleanup.
+            close_run_log_handlers()
         return [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
 
     def test_committed_csv_is_used_when_inputs_csv_is_absent(self) -> None:

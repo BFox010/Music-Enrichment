@@ -22,6 +22,7 @@ TRACKS_WITH_METADATA_PATH: Path = REPO_ROOT / "tracks_with_metadata.jsonl"
 TRACKS_WITH_DISCOGS_PATH: Path = REPO_ROOT / "tracks_with_discogs.jsonl"
 TRACKS_WITH_GENRES_PATH: Path = REPO_ROOT / "tracks_with_genres.jsonl"
 TRACKS_WITH_GENRE_BACKFILL_PATH: Path = REPO_ROOT / "tracks_with_genre_backfill.jsonl"
+TRACKS_RESOLVED_PATH: Path = REPO_ROOT / "tracks_resolved.jsonl"
 TRACKS_WITH_AVAILABILITY_PATH: Path = REPO_ROOT / "tracks_with_availability.jsonl"
 TRACKS_WITH_MOODS_PATH: Path = REPO_ROOT / "tracks_with_moods.jsonl"
 
@@ -183,6 +184,14 @@ def configure_logging(
                     "formatter": "default",
                     "level": console_level,
                 },
+            },
+            "loggers": {
+                # urllib3 logs every request line at DEBUG, and Last.fm takes
+                # its API key as a query parameter — so the root DEBUG level
+                # wrote LASTFM_API_KEY in plaintext into runs/*.log, thousands
+                # of times per run. Pinning it to INFO drops those lines and
+                # leaves the pipeline's own DEBUG output untouched.
+                "urllib3": {"level": "INFO"},
             },
             "root": {"level": "DEBUG", "handlers": ["file", "console"]},
         }

@@ -324,6 +324,65 @@ class TestAcceptsForceAntiDrift:
         assert all(kwargs == {} for kwargs in seen.values())
 
 
+class TestDefaultInputMatchesManifest:
+    """A phase's default input must be the file the manifest says it reads.
+
+    The manifest documents the chain and the orchestrator derives order from it,
+    but nothing bound a module's own input choice to that declaration. Phase 5
+    kept ``tracks_with_genre_backfill.jsonl`` (4d) at the head of its priority
+    list after 4e was inserted between them, so identity resolution was computed,
+    written, and then silently ignored — leaving duplicate canonical_track_ids in
+    the final merge. Order in the manifest is not enough; the read path has to
+    agree with it.
+    """
+
+    def _modules_with_a_default(self, phases):
+        for phase in phases:
+            if phase.get("manual") or not phase.get("module"):
+                continue
+            mod = importlib.import_module(phase["module"])
+            for attr in ("DEFAULT_INPUT", "INPUT_PATH"):
+                default = getattr(mod, attr, None)
+                if default is not None:
+                    yield phase, mod, attr, Path(default)
+                    break
+
+    def test_default_input_is_declared_in_the_manifest(self, phases):
+        for phase, mod, attr, default in self._modules_with_a_default(phases):
+            declared = {Path(p).name for p in phase.get("inputs") or []}
+            assert default.name in declared, (
+                f"Phase {phase['id']!r} ({phase['module']}) reads {default.name!r} "
+                f"as {attr} but the manifest declares inputs {sorted(declared)}. "
+                f"A phase reading a shallower file silently discards the work of "
+                f"every phase between them."
+            )
+
+    # Phase 3c is the one legitimate exception: the legacy Exportify merge is
+    # re-runnable out of order (--start-from 3c) and deliberately reads the
+    # deepest intermediate present, which is *later* in the chain than its own
+    # manifest position. See CLAUDE.md's pipeline chain note.
+    _READS_DEEPEST_BY_DESIGN = {"3c"}
+
+    def test_input_priority_head_is_the_manifest_input(self, phases):
+        """Modules that fall back through earlier outputs must still *prefer*
+        the manifest's declared input."""
+        for phase in phases:
+            if phase.get("manual") or not phase.get("module"):
+                continue
+            if str(phase["id"]) in self._READS_DEEPEST_BY_DESIGN:
+                continue
+            mod = importlib.import_module(phase["module"])
+            priority = getattr(mod, "_INPUT_PRIORITY", None)
+            if not priority:
+                continue
+            declared = {Path(p).name for p in phase.get("inputs") or []}
+            head = Path(priority[0]).name
+            assert head in declared, (
+                f"Phase {phase['id']!r} ({phase['module']}) prefers {head!r} but "
+                f"the manifest declares inputs {sorted(declared)}"
+            )
+
+
 class TestManualOptionalPhaseDoesNotBlock:
     """Phase 3b (TuneMyMusic/Exportify) is manual + optional since #37 — the
     automated 5a/5b chain supersedes it, so a missing exportify.csv must no
@@ -332,9 +391,12 @@ class TestManualOptionalPhaseDoesNotBlock:
     def test_missing_output_skips_without_pausing(self, monkeypatch, tmp_path):
         from pipeline import run_full_pipeline as rfp
 
-        assert not (rfp.REPO_ROOT / "inputs" / "exportify.csv").exists(), (
-            "test assumes no Exportify CSV is present in this checkout"
-        )
+        # Point the run at an empty tree rather than asserting the real checkout
+        # has no exportify.csv. The owner's working copy legitimately does — the
+        # suite is meant to be self-contained, and reading inputs/ made this pass
+        # in CI and on a fresh clone while failing on the one machine that
+        # actually runs the pipeline.
+        monkeypatch.setattr(rfp, "REPO_ROOT", tmp_path)
 
         seen: list[str] = []
         monkeypatch.setattr(

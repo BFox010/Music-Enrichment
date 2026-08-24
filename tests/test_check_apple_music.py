@@ -11,6 +11,7 @@ from pipeline.check_apple_music import (
     _is_stale,
 )
 from pipeline.config import (
+    TRACKS_RESOLVED_PATH,
     TRACKS_WITH_DISCOGS_PATH,
     TRACKS_WITH_GENRE_BACKFILL_PATH,
     TRACKS_WITH_GENRES_PATH,
@@ -26,10 +27,17 @@ class TestInputPriority:
     are silently dropped from tracks.jsonl even though they succeed (the bug
     fixed 2026-05-31 was exactly this, for phase 4c)."""
 
-    def test_deepest_genre_file_is_preferred(self) -> None:
-        # Phase 4d (backfill) is now the immediate predecessor.
-        assert _INPUT_PRIORITY[0] == TRACKS_WITH_GENRE_BACKFILL_PATH
-        assert DEFAULT_INPUT == TRACKS_WITH_GENRE_BACKFILL_PATH
+    def test_deepest_file_is_preferred(self) -> None:
+        # Phase 4e (identity resolution) is the immediate predecessor. This
+        # assertion named 4d until 4e was inserted between them and the priority
+        # list was not updated: 4e's row clustering was computed, written, and
+        # then read past, leaving duplicate canonical_track_ids in tracks.jsonl.
+        assert _INPUT_PRIORITY[0] == TRACKS_RESOLVED_PATH
+        assert DEFAULT_INPUT == TRACKS_RESOLVED_PATH
+
+    def test_identity_resolution_outranks_genre_backfill(self) -> None:
+        assert _INPUT_PRIORITY.index(TRACKS_RESOLVED_PATH) < \
+            _INPUT_PRIORITY.index(TRACKS_WITH_GENRE_BACKFILL_PATH)
 
     def test_genre_files_outrank_discogs(self) -> None:
         # 4b output still reachable if 4c/4d were skipped, just lower priority.

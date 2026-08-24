@@ -33,6 +33,8 @@ from typing import Any, Iterable
 from pipeline.config import (
     REPO_ROOT,
     TRACKS_PATH,
+    TRACKS_RESOLVED_PATH,
+    TRACKS_WITH_GENRE_BACKFILL_PATH,
     configure_logging,
     get_logger,
 )
@@ -42,8 +44,8 @@ from pipeline.schema import compute_canonical_track_id
 
 log = get_logger(__name__)
 
-INPUT_PATH: Path = REPO_ROOT / "tracks_with_genre_backfill.jsonl"
-OUTPUT_PATH: Path = REPO_ROOT / "tracks_resolved.jsonl"
+INPUT_PATH: Path = TRACKS_WITH_GENRE_BACKFILL_PATH
+OUTPUT_PATH: Path = TRACKS_RESOLVED_PATH
 
 # Pairs the name test proposed but that were rejected, written out so the
 # owner can eyeball what the conservative rule is declining to merge.
