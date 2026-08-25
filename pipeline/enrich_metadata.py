@@ -104,6 +104,44 @@ def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
     }
 
 
+def _response_is_usable(response: Any) -> bool:
+    """True if the response actually carried a track payload.
+
+    An error or a malformed body yields all-``None`` fields that say nothing
+    about the track — they must not be written over what earlier phases found.
+    """
+    if not isinstance(response, dict) or response.get("_error"):
+        return False
+    return isinstance(response.get("track"), dict)
+
+
+def _apply_lastfm_fields(track: dict, fields: dict[str, Any], usable: bool) -> None:
+    """Merge Phase 4's findings, never trading a known value for a blank.
+
+    Phase 2 seeds ``musicbrainz_id``/``artist_mbid`` from the export's own mbid,
+    so thousands of rows arrive already carrying one. Assigning unconditionally
+    let a single transient Last.fm error discard an identifier this phase never
+    fetched — and with it re-key ``canonical_track_id``, which is ``mbid:`` for
+    most of the library (CLAUDE.md invariant 4). Gap-fill instead, the same
+    discipline ``update_tracks._merge_with_existing`` applies at Phase 8.
+
+    Tags are different: a successful re-run legitimately prunes them to nothing
+    once ``tag_filter`` learns a new noise rule, so an empty list is only
+    refused when the response itself failed.
+    """
+    for field in ("musicbrainz_id", "artist_mbid"):
+        incoming = fields.get(field)
+        if incoming:
+            track[field] = incoming
+        else:
+            track.setdefault(field, None)
+
+    if usable or fields.get("lastfm_tags"):
+        track["lastfm_tags"] = fields.get("lastfm_tags") or []
+    else:
+        track.setdefault("lastfm_tags", [])
+
+
 def _is_actionable(fields: dict[str, Any]) -> bool:
     """True if the response gave us something to store — a track MBID or
     at least one surviving (noise-filtered) tag. Mirrors the keep-condition
@@ -258,7 +296,7 @@ def enrich(
             lastfm_listeners = fields.pop("lastfm_listeners")
             lastfm_playcount = fields.pop("lastfm_playcount")
 
-            track.update(fields)
+            _apply_lastfm_fields(track, fields, _response_is_usable(response))
             if not track.get("duration_ms") and lastfm_duration_ms:
                 track["duration_ms"] = lastfm_duration_ms
             if lastfm_listeners is not None:

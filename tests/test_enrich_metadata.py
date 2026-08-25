@@ -255,3 +255,70 @@ class TestPopularityGapFill:
         assert written[0].get("lastfm_listeners") is None
         assert written[0].get("lastfm_playcount") is None
         assert written[0].get("duration_ms") is None
+
+
+class TestExportMbidSurvivesAFailedLookup:
+    """#74: Phase 2 seeds MBIDs from the export, so Phase 4 must never trade a
+    known identifier for the blank an error produces.
+
+    ``canonical_track_id`` is ``mbid:`` for most of the library, so nulling one
+    re-keys the row and orphans its hand-edited fields at the Phase 8 merge
+    (CLAUDE.md invariant 4).
+    """
+
+    def _run(self, monkeypatch, tracks: list[dict], response: dict) -> list[dict]:
+        monkeypatch.setenv("LASTFM_API_KEY", "test-key")
+        monkeypatch.setattr(mod, "RateLimitedClient", lambda *a, **kw: _FakeClient(response))
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "in.jsonl"
+            out = Path(tmp) / "out.jsonl"
+            with open(inp, "w", encoding="utf-8") as fh:
+                for t in tracks:
+                    fh.write(json.dumps(t) + "\n")
+            mod.enrich(input_path=inp, output_path=out)
+            return [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+
+    @staticmethod
+    def _seeded() -> dict:
+        track = _track_row(0)
+        track["musicbrainz_id"] = "mbid-from-export"
+        track["artist_mbid"] = "artist-mbid-from-export"
+        track["lastfm_tags"] = ["trip-hop"]
+        return track
+
+    def test_transient_error_does_not_null_the_mbids(self, monkeypatch) -> None:
+        written = self._run(monkeypatch, [self._seeded()], {"_error": "max_retries"})
+        assert written[0]["musicbrainz_id"] == "mbid-from-export"
+        assert written[0]["artist_mbid"] == "artist-mbid-from-export"
+
+    def test_canonical_track_id_is_unchanged_by_a_failed_lookup(self, monkeypatch) -> None:
+        from pipeline.schema import compute_canonical_track_id
+
+        before = compute_canonical_track_id(self._seeded())
+        written = self._run(monkeypatch, [self._seeded()], {"_error": "max_retries"})
+        assert compute_canonical_track_id(written[0]) == before == "mbid:mbid-from-export"
+
+    def test_transient_error_does_not_wipe_existing_tags(self, monkeypatch) -> None:
+        written = self._run(monkeypatch, [self._seeded()], {"_error": "max_retries"})
+        assert written[0]["lastfm_tags"] == ["trip-hop"]
+
+    def test_a_successful_lookup_still_overwrites(self, monkeypatch) -> None:
+        """The guard must not freeze a row that Last.fm can genuinely improve."""
+        response = {"track": {"mbid": "fresh-mbid",
+                              "artist": {"mbid": "fresh-artist-mbid"},
+                              "toptags": {"tag": [{"name": "downtempo"}]}}}
+        written = self._run(monkeypatch, [self._seeded()], response)
+        assert written[0]["musicbrainz_id"] == "fresh-mbid"
+        assert written[0]["artist_mbid"] == "fresh-artist-mbid"
+        assert written[0]["lastfm_tags"] == ["downtempo"]
+
+    def test_a_successful_lookup_may_prune_tags_to_nothing(self, monkeypatch) -> None:
+        """tag_filter learning a new noise rule must still be able to clear tags."""
+        response = {"track": {"mbid": "fresh-mbid", "toptags": {"tag": []}}}
+        written = self._run(monkeypatch, [self._seeded()], response)
+        assert written[0]["lastfm_tags"] == []
+
+    def test_a_row_with_no_mbid_is_unaffected(self, monkeypatch) -> None:
+        written = self._run(monkeypatch, [_track_row(1)], {"_error": "not_found"})
+        assert written[0]["musicbrainz_id"] is None
+        assert written[0]["artist_mbid"] is None
