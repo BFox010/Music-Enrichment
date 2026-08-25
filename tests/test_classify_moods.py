@@ -451,3 +451,68 @@ class TestAuditFallbackToCommittedCSV:
         with tempfile.TemporaryDirectory() as tmp:
             rows = self._run(Path(tmp), write_root_csv=False)
         assert all(r.get("mood_source") != "audit" for r in rows)
+
+
+class TestAuditOutranksClaudeBatch:
+    """#67: a hand label must survive a Claude-batch hit on the same track.
+
+    Both indexes are keyed off the same track here, which used to let the
+    Claude review win (checked first) and overwrite the owner's own audit
+    label — the reverse of the trust order MOOD_SOURCE_RANK and CLAUDE.md
+    both declare.
+    """
+
+    def test_audit_wins_when_both_indexes_name_the_same_track(self) -> None:
+        import pipeline.classify_moods as cm
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            library = [{
+                "artist": "Portishead", "track": "Roads",
+                "artist_normalized": "portishead", "track_normalized": "roads",
+                "audio_features": _features(energy=0.2, valence=0.1),
+                "mood_tags": None, "mood_source": None,
+            }]
+            tracks_file = tmp_path / "tracks_with_availability.jsonl"
+            tracks_file.write_text(
+                "".join(json.dumps(r) + "\n" for r in library), encoding="utf-8"
+            )
+
+            audit_path = tmp_path / "existing_audit.csv"
+            audit_path.write_text(
+                "artist,track,mood_tags\n"
+                "Portishead,Roads,\"Sad, Slow\"\n",
+                encoding="utf-8",
+            )
+
+            claude_results_path = tmp_path / "claude_results.jsonl"
+            claude_results_path.write_text(
+                json.dumps({
+                    "artist_normalized": "portishead", "track_normalized": "roads",
+                    "mood_tags": ["Hype", "Fast"],
+                }) + "\n",
+                encoding="utf-8",
+            )
+
+            out = tmp_path / "out.jsonl"
+            original, original_batch = cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH
+            cm.REPO_ROOT = tmp_path
+            cm.CLAUDE_BATCH_PATH = tmp_path / "claude_mood_batch.jsonl"
+            try:
+                cm.classify(
+                    audit_path=audit_path,
+                    tracks_path=tracks_file,
+                    output_path=out,
+                    claude_results_path=claude_results_path,
+                    run_log_path=tmp_path / "run.log",
+                )
+            finally:
+                cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH = original, original_batch
+                close_run_log_handlers()
+
+            rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines()
+                    if l.strip()]
+
+        assert len(rows) == 1
+        assert rows[0]["mood_source"] == "audit"
+        assert rows[0]["mood_tags"] == ["Sad", "Slow"]

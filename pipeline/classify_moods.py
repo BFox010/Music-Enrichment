@@ -535,20 +535,21 @@ def classify(
     for track in tracks:
         key = (track["artist_normalized"], track["track_normalized"])
 
-        # 1. Claude review
-        if key in claude_index:
-            track["mood_tags"] = claude_index[key]
-            track["mood_source"] = "claude_batch"
-            track["mood_confidence"] = "high"
-            stats_out["claude_overrides"] += 1
-            continue
-
-        # 2. direct audit hit
+        # 1. direct audit hit — the owner's own labelling outranks model output
+        # (MOOD_SOURCE_RANK), so it must be checked first.
         if key in audit_index:
             track["mood_tags"] = audit_index[key]
             track["mood_source"] = "audit"
             track["mood_confidence"] = "high"
             stats_out["audit_direct"] += 1
+            continue
+
+        # 2. Claude review
+        if key in claude_index:
+            track["mood_tags"] = claude_index[key]
+            track["mood_source"] = "claude_batch"
+            track["mood_confidence"] = "high"
+            stats_out["claude_overrides"] += 1
             continue
 
         # 3. owner label on the row whose source file is gone. Falling through to
