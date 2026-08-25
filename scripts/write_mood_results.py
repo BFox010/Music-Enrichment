@@ -1,583 +1,117 @@
-"""One-off: write Claude mood verdicts back for one batch.
+"""Emit ``inputs/claude_mood_results.jsonl`` from the committed Claude verdicts.
 
-Reads inputs/claude_mood_batch.jsonl in order and, for each index present in
-CLASSIFICATIONS below, emits a line to inputs/claude_mood_results.jsonl keyed by
-(artist_normalized, track_normalized), which Phase 6 applies at highest
-confidence. Omitted indices stay unclassified (spoken skits, brief intros).
+Phase 6 queues every track it cannot classify to ``inputs/claude_mood_batch.jsonl``;
+Claude labels them and the verdicts are committed under ``docs/`` as
+``claude_mood_verdicts_<date>.jsonl``. This replays those files into the results
+file Phase 6 reads, applying them at ``mood_source="claude_batch"``,
+``mood_confidence="high"``.
 
-Multi-label, in the owner's calibrated style (median ~3 moods; Fast used broadly
-for energetic rap; Fast/Slow may coexist). MOOD_CATEGORIES values only.
+Verdicts are keyed by (artist_normalized, track_normalized), not by position in
+the batch: ``inputs/`` is gitignored and the batch is regenerated on every Phase 6
+run, so a positional key silently mislabels the whole library the next time the
+queue changes size.
+
+Later files win on a repeated key, so a re-review supersedes an older verdict.
+
+    python scripts/write_mood_results.py            # replay every docs/ verdict file
+    python scripts/write_mood_results.py --check    # validate only, write nothing
 """
 
 from __future__ import annotations
 
+import argparse
 import json
+import sys
+from collections import Counter
 from pathlib import Path
 
-from pipeline.classify_moods import MOOD_CATEGORIES
-from pipeline.config import REPO_ROOT
+REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
-BATCH = REPO_ROOT / "inputs" / "claude_mood_batch.jsonl"
+from pipeline.config import MOOD_CATEGORIES  # noqa: E402
+
+VERDICT_GLOB = "claude_mood_verdicts_*.jsonl"
+DOCS_DIR = REPO_ROOT / "docs"
 OUT = REPO_ROOT / "inputs" / "claude_mood_results.jsonl"
 
-# index -> mood_tags
-CLASSIFICATIONS: dict[int, list[str]] = {
-    0: ["Fast", "Heartbreak", "Moody"],
-    1: ["Fast", "Heartbreak", "Moody"],
-    2: ["Fast", "Hype", "Heavy Bass"],
-    3: ["Moody", "Slow", "Heartbreak", "Sad"],
-    5: ["Heavy Bass", "Moody", "Dance"],
-    6: ["Fast", "Hype", "Heavy Bass"],
-    7: ["Heavy Bass", "Moody", "Dance"],
-    8: ["Fast", "Heavy Bass", "Hype"],
-    9: ["Heavy Bass", "Moody", "Slow"],
-    10: ["Moody", "Slow", "Heavy Bass"],
-    11: ["Dark", "Moody", "Heavy Bass"],
-    12: ["Dark", "Heavy Bass", "Moody"],
-    13: ["Fast", "Heavy Bass"],
-    14: ["Heavy Bass", "Slow", "Moody"],
-    15: ["Dance", "Groove", "Heavy Bass", "Moody"],
-    16: ["Fast", "Heavy Bass", "Hype"],
-    17: ["Heavy Bass", "Slow", "Moody"],
-    18: ["Moody", "Heavy Bass", "Slow"],
-    19: ["Groove", "Dance", "Heavy Bass"],
-    20: ["Fast", "Hype", "Dark"],
-    21: ["Moody", "Fast"],
-    23: ["Groove", "Slow", "Love"],
-    24: ["Fast", "Groove", "Moody"],
-    25: ["Happy", "Uplifting", "Fast"],
-    26: ["Happy", "Sunny", "Fast", "Dance"],
-    30: ["Dark", "Moody", "Heavy Bass", "Slow"],
-    31: ["Fast", "Dance", "Moody"],
-    32: ["Dance", "Moody", "Groove"],
-    33: ["Moody", "Heavy Bass"],
-    34: ["Moody", "Heavy Bass", "Slow"],
-    35: ["Dance", "Groove", "Heavy Bass"],
-    36: ["Fast", "Hype", "Dark"],
-    37: ["Moody", "Dance", "Groove"],
-    38: ["Fast", "Hype", "Dance"],
-    39: ["Heavy Bass", "Dance", "Moody"],
-    40: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    41: ["Heavy Bass", "Moody", "Dance"],
-    42: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    43: ["Fast", "Hype", "Heavy Bass"],
-    44: ["Heavy Bass", "Groove", "Moody"],
-    45: ["Slow", "Moody", "Sad", "Heartbreak"],
-    46: ["Happy", "Sunny", "Fast", "Dance"],
-    47: ["Fast", "Heavy Bass", "Hype"],
-    48: ["Groove", "Fast", "Moody"],
-    49: ["Fast", "Hype", "Dark"],
-    50: ["Dance", "Moody", "Heavy Bass"],
-    51: ["Groove", "Heavy Bass", "Moody"],
-    52: ["Heavy Bass", "Hype", "Fast"],
-    53: ["Dark", "Heavy Bass", "Moody"],
-    54: ["Fast", "Heavy Bass", "Groove"],
-    55: ["Fast", "Heavy Bass", "Groove"],
-    56: ["Groove", "Dance", "Happy", "Sunny"],
-    57: ["Fast", "Dark", "Dance"],
-    58: ["Moody", "Heavy Bass", "Dark"],
-    59: ["Heavy Bass", "Hype", "Fast"],
-    60: ["Moody", "Heavy Bass", "Dance"],
-    61: ["Moody", "Dance", "Groove"],
-    62: ["Slow", "Moody", "Groove", "Love"],
-    63: ["Groove", "Moody", "Dance"],
-    64: ["Happy", "Fast", "Uplifting"],
-    65: ["Slow", "Moody", "Heavy Bass", "Dark"],
-    66: ["Slow", "Sad", "Heartbreak", "Moody"],
-    67: ["Fast", "Heavy Bass", "Groove"],
-    68: ["Dark", "Heavy Bass", "Moody"],
-    69: ["Dark", "Heavy Bass", "Moody", "Slow"],
-    70: ["Moody", "Slow", "Heavy Bass", "Love"],
-    71: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    72: ["Heavy Bass", "Moody"],
-    73: ["Dark", "Fast", "Moody"],
-    74: ["Heavy Bass", "Dark", "Moody"],
-    75: ["Dance", "Happy", "Uplifting", "Fast"],
-    76: ["Fast", "Groove", "Moody"],
-    77: ["Fast", "Groove", "Moody"],
-    78: ["Moody", "Slow", "Fast"],
-    80: ["Groove", "Fast", "Dance"],
-    81: ["Moody", "Fast"],
-    82: ["Fast", "Hype", "Dark"],
-    83: ["Slow", "Moody"],
-    84: ["Dance", "Happy", "Uplifting", "Fast"],
-    85: ["Dance", "Heavy Bass", "Hype"],
-    86: ["Dance", "Happy", "Uplifting"],
-    87: ["Groove", "Dance", "Love", "Heavy Bass"],
-    88: ["Dance", "Fast", "Hype", "Happy"],
-    89: ["Fast", "Heavy Bass", "Hype", "Dance"],
-    90: ["Fast", "Heavy Bass", "Groove"],
-    91: ["Dance", "Happy", "Uplifting"],
-    92: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    93: ["Heavy Bass", "Dark", "Moody"],
-    94: ["Fast", "Hype", "Dark"],
-    95: ["Fast", "Moody", "Dance", "Sad"],
-    96: ["Slow", "Groove", "Moody", "Heavy Bass"],
-    97: ["Moody", "Dance", "Heartbreak", "Slow"],
-    98: ["Fast", "Hype", "Dark"],
-    99: ["Fast", "Hype", "Dark"],
-    100: ["Fast", "Hype", "Moody"],
-    101: ["Fast", "Hype"],
-    102: ["Fast", "Hype"],
-    103: ["Heavy Bass", "Moody", "Groove"],
-    104: ["Dark", "Heavy Bass", "Fast", "Hype"],
-    105: ["Dance", "Happy", "Fast", "Sunny"],
-    106: ["Slow", "Dark", "Moody"],
-    107: ["Dance", "Groove", "Fast"],
-    108: ["Dance", "Moody", "Uplifting"],
-    109: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    110: ["Groove", "Fast", "Heavy Bass"],
-    111: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    112: ["Dance", "Groove", "Love", "Uplifting"],
-    113: ["Moody", "Sad", "Slow"],
-    114: ["Fast", "Hype", "Heavy Bass"],
-    115: ["Heavy Bass", "Dance", "Moody"],
-    116: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    117: ["Groove", "Fast", "Dance"],
-    118: ["Groove", "Fast", "Dance"],
-    119: ["Groove", "Heavy Bass", "Dance"],
-    120: ["Heavy Bass", "Moody", "Dance"],
-    121: ["Heavy Bass", "Moody", "Dance", "Dark"],
-    122: ["Heavy Bass", "Moody", "Dance"],
-    123: ["Heavy Bass", "Hype", "Fast"],
-    124: ["Groove", "Happy", "Sunny", "Uplifting"],
-    125: ["Fast", "Hype", "Dark"],
-    126: ["Fast", "Hype", "Dark"],
-    127: ["Slow", "Moody", "Groove", "Sunny"],
-    128: ["Fast", "Moody", "Heartbreak"],
-    129: ["Dance", "Happy", "Uplifting"],
-    130: ["Fast", "Groove", "Happy"],
-    131: ["Dance", "Fast", "Heavy Bass", "Hype"],
-    133: ["Fast", "Dark", "Hype", "Moody"],
-    134: ["Moody", "Fast", "Dance"],
-    135: ["Fast", "Hype", "Dark"],
-    136: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    137: ["Fast", "Hype"],
-    138: ["Happy", "Sunny", "Love", "Groove"],
-    139: ["Happy", "Groove", "Dance", "Sunny"],
-    140: ["Moody", "Slow", "Groove"],
-    141: ["Moody", "Slow", "Uplifting"],
-    142: ["Uplifting", "Happy", "Fast", "Moody"],
-    143: ["Moody", "Slow", "Uplifting"],
-    144: ["Slow", "Sad", "Moody", "Love"],
-    145: ["Fast", "Dance", "Dark", "Heavy Bass"],
-    146: ["Moody", "Slow", "Heartbreak"],
-    147: ["Moody", "Slow", "Groove"],
-    148: ["Moody", "Slow", "Heavy Bass"],
-    149: ["Slow", "Moody", "Sad"],
-    151: ["Moody", "Slow", "Heavy Bass"],
-    152: ["Moody", "Slow", "Heartbreak", "Love"],
-    153: ["Slow", "Moody", "Sad", "Love"],
-    154: ["Slow", "Moody"],
-    155: ["Slow", "Moody", "Sad"],
-    156: ["Slow", "Sad", "Heartbreak", "Moody"],
-    157: ["Slow", "Moody"],
-    158: ["Dance", "Heavy Bass", "Fast", "Hype"],
-    159: ["Dark", "Heavy Bass", "Moody"],
-    160: ["Slow", "Groove", "Moody", "Heavy Bass"],
-    161: ["Heavy Bass", "Groove", "Moody"],
-    162: ["Groove", "Slow", "Love", "Sunny"],
-    163: ["Moody", "Dance", "Love", "Uplifting"],
-    164: ["Groove", "Sunny", "Heavy Bass", "Happy"],
-    165: ["Dance", "Happy", "Groove", "Sunny"],
-    166: ["Slow", "Happy", "Groove"],
-    168: ["Dance", "Happy", "Groove", "Sunny"],
-    169: ["Dance", "Happy", "Groove", "Sunny"],
-    170: ["Moody", "Heavy Bass", "Dance"],
-    171: ["Moody", "Dance"],
-    172: ["Dance", "Groove", "Happy", "Uplifting"],
-    173: ["Dance", "Groove", "Uplifting", "Fast"],
-    174: ["Dance", "Groove", "Uplifting", "Fast"],
-    175: ["Moody", "Slow", "Dance"],
-    176: ["Dance", "Fast", "Heavy Bass"],
-    178: ["Dance", "Moody", "Groove"],
-    181: ["Moody", "Dance", "Groove"],
-    182: ["Dance", "Fast", "Moody"],
-    183: ["Fast", "Happy", "Dance"],
-    186: ["Moody", "Dance", "Uplifting"],
-    187: ["Dance", "Groove", "Heavy Bass", "Moody"],
-    188: ["Slow", "Moody", "Sad"],
-    189: ["Slow", "Moody", "Sunny"],
-    190: ["Slow", "Sad", "Love", "Moody"],
-    191: ["Slow", "Moody"],
-    192: ["Slow", "Moody", "Sad"],
-    193: ["Groove", "Happy", "Fast", "Dance"],
-    194: ["Moody", "Dark", "Fast"],
-    195: ["Groove", "Happy", "Fast"],
-    197: ["Slow", "Moody", "Sad"],
-    198: ["Slow", "Moody"],
-    199: ["Slow", "Moody"],
-    200: ["Moody", "Groove"],
-    201: ["Slow", "Moody"],
-    202: ["Slow", "Moody", "Sad"],
-    203: ["Moody", "Sad"],
-    204: ["Slow", "Moody", "Sad"],
-    205: ["Slow", "Moody"],
-    206: ["Slow", "Dark", "Moody", "Sad"],
-    207: ["Slow", "Sad", "Moody"],
-    208: ["Slow", "Moody", "Dark"],
-    209: ["Slow", "Moody"],
-    210: ["Moody", "Slow"],
-    211: ["Moody", "Groove"],
-    212: ["Slow", "Moody", "Dark"],
-    213: ["Slow", "Moody"],
-    214: ["Heavy Bass", "Hype", "Fast"],
-    215: ["Fast", "Dark", "Moody", "Dance"],
-    216: ["Fast", "Groove", "Hype"],
-    217: ["Heavy Bass", "Hype", "Dance", "Fast"],
-    218: ["Slow", "Moody", "Love"],
-    219: ["Moody", "Heavy Bass", "Slow"],
-    220: ["Groove", "Dance", "Sunny", "Happy"],
-    222: ["Heavy Bass", "Moody", "Groove", "Uplifting"],
-    223: ["Dark", "Heavy Bass", "Hype"],
-    224: ["Dark", "Heavy Bass", "Fast", "Hype"],
-    225: ["Groove", "Moody", "Uplifting", "Heavy Bass"],
-    226: ["Fast", "Heavy Bass", "Hype", "Groove"],
-    227: ["Fast", "Heavy Bass", "Hype", "Groove"],
-    228: ["Hype", "Uplifting", "Heavy Bass"],
-    229: ["Heavy Bass", "Moody", "Uplifting"],
-    230: ["Hype", "Heavy Bass", "Dance", "Fast"],
-    231: ["Hype", "Heavy Bass", "Dance", "Fast"],
-    232: ["Dark", "Heavy Bass", "Moody"],
-    233: ["Dark", "Heavy Bass", "Moody"],
-    234: ["Fast", "Groove", "Hype", "Happy"],
-    235: ["Fast", "Heavy Bass", "Moody"],
-    236: ["Slow", "Moody", "Love", "Sunny"],
-    237: ["Fast", "Hype", "Heavy Bass"],
-    238: ["Fast", "Uplifting", "Happy"],
-    239: ["Groove", "Fast", "Dance"],
-    240: ["Fast", "Heavy Bass", "Hype", "Dark"],
-    241: ["Heavy Bass", "Groove", "Fast"],
-    242: ["Slow", "Moody", "Sad", "Dark"],
-    243: ["Slow", "Sad", "Moody"],
-    244: ["Happy", "Sunny", "Dance", "Groove"],
-    245: ["Moody", "Dance", "Groove"],
-    246: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    247: ["Fast", "Hype", "Heavy Bass"],
-    248: ["Heavy Bass", "Dark", "Hype"],
-    249: ["Dance", "Groove", "Fast", "Heavy Bass"],
-    250: ["Dance", "Groove", "Fast"],
-    253: ["Fast", "Hype", "Happy"],
-    254: ["Fast", "Hype", "Happy"],
-    256: ["Moody", "Slow", "Heavy Bass", "Groove"],
-    257: ["Groove", "Heavy Bass", "Uplifting", "Moody"],
-    259: ["Moody", "Heavy Bass", "Slow"],
-    260: ["Heavy Bass", "Dark", "Moody"],
-    261: ["Slow", "Moody", "Heavy Bass", "Love"],
-    262: ["Heavy Bass", "Uplifting", "Groove"],
-    263: ["Slow", "Moody"],
-    264: ["Slow", "Heavy Bass", "Moody", "Groove"],
-    265: ["Dance", "Groove", "Heavy Bass"],
-    266: ["Hype", "Heavy Bass", "Dance"],
-    267: ["Uplifting", "Heavy Bass", "Moody"],
-    268: ["Dark", "Moody", "Slow", "Heavy Bass"],
-    270: ["Dark", "Heavy Bass", "Moody"],
-    271: ["Uplifting", "Moody", "Heavy Bass"],
-    272: ["Fast", "Groove", "Hype", "Heavy Bass"],
-    273: ["Heavy Bass", "Moody", "Dark", "Groove"],
-    274: ["Moody", "Uplifting"],
-    275: ["Slow", "Moody", "Groove", "Uplifting"],
-    276: ["Heavy Bass", "Dance", "Moody"],
-    277: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    278: ["Heavy Bass", "Hype", "Dance"],
-    279: ["Moody", "Heavy Bass", "Uplifting"],
-    280: ["Uplifting", "Slow"],
-    282: ["Moody", "Slow", "Heavy Bass"],
-    283: ["Moody", "Dark", "Heavy Bass", "Sad"],
-    284: ["Hype", "Uplifting", "Dance", "Heavy Bass"],
-    285: ["Dark", "Heavy Bass", "Hype"],
-    286: ["Moody", "Heavy Bass", "Groove"],
-    287: ["Uplifting", "Heavy Bass", "Moody"],
-    288: ["Groove", "Heavy Bass", "Happy"],
-    289: ["Heavy Bass", "Groove", "Fast"],
-    290: ["Dance", "Moody", "Heavy Bass"],
-    291: ["Heavy Bass", "Hype", "Dark", "Fast"],
-    292: ["Slow", "Moody", "Sad", "Heavy Bass"],
-    301: ["Groove", "Slow", "Love", "Heavy Bass"],
-    302: ["Groove", "Slow", "Love", "Heavy Bass"],
-    303: ["Fast", "Hype", "Heavy Bass"],
-    304: ["Groove", "Heavy Bass", "Moody", "Uplifting"],
-    306: ["Uplifting", "Slow", "Moody", "Happy"],
-    307: ["Moody", "Uplifting"],
-    308: ["Uplifting", "Heavy Bass", "Moody"],
-    309: ["Dark", "Moody", "Slow", "Heavy Bass"],
-    311: ["Moody", "Heavy Bass", "Uplifting", "Slow"],
-    312: ["Hype", "Heavy Bass", "Dark"],
-    313: ["Moody", "Heavy Bass"],
-    314: ["Groove", "Moody", "Heavy Bass", "Slow"],
-    315: ["Dark", "Moody", "Slow"],
-    316: ["Slow", "Sad", "Moody"],
-    317: ["Fast", "Groove", "Hype"],
-    318: ["Moody", "Dark", "Heavy Bass"],
-    319: ["Moody", "Heavy Bass", "Sad"],
-    320: ["Groove", "Moody", "Heavy Bass"],
-    321: ["Love", "Moody", "Dance", "Slow"],
-    322: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    323: ["Heavy Bass", "Moody"],
-    324: ["Groove", "Moody", "Heavy Bass", "Slow"],
-    325: ["Slow", "Sad", "Moody", "Heartbreak"],
-    326: ["Moody", "Slow", "Groove"],
-    327: ["Moody", "Slow", "Heavy Bass"],
-    328: ["Moody", "Slow"],
-    330: ["Groove", "Moody", "Love", "Slow"],
-    331: ["Groove", "Slow", "Heavy Bass"],
-    332: ["Groove", "Dance", "Heavy Bass", "Fast"],
-    333: ["Moody", "Heavy Bass", "Hype"],
-    334: ["Uplifting", "Moody", "Groove", "Heavy Bass"],
-    335: ["Heavy Bass", "Moody", "Dance"],
-    336: ["Slow", "Love", "Moody", "Heavy Bass"],
-    337: ["Fast", "Heavy Bass", "Hype"],
-    338: ["Dark", "Fast", "Moody"],
-    339: ["Groove", "Slow", "Sunny", "Moody"],
-    340: ["Moody", "Slow"],
-    341: ["Fast", "Dance", "Happy"],
-    342: ["Moody", "Heavy Bass", "Uplifting"],
-    343: ["Dark", "Moody", "Heavy Bass", "Sad"],
-    344: ["Dance", "Moody", "Heavy Bass", "Groove"],
-    345: ["Moody", "Slow", "Heavy Bass", "Sad"],
-    346: ["Moody", "Uplifting", "Heavy Bass", "Slow"],
-    347: ["Heavy Bass", "Hype", "Dark", "Fast"],
-    348: ["Moody", "Heavy Bass", "Dance"],
-    349: ["Fast", "Moody", "Heartbreak", "Dance"],
-    350: ["Groove", "Heavy Bass", "Happy", "Fast"],
-    351: ["Hype", "Heavy Bass", "Dark", "Fast"],
-    352: ["Hype", "Uplifting", "Fast", "Heavy Bass"],
-    353: ["Hype", "Heavy Bass", "Uplifting"],
-    354: ["Heavy Bass", "Groove", "Moody"],
-    355: ["Uplifting", "Groove", "Heavy Bass"],
-    356: ["Fast", "Groove", "Heavy Bass", "Happy"],
-    357: ["Groove", "Fast", "Dark"],
-    358: ["Fast", "Hype", "Heavy Bass"],
-    359: ["Slow", "Love", "Sunny", "Moody"],
-    360: ["Moody", "Uplifting", "Heavy Bass", "Slow"],
-    361: ["Moody", "Dark", "Slow"],
-    362: ["Slow", "Heartbreak", "Sad", "Love"],
-    363: ["Moody", "Slow", "Love", "Heartbreak"],
-    364: ["Fast", "Hype", "Heavy Bass"],
-    365: ["Moody", "Slow", "Heavy Bass", "Dark"],
-    366: ["Heavy Bass", "Dance", "Hype"],
-    367: ["Moody", "Sad", "Heavy Bass", "Heartbreak"],
-    368: ["Hype", "Fast", "Dark", "Heavy Bass"],
-    369: ["Moody", "Heavy Bass", "Dance", "Dark"],
-    370: ["Moody", "Dark", "Slow"],
-    371: ["Moody", "Uplifting", "Slow"],
-    372: ["Fast", "Heavy Bass", "Hype"],
-    373: ["Happy", "Fast", "Groove", "Uplifting"],
-    374: ["Groove", "Slow", "Love", "Sunny"],
-    375: ["Dark", "Heavy Bass", "Fast"],
-    376: ["Dark", "Heavy Bass", "Fast", "Dance"],
-    377: ["Slow", "Moody", "Love", "Sad"],
-    378: ["Moody", "Slow", "Groove"],
-    379: ["Moody", "Heavy Bass", "Slow"],
-    380: ["Happy", "Groove", "Dance", "Sunny"],
-    381: ["Moody", "Slow", "Heartbreak", "Love"],
-    382: ["Groove", "Dance", "Heavy Bass"],
-    383: ["Fast", "Dance", "Heavy Bass", "Uplifting"],
-    384: ["Dance", "Moody", "Groove"],
-    385: ["Heavy Bass", "Hype", "Fast", "Dark"],
-    386: ["Moody", "Slow", "Sad"],
-    387: ["Slow", "Moody", "Love"],
-    388: ["Moody", "Slow", "Love"],
-    389: ["Slow", "Moody", "Love"],
-    390: ["Moody", "Slow", "Love"],
-    391: ["Moody", "Slow"],
-    392: ["Dance", "Groove", "Moody", "Love"],
-    393: ["Dance", "Happy", "Fast", "Uplifting"],
-    394: ["Dance", "Happy", "Fast", "Uplifting"],
-    395: ["Heavy Bass", "Hype", "Fast"],
-    396: ["Dance", "Happy", "Fast"],
-    397: ["Dark", "Heavy Bass", "Fast"],
-    398: ["Slow", "Moody", "Groove"],
-    399: ["Dark", "Heavy Bass", "Fast", "Hype"],
-    400: ["Fast", "Dance", "Moody"],
-    401: ["Fast", "Dance", "Hype"],
-    402: ["Heavy Bass", "Dark", "Hype"],
-    403: ["Dark", "Heavy Bass", "Moody"],
-    404: ["Heavy Bass", "Dark", "Hype"],
-    405: ["Heavy Bass", "Moody", "Dance"],
-    406: ["Moody", "Uplifting", "Heavy Bass"],
-    407: ["Heavy Bass", "Moody", "Groove"],
-    408: ["Moody", "Slow", "Uplifting"],
-    409: ["Heavy Bass", "Dance", "Hype"],
-    410: ["Heavy Bass", "Hype"],
-    411: ["Fast", "Dance", "Hype", "Happy"],
-    412: ["Moody", "Heavy Bass", "Slow"],
-    413: ["Fast", "Hype", "Dark"],
-    414: ["Fast", "Moody"],
-    415: ["Dance", "Groove", "Happy", "Sunny"],
-    416: ["Dark", "Moody", "Dance", "Fast"],
-    417: ["Fast", "Hype", "Dark", "Dance"],
-    418: ["Dark", "Fast", "Moody", "Heavy Bass"],
-    419: ["Fast", "Dance", "Heavy Bass"],
-    420: ["Fast", "Hype", "Moody", "Dark"],
-    421: ["Fast", "Hype", "Dark"],
-    422: ["Groove", "Heavy Bass"],
-    423: ["Groove", "Heavy Bass", "Moody"],
-    424: ["Heavy Bass", "Moody", "Groove", "Slow"],
-    425: ["Dance", "Groove", "Heavy Bass", "Fast"],
-    426: ["Heavy Bass", "Hype", "Dance"],
-    427: ["Dance", "Groove", "Heavy Bass"],
-    428: ["Groove", "Happy", "Sunny", "Moody"],
-    429: ["Heavy Bass", "Dance", "Moody"],
-    430: ["Fast", "Heavy Bass", "Hype", "Dark"],
-    431: ["Groove", "Heavy Bass", "Happy"],
-    434: ["Groove", "Slow", "Moody", "Sunny"],
-    435: ["Groove", "Slow", "Moody", "Sunny"],
-    436: ["Groove", "Slow", "Love", "Moody"],
-    437: ["Groove", "Slow", "Moody"],
-    438: ["Heavy Bass", "Hype", "Fast"],
-    439: ["Heavy Bass", "Hype", "Fast"],
-    440: ["Fast", "Dance", "Moody", "Heartbreak"],
-    441: ["Dance", "Moody", "Heartbreak", "Uplifting"],
-    442: ["Dance", "Moody", "Heartbreak", "Uplifting"],
-    443: ["Fast", "Hype", "Dark"],
-    445: ["Groove", "Happy", "Sunny", "Moody"],
-    446: ["Fast", "Dance", "Heavy Bass", "Hype"],
-    447: ["Heavy Bass", "Groove", "Dance"],
-    448: ["Heavy Bass", "Groove", "Dance"],
-    449: ["Fast", "Hype", "Dark"],
-    450: ["Slow", "Moody", "Heartbreak", "Sad"],
-    451: ["Dance", "Groove", "Dark", "Moody"],
-    452: ["Slow", "Moody", "Sad"],
-    453: ["Fast", "Dark", "Moody"],
-    454: ["Dark", "Fast", "Moody"],
-    456: ["Slow", "Moody", "Sad"],
-    457: ["Slow", "Moody", "Sad", "Love"],
-    458: ["Dance", "Fast", "Happy", "Heavy Bass"],
-    459: ["Moody", "Slow", "Fast"],
-    460: ["Hype", "Fast", "Happy"],
-    462: ["Heavy Bass", "Dark", "Hype"],
-    463: ["Heavy Bass", "Hype", "Dance"],
-    464: ["Dark", "Heavy Bass", "Fast"],
-    465: ["Dark", "Heavy Bass", "Fast"],
-    466: ["Happy", "Sunny", "Love", "Groove"],
-    467: ["Heavy Bass", "Hype", "Groove"],
-    468: ["Dance", "Groove", "Heavy Bass"],
-    469: ["Dance", "Groove", "Fast", "Heavy Bass"],
-    470: ["Slow", "Love", "Moody", "Heavy Bass"],
-    471: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    472: ["Hype", "Dance", "Heavy Bass", "Fast"],
-    473: ["Hype", "Dance", "Heavy Bass", "Fast"],
-    474: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    475: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    477: ["Slow", "Moody"],
-    479: ["Heavy Bass", "Moody", "Dance", "Dark"],
-    480: ["Dark", "Heavy Bass", "Moody"],
-    481: ["Moody", "Groove", "Dance"],
-    482: ["Dance", "Happy", "Heavy Bass", "Groove"],
-    483: ["Fast", "Hype", "Moody"],
-    484: ["Slow", "Sad", "Moody", "Heartbreak"],
-    485: ["Moody", "Fast", "Slow"],
-    486: ["Fast", "Hype", "Dark"],
-    487: ["Fast", "Moody", "Uplifting"],
-    488: ["Moody", "Slow", "Sad"],
-    489: ["Heavy Bass", "Dance", "Hype"],
-    491: ["Fast", "Happy", "Dance", "Sunny"],
-    492: ["Dance", "Happy", "Groove"],
-    493: ["Heavy Bass", "Groove", "Fast"],
-    494: ["Heavy Bass", "Groove", "Moody"],
-    495: ["Groove", "Heavy Bass", "Moody", "Love"],
-    496: ["Fast", "Dance", "Happy"],
-    497: ["Dance", "Moody", "Heavy Bass"],
-    498: ["Heavy Bass", "Dance", "Moody"],
-    499: ["Fast", "Moody", "Heartbreak", "Hype"],
-    500: ["Moody", "Uplifting", "Dance", "Fast"],
-    501: ["Fast", "Dance", "Moody", "Groove"],
-    502: ["Fast", "Moody", "Dance"],
-    503: ["Fast", "Dance", "Moody"],
-    504: ["Moody", "Slow"],
-    505: ["Fast", "Hype", "Groove"],
-    506: ["Moody", "Fast", "Groove"],
-    507: ["Moody", "Fast", "Groove"],
-    508: ["Groove", "Dance", "Moody", "Fast"],
-    509: ["Moody", "Slow", "Groove"],
-    510: ["Dance", "Groove", "Moody"],
-    511: ["Slow", "Moody", "Groove"],
-    512: ["Hype", "Dance", "Fast"],
-    513: ["Moody", "Slow", "Sad", "Dance"],
-    515: ["Moody", "Dark", "Slow"],
-    516: ["Fast", "Groove", "Moody"],
-    517: ["Moody", "Groove", "Fast"],
-    518: ["Fast", "Hype", "Groove"],
-    519: ["Dance", "Moody", "Groove", "Love"],
-    520: ["Dance", "Groove", "Fast", "Happy"],
-    521: ["Slow", "Dark", "Heavy Bass", "Moody"],
-    522: ["Slow", "Moody", "Groove", "Love"],
-    524: ["Dance", "Heavy Bass", "Groove"],
-    525: ["Heavy Bass", "Dance", "Moody", "Hype"],
-    526: ["Heavy Bass", "Moody", "Dance"],
-    527: ["Dark", "Moody", "Heavy Bass", "Slow"],
-    528: ["Dance", "Groove", "Heavy Bass"],
-    529: ["Fast", "Dance", "Groove", "Happy"],
-    530: ["Fast", "Heavy Bass", "Hype"],
-    531: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    532: ["Love", "Moody", "Dance", "Slow"],
-    533: ["Fast", "Heavy Bass", "Dark", "Hype"],
-    534: ["Heavy Bass", "Moody", "Hype"],
-    535: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    536: ["Fast", "Heavy Bass", "Hype"],
-    537: ["Fast", "Hype", "Heavy Bass"],
-    538: ["Moody", "Heavy Bass", "Slow"],
-    539: ["Fast", "Hype", "Heavy Bass", "Dark"],
-    540: ["Moody", "Slow", "Love", "Heartbreak"],
-    541: ["Love", "Slow", "Moody", "Groove"],
-    542: ["Groove", "Moody", "Heavy Bass"],
-    543: ["Fast", "Dance", "Groove", "Happy"],
-    544: ["Slow", "Moody", "Heavy Bass", "Sad"],
-    545: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    546: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    547: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    548: ["Groove", "Moody", "Dance"],
-    549: ["Dark", "Heavy Bass", "Moody"],
-    550: ["Dark", "Heavy Bass", "Moody"],
-    551: ["Heavy Bass", "Dark", "Hype", "Fast"],
-    552: ["Heavy Bass", "Moody", "Dark"],
-    553: ["Fast", "Hype", "Dance"],
-    554: ["Uplifting", "Moody", "Heavy Bass", "Happy"],
-    555: ["Heavy Bass", "Fast", "Groove"],
-    556: ["Moody", "Sad", "Heartbreak", "Slow"],
-    557: ["Slow", "Sad", "Heartbreak", "Moody"],
-    558: ["Fast", "Hype", "Dark", "Heavy Bass"],
-    559: ["Moody", "Sad", "Heartbreak", "Slow"],
-    560: ["Dance", "Happy", "Sunny", "Groove"],
-    561: ["Dance", "Happy", "Uplifting", "Fast"],
-    562: ["Slow", "Moody", "Groove", "Love"],
-    563: ["Dance", "Happy", "Sunny", "Groove"],
-    564: ["Groove", "Dance", "Fast", "Happy"],
-}
 
-
-def main() -> None:
-    # Validate every mood is in the canonical vocabulary.
+def load_verdicts(paths: list[Path]) -> tuple[dict[tuple[str, str], dict], list[str]]:
+    """Merge verdict files in the order given. Returns (by_key, errors)."""
+    by_key: dict[tuple[str, str], dict] = {}
+    errors: list[str] = []
     valid = set(MOOD_CATEGORIES)
-    bad = {i: [m for m in moods if m not in valid] for i, moods in CLASSIFICATIONS.items()}
-    bad = {i: ms for i, ms in bad.items() if ms}
-    if bad:
-        raise SystemExit(f"Invalid mood labels: {bad}")
 
-    rows = [json.loads(l) for l in BATCH.read_text(encoding="utf-8").splitlines() if l.strip()]
-    if len(rows) != 565:
-        print(f"WARNING: batch has {len(rows)} rows, expected 565")
-
-    written = 0
-    with open(OUT, "w", encoding="utf-8", newline="\n") as fh:
-        for i, t in enumerate(rows):
-            if i not in CLASSIFICATIONS:
+    for path in paths:
+        for lineno, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.strip()
+            if not line:
                 continue
-            payload = {
-                "artist": t.get("artist"),
-                "track": t.get("track"),
-                "artist_normalized": t.get("artist_normalized"),
-                "track_normalized": t.get("track_normalized"),
-                "mood_tags": CLASSIFICATIONS[i],
-            }
-            fh.write(json.dumps(payload, ensure_ascii=False) + "\n")
-            written += 1
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                errors.append(f"{path.name}:{lineno}: bad JSON ({exc})")
+                continue
 
-    skipped = len(rows) - written
-    print(f"Classified {written} / {len(rows)} tracks ({skipped} left unclassified).")
-    print(f"Wrote -> {OUT}")
+            artist = (row.get("artist_normalized") or "").strip()
+            track = (row.get("track_normalized") or "").strip()
+            moods = row.get("mood_tags") or []
+            if not artist or not track:
+                errors.append(f"{path.name}:{lineno}: missing normalized identity")
+                continue
+            unknown = [m for m in moods if m not in valid]
+            if unknown:
+                errors.append(f"{path.name}:{lineno}: unknown moods {unknown}")
+                continue
+            if not moods:
+                errors.append(f"{path.name}:{lineno}: empty mood_tags")
+                continue
+
+            by_key[(artist, track)] = {
+                "artist": row.get("artist"),
+                "track": row.get("track"),
+                "artist_normalized": artist,
+                "track_normalized": track,
+                "mood_tags": list(moods),
+            }
+    return by_key, errors
+
+
+def main(argv: list[str] | None = None) -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--verdicts", type=Path, nargs="*",
+                    help=f"verdict files (default: sorted docs/{VERDICT_GLOB})")
+    ap.add_argument("--out", type=Path, default=OUT)
+    ap.add_argument("--check", action="store_true",
+                    help="validate only; do not write the results file")
+    args = ap.parse_args(argv)
+
+    paths = args.verdicts or sorted(DOCS_DIR.glob(VERDICT_GLOB))
+    if not paths:
+        print(f"No verdict files found in {DOCS_DIR}/{VERDICT_GLOB}", file=sys.stderr)
+        return 1
+
+    by_key, errors = load_verdicts(paths)
+    for err in errors:
+        print(f"ERROR {err}", file=sys.stderr)
+    if errors:
+        return 1
+
+    counts = Counter(m for v in by_key.values() for m in v["mood_tags"])
+    print(f"Verdict files : {', '.join(p.name for p in paths)}")
+    print(f"Tracks labeled: {len(by_key)}")
+    print("Mood counts   : " + ", ".join(f"{m}={n}" for m, n in counts.most_common()))
+
+    if args.check:
+        print("CHECK ONLY — nothing written.")
+        return 0
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    with open(args.out, "w", encoding="utf-8", newline="\n") as fh:
+        for value in by_key.values():
+            fh.write(json.dumps(value, ensure_ascii=False) + "\n")
+    print(f"Wrote -> {args.out}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

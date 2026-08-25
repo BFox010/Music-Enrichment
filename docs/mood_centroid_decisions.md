@@ -131,6 +131,12 @@ A mood's centroid can fail for two fundamentally different reasons, and the fix 
   existing **Claude-batch pipeline** (`claude_mood_batch.jsonl` → `claude_mood_results.jsonl`,
   `mood_source="claude_batch"`), the same mechanism that produced the current 522 high-conf
   tags. It helps Heavy Bass *coverage* AND the data-limited moods' *accuracy*.
+- **Done 2026-08-25.** The queue was drained: 1,296 unclassified tracks batched, 1,220 labeled
+  (`docs/claude_mood_verdicts_2026-08-25.jsonl`), 76 declined as unlabelable (skits,
+  interludes, brown-noise tracks, and rows with no features, tags, or recognisable title). That
+  closes the no-label population to 76 rows and adds ~295 Heavy Bass judgements the centroid
+  could never have made. Verdicts are keyed by normalized identity, not batch position, so they
+  replay through `scripts/write_mood_results.py` after any future re-queue.
 
 ### What "reproducibility in the bass category" currently means
 
