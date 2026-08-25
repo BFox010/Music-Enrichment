@@ -34,12 +34,18 @@ from pipeline.config import (
     configure_logging,
     get_logger,
 )
+from pipeline.name_variations import lookup_variations
 from pipeline.normalize import normalize_artist, normalize_track
 
 log = get_logger(__name__)
 
 # Output is the same as the input — taste profile mutates in-place.
 OUTPUT_PATH: Path = REPO_ROOT / "tracks_with_taste.jsonl"
+
+# Profile entries that matched no track, written out so the owner can see what
+# the profile claims that the library does not have. Same shape and purpose as
+# resolve_identity's identity_review.jsonl.
+UNMATCHED_PATH: Path = REPO_ROOT / "taste_profile_unmatched.jsonl"
 
 _TIER_HEADER_RE = re.compile(r"tier\s+(\d|i{1,3})\b", re.IGNORECASE)
 _PLAYLIST_HEADER_RE = re.compile(
@@ -346,7 +352,14 @@ def parse_simple_taste_profile(markdown: str) -> dict:
                 log.debug("Skipping bare-artist entry in playlist %s: %r", slug, item)
                 continue
             key = (normalize_artist(artist), normalize_track(track))
-            entry = playlists.setdefault(key, {"playlists": [], "curation_state": None})
+            entry = playlists.setdefault(
+                key,
+                # Raw strings kept for the unmatched retry: normalization folds
+                # away the "&"/"feat." that lookup_variations splits on, so the
+                # variation rules cannot run on the key alone.
+                {"playlists": [], "curation_state": None,
+                 "raw_artist": artist or "", "raw_track": track},
+            )
             if slug not in entry["playlists"]:
                 entry["playlists"].append(slug)
             # Strongest state wins across playlists: locked > rejected > approved.
@@ -380,6 +393,93 @@ def _track_identity_keys(track: dict) -> list[tuple[str, str]]:
             if pair not in keys:
                 keys.append(pair)
     return keys
+
+
+def _variation_keys(entry: dict, key: tuple[str, str]) -> list[tuple[str, str]]:
+    """Normalized keys to try for a profile entry that matched nothing directly.
+
+    Reuses the recovery rules Phase 4 already measured — strip_feat,
+    strip_parens, first_artist — so the profile and the enrichment phases agree
+    about what counts as the same track.
+    """
+    raw_artist = entry.get("raw_artist") or key[0]
+    raw_track = entry.get("raw_track") or key[1]
+    out: list[tuple[str, str]] = []
+    for label, artist, track in lookup_variations(raw_artist, raw_track):
+        if label == "original":
+            continue
+        candidate = (normalize_artist(artist), normalize_track(track))
+        if candidate != key and candidate not in out:
+            out.append(candidate)
+    return out
+
+
+def resolve_playlist_entries(
+    manifest: dict, known_keys: set[tuple[str, str]]
+) -> tuple[dict[tuple[str, str], dict], list[dict]]:
+    """Split the profile's playlist entries into resolved and unmatched.
+
+    An entry that misses on its own key is retried through the name variations
+    before being declared unmatched, which is where the credit-string and
+    ``feat.`` mismatches between the profile and the library live.
+
+    Returns ``(resolved, unmatched)``: resolved maps every key the library
+    actually carries to its entry; unmatched is review-file rows.
+    """
+    resolved: dict[tuple[str, str], dict] = {}
+    unmatched: list[dict] = []
+
+    def _claim(target: tuple[str, str], entry: dict) -> None:
+        """Two profile entries can resolve onto one library row — a bare title
+        and its feat. variant, say. Merge them the way the parser merges
+        duplicate keys, rather than letting the later one erase the earlier."""
+        held = resolved.get(target)
+        if held is None:
+            resolved[target] = dict(entry)
+            return
+        merged = dict(held)
+        merged["playlists"] = list(held.get("playlists") or [])
+        for slug in entry.get("playlists") or []:
+            if slug not in merged["playlists"]:
+                merged["playlists"].append(slug)
+        order = {"locked": 3, "rejected": 2, "approved": 1}
+        if order.get(entry.get("curation_state"), 0) > order.get(held.get("curation_state"), 0):
+            merged["curation_state"] = entry.get("curation_state")
+        resolved[target] = merged
+
+    for key, entry in manifest["playlists"].items():
+        if key in known_keys:
+            _claim(key, entry)
+            continue
+
+        recovered = next(
+            (c for c in _variation_keys(entry, key) if c in known_keys), None
+        )
+        if recovered is not None:
+            _claim(recovered, entry)
+            continue
+
+        unmatched.append({
+            "artist_normalized": key[0],
+            "track_normalized": key[1],
+            "artist": entry.get("raw_artist") or "",
+            "track": entry.get("raw_track") or "",
+            "playlists": list(entry.get("playlists") or []),
+            "curation_state": entry.get("curation_state"),
+        })
+
+    return resolved, unmatched
+
+
+def _write_unmatched(unmatched: list[dict], path: Path = UNMATCHED_PATH) -> None:
+    """Write the review file, removing a stale one when nothing is unmatched."""
+    if not unmatched:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        for row in unmatched:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 def apply_manifest(tracks: Iterable[dict], manifest: dict) -> dict[str, int]:
@@ -453,7 +553,10 @@ def apply(
     log.info("Input   : %s", input_path)
     log.info("Output  : %s", output_path)
 
-    markdown = profile_path.read_text(encoding="utf-8")
+    # utf-8-sig, not utf-8: the file carries a BOM, which utf-8 hands to the
+    # parser as part of line 1. Harmless while the H1 is not a section marker,
+    # but it would silently swallow a section if the document is reordered.
+    markdown = profile_path.read_text(encoding="utf-8-sig")
     manifest = parse_taste_profile(markdown)
     log.info(
         "Parsed: %d tier entries, %d playlist entries",
@@ -468,7 +571,34 @@ def apply(
             if line:
                 tracks.append(json.loads(line))
 
+    known_keys = {k for t in tracks for k in _track_identity_keys(t)}
+    parsed_total = len(manifest["playlists"])
+    direct_hits = sum(1 for k in manifest["playlists"] if k in known_keys)
+    resolved, unmatched = resolve_playlist_entries(manifest, known_keys)
+    recovered = parsed_total - len(unmatched) - direct_hits
+    manifest = {**manifest, "playlists": resolved}
+
     stats = apply_manifest(tracks, manifest)
+    stats["recovered_via_variation"] = recovered
+    stats["unmatched_entries"] = len(unmatched)
+
+    # A profile entry that matches nothing is a typo, a renamed credit, or a
+    # track never scrobbled — and they were indistinguishable while the phase
+    # only counted what it set. Name them so the profile can't rot unnoticed.
+    _write_unmatched(unmatched)
+    if unmatched:
+        log.warning(
+            "%d of %d playlist entries matched no track (%d recovered via name "
+            "variations). Review: %s",
+            len(unmatched), parsed_total, recovered, UNMATCHED_PATH,
+        )
+
+    unmatched_tiers = sorted(
+        a for a in manifest["tier_by_artist"] if a not in {k[0] for k in known_keys}
+    )
+    if unmatched_tiers:
+        log.warning("%d saturation-tier artists matched no track: %s",
+                    len(unmatched_tiers), ", ".join(unmatched_tiers[:20]))
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
@@ -476,8 +606,10 @@ def apply(
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     log.info(
-        "Phase 7 done: tiered=%d  in_playlists=%d  curation_set=%d  /  %d total",
-        stats["tiered"], stats["in_playlists"], stats["curation_set"], len(tracks),
+        "Phase 7 done: tiered=%d  in_playlists=%d  curation_set=%d  "
+        "recovered_via_variation=%d  unmatched=%d  /  %d total",
+        stats["tiered"], stats["in_playlists"], stats["curation_set"],
+        stats["recovered_via_variation"], stats["unmatched_entries"], len(tracks),
     )
     return stats
 

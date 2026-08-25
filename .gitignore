@@ -251,6 +251,7 @@ tracks_with_taste.jsonl
 
 # Phase 4e near-miss log — regenerable, for the owner to eyeball locally
 identity_review.jsonl
+taste_profile_unmatched.jsonl
 
 # Scratch / temp files
 *.tmp.txt
