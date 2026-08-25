@@ -516,3 +516,100 @@ class TestAuditOutranksClaudeBatch:
         assert len(rows) == 1
         assert rows[0]["mood_source"] == "audit"
         assert rows[0]["mood_tags"] == ["Sad", "Slow"]
+
+
+class TestAuditMatchesThroughIdentityAliases:
+    """#66: Phase 4e collapses credit variants, so a hand-labelled key survives
+    only in ``identity_aliases``. Matching the row key alone dropped those
+    labels — 18 of them in the committed library.
+    """
+
+    def test_alias_key_carries_the_audit_label_onto_the_canonical_row(self) -> None:
+        import pipeline.classify_moods as cm
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            # The audit names "Paranoid"; the merged row is "Paranoid feat Mr Hudson".
+            library = [{
+                "artist": "Kanye West", "track": "Paranoid (feat. Mr Hudson)",
+                "artist_normalized": "kanye west",
+                "track_normalized": "paranoid feat mr hudson",
+                "identity_aliases": [["kanye west", "paranoid"]],
+                "audio_features": _features(), "mood_tags": None, "mood_source": None,
+            }]
+            tracks_file = tmp_path / "tracks_with_availability.jsonl"
+            tracks_file.write_text(
+                "".join(json.dumps(r) + "\n" for r in library), encoding="utf-8"
+            )
+
+            audit_path = tmp_path / "existing_audit.csv"
+            audit_path.write_text(
+                "artist,track,mood_tags\n"
+                "Kanye West,Paranoid,\"Happy, Sunny\"\n",
+                encoding="utf-8",
+            )
+
+            out = tmp_path / "out.jsonl"
+            original, original_batch = cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH
+            cm.REPO_ROOT = tmp_path
+            cm.CLAUDE_BATCH_PATH = tmp_path / "claude_mood_batch.jsonl"
+            try:
+                stats = cm.classify(
+                    audit_path=audit_path,
+                    tracks_path=tracks_file,
+                    output_path=out,
+                    claude_results_path=tmp_path / "nonexistent.jsonl",
+                    run_log_path=tmp_path / "run.log",
+                )
+            finally:
+                cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH = original, original_batch
+                close_run_log_handlers()
+
+            rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines()
+                    if l.strip()]
+
+        assert rows[0]["mood_source"] == "audit"
+        assert rows[0]["mood_tags"] == ["Happy", "Sunny"]
+        assert stats["audit_unmatched"] == 0
+
+    def test_an_audit_row_matching_nothing_is_counted(self) -> None:
+        """The silent-loss feedback loop: unmatched rows must surface in stats."""
+        import pipeline.classify_moods as cm
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            library = [{
+                "artist": "Portishead", "track": "Roads",
+                "artist_normalized": "portishead", "track_normalized": "roads",
+                "audio_features": _features(), "mood_tags": None, "mood_source": None,
+            }]
+            tracks_file = tmp_path / "tracks_with_availability.jsonl"
+            tracks_file.write_text(
+                "".join(json.dumps(r) + "\n" for r in library), encoding="utf-8"
+            )
+
+            audit_path = tmp_path / "existing_audit.csv"
+            audit_path.write_text(
+                "artist,track,mood_tags\n"
+                "Portishead,Roads,\"Sad, Slow\"\n"
+                "Some Artist,Never Scrobbled,\"Happy\"\n",
+                encoding="utf-8",
+            )
+
+            out = tmp_path / "out.jsonl"
+            original, original_batch = cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH
+            cm.REPO_ROOT = tmp_path
+            cm.CLAUDE_BATCH_PATH = tmp_path / "claude_mood_batch.jsonl"
+            try:
+                stats = cm.classify(
+                    audit_path=audit_path,
+                    tracks_path=tracks_file,
+                    output_path=out,
+                    claude_results_path=tmp_path / "nonexistent.jsonl",
+                    run_log_path=tmp_path / "run.log",
+                )
+            finally:
+                cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH = original, original_batch
+                close_run_log_handlers()
+
+        assert stats["audit_unmatched"] == 1

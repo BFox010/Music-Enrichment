@@ -29,7 +29,7 @@ import math
 import sys
 from collections import defaultdict
 from pathlib import Path
-from typing import Iterable
+from typing import Any, Iterable
 
 from pipeline.config import (
     INPUT_CLAUDE_MOOD_RESULTS,
@@ -365,6 +365,30 @@ def load_claude_results(path: Path = INPUT_CLAUDE_MOOD_RESULTS) -> dict[tuple[st
 OWNER_LABEL_SOURCES: frozenset[str] = frozenset({"audit", "claude_batch"})
 
 
+def _identity_keys(track: dict) -> list[tuple[str, str]]:
+    """Every key this row answers to: its own, then its merged-away aliases.
+
+    Phase 4e collapses credit variants ("Paranoid" into "Paranoid feat Mr
+    Hudson"), so a hand-labelled key can survive only as an ``identity_aliases``
+    entry. Looking up the row key alone silently drops those labels.
+    """
+    keys = [(track.get("artist_normalized") or "", track.get("track_normalized") or "")]
+    for alias in track.get("identity_aliases") or []:
+        if isinstance(alias, (list, tuple)) and len(alias) == 2:
+            pair = (alias[0], alias[1])
+            if pair not in keys:
+                keys.append(pair)
+    return keys
+
+
+def _lookup_by_identity(track: dict, index: dict[tuple[str, str], Any]):
+    """First hit for this row in ``index``, own key before aliases."""
+    for key in _identity_keys(track):
+        if key in index:
+            return index[key]
+    return None
+
+
 def _recover_owner_labels(tracks: list[dict]) -> dict[tuple[str, str], dict]:
     """``{(artist_norm, track_norm): {mood_tags, mood_source, mood_confidence}}``
     for every row already carrying an owner-derived ``mood_source``.
@@ -532,21 +556,30 @@ def classify(
     }
     batch_for_claude: list[dict] = []
 
+    matched_audit_keys: set[tuple[str, str]] = set()
+
     for track in tracks:
         key = (track["artist_normalized"], track["track_normalized"])
 
-        # 1. direct audit hit — the owner's own labelling outranks model output
+        # 1. audit hit — the owner's own labelling outranks model output
         # (MOOD_SOURCE_RANK), so it must be checked first.
-        if key in audit_index:
-            track["mood_tags"] = audit_index[key]
+        audit_hit = None
+        for candidate in _identity_keys(track):
+            if candidate in audit_index:
+                audit_hit = candidate
+                break
+        if audit_hit is not None:
+            track["mood_tags"] = audit_index[audit_hit]
             track["mood_source"] = "audit"
             track["mood_confidence"] = "high"
+            matched_audit_keys.add(audit_hit)
             stats_out["audit_direct"] += 1
             continue
 
         # 2. Claude review
-        if key in claude_index:
-            track["mood_tags"] = claude_index[key]
+        claude_tags = _lookup_by_identity(track, claude_index)
+        if claude_tags is not None:
+            track["mood_tags"] = claude_tags
             track["mood_source"] = "claude_batch"
             track["mood_confidence"] = "high"
             stats_out["claude_overrides"] += 1
@@ -592,6 +625,19 @@ def classify(
             if af:  # no features ⇒ Claude can't classify it either
                 batch_for_claude.append(track)
 
+    # An audit row that matches nothing is a silent loss of hand-made judgement —
+    # the failure mode that let the committed audit and the library drift apart.
+    # Name it in the log and on the returned stats so a growing gap is visible.
+    unmatched_audit = [k for k in audit_index if k not in matched_audit_keys]
+    stats_out["audit_unmatched"] = len(unmatched_audit)
+    if unmatched_audit:
+        log.warning(
+            "%d of %d audit rows matched no track — their labels are not in the "
+            "output. First 20: %s",
+            len(unmatched_audit), len(audit_index),
+            "; ".join(f"{a} — {t}" for a, t in sorted(unmatched_audit)[:20]),
+        )
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
         for row in tracks:
@@ -604,11 +650,11 @@ def classify(
 
     log.info(
         "Phase 6 done: centroid=%d  audit=%d  claude_override=%d  "
-        "owner_preserved=%d  no_match=%d  batched=%d  /  %d total",
+        "owner_preserved=%d  no_match=%d  batched=%d  audit_unmatched=%d  /  %d total",
         stats_out["classified_centroid"], stats_out["audit_direct"],
         stats_out["claude_overrides"], stats_out["owner_preserved"],
         stats_out["no_match"], stats_out["batched_for_claude"],
-        stats_out["total"],
+        stats_out["audit_unmatched"], stats_out["total"],
     )
     log.info("Wrote → %s", output_path)
     return stats_out

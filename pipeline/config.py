@@ -75,8 +75,12 @@ MOOD_SOURCES: tuple[str, ...] = ("audit", "claude_batch", "centroid", "manual", 
 # Trust order when two rows or two fresh inputs disagree about mood. The single
 # definition classify_moods and resolve_identity both consult, so a hand label
 # always wins over a model's and neither module can encode the opposite order.
+# "manual" tops it: the bass overlay writes it onto rows the owner reviewed by
+# hand, and is applied last precisely so it survives a Phase 6 re-run. Every
+# source is listed — an absent key scores 0 and would lose to the centroid.
 MOOD_SOURCE_RANK: dict[str | None, int] = {
-    "audit": 4, "claude_batch": 3, "centroid": 2, None: 0,
+    "manual": 5, "audit": 4, "claude_batch": 3, "centroid": 2,
+    "inherited": 1, None: 0,
 }
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
