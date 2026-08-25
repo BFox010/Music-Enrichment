@@ -22,7 +22,10 @@ TRACKS_WITH_METADATA_PATH: Path = REPO_ROOT / "tracks_with_metadata.jsonl"
 TRACKS_WITH_DISCOGS_PATH: Path = REPO_ROOT / "tracks_with_discogs.jsonl"
 TRACKS_WITH_GENRES_PATH: Path = REPO_ROOT / "tracks_with_genres.jsonl"
 TRACKS_WITH_GENRE_BACKFILL_PATH: Path = REPO_ROOT / "tracks_with_genre_backfill.jsonl"
+TRACKS_WITH_ISRCS_PATH: Path = REPO_ROOT / "tracks_with_isrcs.jsonl"
+TRACKS_RESOLVED_PATH: Path = REPO_ROOT / "tracks_resolved.jsonl"
 TRACKS_WITH_AVAILABILITY_PATH: Path = REPO_ROOT / "tracks_with_availability.jsonl"
+TRACKS_WITH_FEATURES_PATH: Path = REPO_ROOT / "tracks_with_features.jsonl"
 TRACKS_WITH_MOODS_PATH: Path = REPO_ROOT / "tracks_with_moods.jsonl"
 
 # ── Human-edited reference (DO NOT auto-modify) ──────────────────────────
@@ -114,7 +117,12 @@ MUSICBRAINZ_RATE_LIMIT: float = 1.0   # 1 req/sec hard
 DISCOGS_RATE_LIMIT: float = 1.0       # 60/min
 ITUNES_RATE_LIMIT: float = 0.33       # ~20/min (conservative)
 SPOTIFY_RATE_LIMIT: float = 3.0       # conservative; Spotify uses a 30s rolling window
-DEEZER_RATE_LIMIT: float = 2.0        # conservative; documented limit is ~50 req/5s
+# Deezer documents ~50 req/5s (10/sec). Phase 5a spends most of its wall clock
+# here — the 2026-08-24 cold run made 5858 Deezer calls (several name variations
+# per track) against 2677 MusicBrainz ones, and at 2/sec that leg alone was ~49
+# minutes. Half the documented allowance keeps a wide margin while roughly
+# halving Phase 5a. MusicBrainz's 1/sec is a hard published limit and stays.
+DEEZER_RATE_LIMIT: float = 5.0
 RECCOBEATS_RATE_LIMIT: float = 2.0    # conservative; no published limit
 
 # Backoff: tries × base × 2^attempt up to max_sleep
@@ -183,6 +191,14 @@ def configure_logging(
                     "formatter": "default",
                     "level": console_level,
                 },
+            },
+            "loggers": {
+                # urllib3 logs every request line at DEBUG, and Last.fm takes
+                # its API key as a query parameter — so the root DEBUG level
+                # wrote LASTFM_API_KEY in plaintext into runs/*.log, thousands
+                # of times per run. Pinning it to INFO drops those lines and
+                # leaves the pipeline's own DEBUG output untouched.
+                "urllib3": {"level": "INFO"},
             },
             "root": {"level": "DEBUG", "handlers": ["file", "console"]},
         }

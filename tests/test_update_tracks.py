@@ -210,3 +210,144 @@ class TestUpdate:
             ])
             with pytest.raises(ValueError, match="source row 1 missing"):
                 update(input_path=inp, output_path=out)
+
+
+class TestMergeSurvivesRenormalization:
+    """The merge keys on canonical_track_id, not the normalized name pair.
+
+    Normalization is expected to improve, and each improvement rewrites
+    artist_normalized/track_normalized. Keying the merge on those strings
+    orphaned the existing row — the merge saw a brand-new track and dropped the
+    human-edited fields that live only in tracks.jsonl. #27's feat-credit
+    normalization did this to 183 rows, 54 of them losing curation_state.
+    """
+
+    def _write_jsonl(self, path: Path, rows: list[dict]) -> None:
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+
+    def _load_jsonl(self, path: Path) -> list[dict]:
+        return [
+            json.loads(l)
+            for l in path.read_text(encoding="utf-8").splitlines()
+            if l.strip()
+        ]
+
+    def test_renormalized_row_keeps_owner_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            cid = "mbid:1f1c4d0b-1e99-4524-a46b-2f89a2511aea"
+
+            self._write_jsonl(inp, [
+                {"artist": "Angels & Airwaves", "track": "Heaven",
+                 "canonical_track_id": cid,
+                 "artist_normalized": "angels and airwaves",
+                 "track_normalized": "heaven"},
+            ])
+            update(input_path=inp, output_path=out)
+
+            rows = self._load_jsonl(out)
+            rows[0].update(
+                mood_tags=["Fast", "Moody"],
+                mood_source="audit",
+                curation_state="locked",
+            )
+            self._write_jsonl(out, rows)
+
+            # Same recording, same canonical id — only normalization changed.
+            self._write_jsonl(inp, [
+                {"artist": "Angels & Airwaves", "track": "Heaven",
+                 "canonical_track_id": cid,
+                 "artist_normalized": "angels airwaves",
+                 "track_normalized": "heaven",
+                 "mood_tags": ["Fast"], "mood_source": "centroid"},
+            ])
+            stats = update(input_path=inp, output_path=out)
+
+            assert stats["updated"] == 1, "re-keyed row must merge, not re-add"
+            assert stats["new"] == 0
+            merged = self._load_jsonl(out)
+            assert len(merged) == 1
+            assert merged[0]["mood_source"] == "audit"
+            assert merged[0]["mood_tags"] == ["Fast", "Moody"]
+            assert merged[0]["curation_state"] == "locked"
+            assert merged[0]["artist_normalized"] == "angels airwaves"
+
+    def test_promoted_identity_still_merges_by_name(self) -> None:
+        """Phase 5a resolving an ISRC moves the id *computed* from a source row.
+
+        The source rows carry no canonical_track_id — the intermediates don't
+        propagate it — so the merge computes one, and a freshly resolved ISRC
+        makes that computed key jump from norm: to isrc:. The stored id is
+        sticky (merge rule 4 keeps the existing value, and fill_defaults only
+        computes when absent), so the two disagree and the name pair is what
+        keeps the row from being orphaned.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads"},
+            ])
+            update(input_path=inp, output_path=out)
+            assert self._load_jsonl(out)[0]["canonical_track_id"] == "norm:portishead|roads"
+
+            rows = self._load_jsonl(out)
+            rows[0]["curation_state"] = "locked"
+            self._write_jsonl(out, rows)
+
+            # Same track, now carrying an ISRC — identity chain promotes the id.
+            self._write_jsonl(inp, [
+                {"artist": "Portishead", "track": "Roads",
+                 "artist_normalized": "portishead", "track_normalized": "roads",
+                 "isrc": "GBAAA0000001"},
+            ])
+            stats = update(input_path=inp, output_path=out)
+
+            assert stats["updated"] == 1, "promoted id must not orphan the row"
+            assert stats["new"] == 0
+            merged = self._load_jsonl(out)
+            assert len(merged) == 1
+            # Sticky by design: a stable identity is the point of invariant 4,
+            # so the row keeps the id it was first written with.
+            assert merged[0]["canonical_track_id"] == "norm:portishead|roads"
+            assert merged[0]["isrc"] == "GBAAA0000001"
+            assert merged[0]["curation_state"] == "locked"
+
+    def test_one_existing_row_is_claimed_only_once(self) -> None:
+        """Two source rows must not both merge onto the same existing track."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            self._write_jsonl(inp, [
+                {"artist": "A", "track": "T", "canonical_track_id": "isrc:X",
+                 "artist_normalized": "a", "track_normalized": "t"},
+            ])
+            update(input_path=inp, output_path=out)
+
+            # Two distinct tracks that 5a mistakenly gave the same ISRC.
+            self._write_jsonl(inp, [
+                {"artist": "A", "track": "T", "isrc": "X",
+                 "artist_normalized": "a", "track_normalized": "t"},
+                {"artist": "B", "track": "U", "isrc": "X",
+                 "artist_normalized": "b", "track_normalized": "u"},
+            ])
+            stats = update(input_path=inp, output_path=out)
+            assert stats["total"] == 2
+            assert stats["new"] == 1, "the second row must not re-claim the first"
+            assert stats["updated"] == 1
+
+    def test_legacy_row_without_canonical_id_still_merges_by_name(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp = Path(tmp) / "input.jsonl"
+            out = Path(tmp) / "tracks.jsonl"
+            row = {"artist": "Portishead", "track": "Roads",
+                   "artist_normalized": "portishead", "track_normalized": "roads"}
+            self._write_jsonl(inp, [row])
+            update(input_path=inp, output_path=out)
+            stats = update(input_path=inp, output_path=out)
+            assert stats["updated"] == 1
+            assert stats["new"] == 0

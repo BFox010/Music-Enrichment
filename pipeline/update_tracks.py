@@ -35,6 +35,7 @@ from pipeline.apply_taste_profile import OUTPUT_PATH as TRACKS_WITH_TASTE_PATH
 from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
 from pipeline.schema import (
     HUMAN_EDITED_FIELDS,
+    compute_canonical_track_id,
     fill_defaults,
     read_jsonl,
     validate_dataset,
@@ -86,24 +87,79 @@ def _load_jsonl(path: Path) -> list[dict]:
     return read_jsonl(path)
 
 
-def _track_key(row: dict, context: str) -> str:
+def _candidate_keys(row: dict, context: str) -> list[tuple[str, str]]:
+    """Identity candidates for the merge, strongest first.
+
+    Neither key alone is sufficient, because both move for reasons that have
+    nothing to do with the track changing:
+
+    - The **normalized name pair** moves whenever normalization improves. #27's
+      feat-credit work rewrote it on 183 rows; keyed on names alone the merge
+      saw 183 brand-new tracks and dropped the human-edited fields that live
+      only in tracks.jsonl — 54 rows lost curation_state, 49 lost mood labels.
+    - The **canonical id** moves as the identity chain promotes a row. It is not
+      carried through the intermediates (Phase 4e stamps it on the few rows it
+      clusters; fill_defaults computes the rest at write time), so it is derived
+      fresh each run from whatever identity fields exist *then*. Phase 5a
+      resolving an ISRC re-keys a row from ``norm:…`` to ``isrc:…`` — measured
+      against this library, keying on it alone matched 2608 rows where the name
+      pair matched 3105.
+
+    Trying both matched 3172 — more than either alone. An existing row is
+    claimed at most once, so a promoted id can't pull two source rows onto the
+    same track.
+    """
+    keys: list[tuple[str, str]] = []
+
+    canonical = row.get("canonical_track_id") or compute_canonical_track_id(row)
+    if canonical:
+        keys.append(("id", canonical))
+
     artist = row.get("artist_normalized")
     track = row.get("track_normalized")
     if not artist or not track:
         raise ValueError(
             f"{context} missing artist_normalized or track_normalized"
         )
-    return f"{artist}|{track}"
+    keys.append(("name", f"{artist}|{track}"))
+    return keys
 
 
-def _index_by_key(rows: list[dict]) -> dict[str, dict]:
-    index: dict[str, dict] = {}
+def _track_key(row: dict, context: str) -> str:
+    """The row's own primary key — used to detect duplicates within one file."""
+    return _candidate_keys(row, context)[-1][1]
+
+
+def _index_by_key(rows: list[dict]) -> dict[tuple[str, str], dict]:
+    """Index existing rows under every candidate key they answer to."""
+    index: dict[tuple[str, str], dict] = {}
+    seen_primary: set[str] = set()
     for i, row in enumerate(rows, start=1):
-        key = _track_key(row, f"existing row {i}")
-        if key in index:
-            raise ValueError(f"duplicate existing track key {key!r}")
-        index[key] = row
+        candidates = _candidate_keys(row, f"existing row {i}")
+        primary = candidates[-1][1]
+        if primary in seen_primary:
+            raise ValueError(f"duplicate existing track key {primary!r}")
+        seen_primary.add(primary)
+        for candidate in candidates:
+            # First row wins an ambiguous key rather than silently replacing the
+            # earlier one; the loser is still reachable by its other candidate.
+            index.setdefault(candidate, row)
     return index
+
+
+def _find_existing(
+    row: dict,
+    index: dict[tuple[str, str], dict],
+    claimed: set[int],
+    context: str,
+) -> dict | None:
+    """Strongest unclaimed match for a source row, or None if it is new."""
+    for candidate in _candidate_keys(row, context):
+        existing = index.get(candidate)
+        if existing is not None and id(existing) not in claimed:
+            claimed.add(id(existing))
+            return existing
+    return None
 
 
 def _enrichment_sources(row: dict) -> list[str]:
@@ -220,7 +276,7 @@ def update(
     new_rows = _load_jsonl(chosen)
     log.info("Loaded %d source rows", len(new_rows))
 
-    existing_index: dict[str, dict] = {}
+    existing_index: dict[tuple[str, str], dict] = {}
     if output_path.exists():
         existing_rows = _load_jsonl(output_path)
         existing_index = _index_by_key(existing_rows)
@@ -232,12 +288,14 @@ def update(
     updated_count = 0
 
     seen_new: set[str] = set()
+    claimed: set[int] = set()
     for i, row in enumerate(new_rows, start=1):
-        key = _track_key(row, f"source row {i}")
+        context = f"source row {i}"
+        key = _track_key(row, context)
         if key in seen_new:
             raise ValueError(f"duplicate source track key {key!r}")
         seen_new.add(key)
-        existing = existing_index.get(key)
+        existing = _find_existing(row, existing_index, claimed, context)
         merged = _merge_with_existing(row, existing)
         merged = fill_defaults(merged)
         merged["enrichment_sources"] = _enrichment_sources(merged)

@@ -29,11 +29,16 @@ api.deezer.com — so each is isolated in one small parsing function
 Confirm on the first real run, the same posture PR #24 (Phase B) took for
 Spotify's ``external_ids.isrc``.
 
-Does **not** touch ``canonical_track_id``. That is computed once, in Phase 4e,
-before this phase ever runs — this phase must not recompute it, or a track
-currently keyed ``norm:...`` would re-key to ``isrc:...`` the moment its ISRC
-resolves, reshuffling which rows Phase 4e's identity clustering considers the
-same recording on the next run.
+Runs **before** Phase 4e despite the "5" in its id (execution order is the
+manifest's list order; the id is a stable label). 4e clusters on ``isrc`` as a
+strong identifier, so resolving ISRCs downstream of it meant that evidence was
+never available: identity fell back to normalized artist+track, and a change to
+``normalize_artist`` re-keyed tracks and orphaned their human-edited fields at
+the Phase 8 merge. Resolving first makes ``canonical_track_id`` durable for the
+~95% of rows that get an ISRC.
+
+Does **not** touch ``canonical_track_id`` — 4e owns that, and now computes it
+with this phase's ISRCs in hand.
 
 Usage:
     python -m pipeline.resolve_isrcs
@@ -58,7 +63,9 @@ from pipeline.config import (
     MUSICBRAINZ_CACHE,
     MUSICBRAINZ_RATE_LIMIT,
     REPO_ROOT,
-    TRACKS_WITH_AVAILABILITY_PATH,
+    TRACKS_WITH_GENRE_BACKFILL_PATH,
+    TRACKS_WITH_GENRES_PATH,
+    TRACKS_WITH_ISRCS_PATH,
     configure_logging,
     get_logger,
 )
@@ -68,15 +75,14 @@ from pipeline.schema import read_jsonl, write_jsonl
 
 log = get_logger(__name__)
 
-TRACKS_WITH_ISRCS_PATH: Path = REPO_ROOT / "tracks_with_isrcs.jsonl"
-
-# Input preference — deepest in the chain first. Phase 5 (iTunes availability)
-# is the immediate predecessor.
+# Input preference — deepest in the chain first. Phase 4d (genre backfill) is
+# the immediate predecessor: this phase runs *before* 4e so that identity
+# resolution has ISRCs to cluster on.
 _INPUT_PRIORITY = [
-    TRACKS_WITH_AVAILABILITY_PATH,
-    REPO_ROOT / "tracks_resolved.jsonl",
+    TRACKS_WITH_GENRE_BACKFILL_PATH,
+    TRACKS_WITH_GENRES_PATH,
 ]
-DEFAULT_INPUT = TRACKS_WITH_AVAILABILITY_PATH
+DEFAULT_INPUT = TRACKS_WITH_GENRE_BACKFILL_PATH
 
 
 # ── MusicBrainz: recording ID → ISRC ──────────────────────────────────────

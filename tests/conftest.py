@@ -9,11 +9,37 @@ code under test. One clear error here beats nine misleading ones there.
 
 from __future__ import annotations
 
+import logging
 import sys
 
 import pytest
 
 _MIN_PYTHON = (3, 13)
+
+
+def close_run_log_handlers() -> None:
+    """Release run-log handles so Windows can delete the temp dir holding them.
+
+    configure_logging() closes stale FileHandlers when it is *next* called, so
+    the handler opened by the final call stays open. On POSIX an open file
+    unlinks happily and nothing notices; on Windows deleting it raises
+    PermissionError and fails the test that just passed.
+
+    Call this inside the tempdir's own scope — an autouse fixture runs too late,
+    after `with TemporaryDirectory()` has already tried to clean up.
+    """
+    root = logging.getLogger()
+    for handler in list(root.handlers):
+        if isinstance(handler, logging.FileHandler):
+            handler.close()
+            root.removeHandler(handler)
+
+
+@pytest.fixture(autouse=True)
+def _close_log_file_handlers():
+    """Backstop for tests using pytest's tmp_path, whose cleanup is deferred."""
+    yield
+    close_run_log_handlers()
 
 
 def pytest_configure(config: pytest.Config) -> None:
