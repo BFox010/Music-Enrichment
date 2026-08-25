@@ -125,7 +125,7 @@ class TestExtractLastfmFields:
         assert out["lastfm_tags"] == ["ok"]
 
 
-# ── Crash safety: an interrupted run keeps what it already fetched ────────
+# ── Crash safety: an interrupted run keeps what it already fetched ──
 
 
 class _InterruptingClient:
@@ -188,7 +188,7 @@ class TestInterruptedRunPersistsCache:
             assert len(json.loads(cache_path.read_text(encoding="utf-8"))) == 3
 
 
-# ── #41: duration/listeners/playcount gap-fill at the enrich() level ──────
+# ── #41: duration/listeners/playcount gap-fill at the enrich() level ──
 
 
 class _FakeClient:

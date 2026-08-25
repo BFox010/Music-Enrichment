@@ -20,7 +20,7 @@ from app.main import DASHBOARD_TOKEN, app
 # token from GET /api/config. Tests send it directly.
 AUTH = {"X-Dashboard-Token": DASHBOARD_TOKEN}
 
-# ── Fixture data ──────────────────────────────────────────────────────────────
+# ── Fixture data ──
 
 _TRACK = {
     "artist": "Portishead",
@@ -76,7 +76,7 @@ def client():
             yield TestClient(app)
 
 
-# ── Tests ─────────────────────────────────────────────────────────────────────
+# ── Tests ──
 
 class TestOverview:
     def test_status(self, client):

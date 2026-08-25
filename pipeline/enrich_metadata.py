@@ -1,15 +1,10 @@
 """Phase 4 — metadata enrichment via Last.fm + MusicBrainz IDs.
 
-For each track, calls Last.fm ``track.getInfo`` which returns BOTH:
-  - top tags (folksonomy)
-  - track MusicBrainz ID
-  - artist MusicBrainz ID
+One ``track.getInfo`` call per track yields all of: top tags (folksonomy), the
+track MBID, the artist MBID, and listeners/playcount — so no separate
+MusicBrainz lookup is needed here.
 
-That single call covers what the spec lists as Last.fm + MusicBrainz lookups.
-Discogs is left as TODO — the spec says only-if-clear-match anyway.
-
-Resumable: every response (including negatives) is cached to
-``.cache/lastfm_track_info.json``. Re-running picks up where it left off.
+Resumable: every response, negatives included, is cached to ``.cache/lastfm.json``.
 
 Usage:
     python -m pipeline.enrich_metadata

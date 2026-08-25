@@ -1,18 +1,14 @@
 """Diagnostic: measure Phase B (Spotify ID resolution) against ground truth.
 
-tracks.jsonl already holds the *correct* spotify_id for every track that went
-through Exportify. This script treats those as ground truth: it re-resolves each
-one from scratch (pretending the ID is unknown) via the same matcher Phase B
-uses, then reports how often it finds an ID (recall) and how often that ID is
-the correct one (precision). This validates match quality on real data before
-trusting the resolver to fill the ~502 tracks that have no ID yet.
+Treats the Exportify-sourced spotify_ids in tracks.jsonl as ground truth:
+re-resolves each from scratch through Phase B's own matcher and reports recall
+(found an ID) and precision (found the right one). Validates match quality on
+real data before trusting the resolver on rows that have no ID.
 
-By default it ignores any stored ISRC so it measures the artist+track path that
-a *fresh* run (pre-Exportify) would actually rely on. Pass --use-isrc to also
-exercise the opportunistic ISRC-exact lookup.
+Ignores any stored ISRC by default, so it measures the artist+track path a fresh
+run would rely on. --use-isrc also exercises the ISRC-exact lookup.
 
-Uses a SEPARATE cache (.cache/spotify_eval.json) so it never pollutes the real
-Phase B cache.
+Uses a SEPARATE cache (.cache/spotify_eval.json) — never pollutes Phase B's.
 
 Usage:
     python scripts/eval_spotify_resolution.py [--sample N] [--use-isrc]

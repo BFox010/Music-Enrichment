@@ -1,22 +1,10 @@
-/* ============================================================
-   ambient.js — the room's colour.
+/* Slow WebGL mesh gradient behind the dashboard, tinted by the dominant genres
+   currently on screen — the backdrop reports what the charts report.
 
-   A very slow mesh gradient behind the whole dashboard, whose colours are the
-   dominant genres of whatever is currently on screen. Filter to shoegaze and
-   the backdrop shifts toward shoegaze's hue. That is the whole idea: an
-   ambient background that is decorative only until you notice it is reporting
-   the same thing the charts are.
+   Hand-rolled (no shader lib): four moving blobs, quarter-resolution behind a CSS
+   blur, 20fps. Stops entirely on hidden tab, prefers-reduced-motion, or Tweaks off.
 
-   Zero dependencies — ~90 lines of WebGL rather than a shader library, because
-   the effect is four moving blobs and the app already ships React and ECharts
-   from a CDN. Renders at a quarter resolution behind a CSS blur (it is a
-   gradient; nobody can tell), ticks at 20fps, and stops entirely when the tab
-   is hidden, when the user prefers reduced motion, or when switched off in the
-   Tweaks panel.
-
-   Loaded as a plain <script> before app.bundle.js; the React side talks to it
-   through window.MLAmbient.
-   ============================================================ */
+   Loaded as <script> before app.bundle.js; React talks to it via window.MLAmbient. */
 (function () {
   "use strict";
 
@@ -25,9 +13,9 @@
     void main() { gl_Position = vec4(aPos, 0.0, 1.0); }
   `;
 
-  // Four blobs on lissajous paths, inverse-square-ish weighted and normalised,
-  // then gamma-encoded. Colours arrive already in linear light (see
-  // oklchToLinear below) so the blend happens where blending is meaningful.
+  // Four blobs on lissajous paths, inverse-square-ish weighted, normalised, then
+  // gamma-encoded. Colours arrive in linear light (oklchToLinear), so the blend
+  // happens where blending is meaningful.
   const FRAG = `
     precision mediump float;
     uniform vec2  uRes;
@@ -57,9 +45,8 @@
     }
   `;
 
-  /* OKLCH → linear sRGB. The genre palette in dashboard.jsx is authored as
-     `oklch(0.72 0.14 <hue>)` strings, so this is how the same colours the
-     charts use reach the shader. */
+  /* OKLCH → linear sRGB. dashboard.jsx authors the genre palette as
+     `oklch(0.72 0.14 <hue>)`, so this is how the charts' colours reach the shader. */
   function oklchToLinear(L, C, H) {
     const h = (H * Math.PI) / 180;
     const a = C * Math.cos(h), b = C * Math.sin(h);
@@ -75,12 +62,11 @@
     ];
   }
 
-  /* The backdrop has to read as near-black with only a hint of hue. The genre
-     palette is authored for charts (L 0.72) — correct on a small swatch, far
-     too light spread across the whole viewport. Every colour entering the
-     shader is remapped into a narrow dark band, keeping the relative ordering
-     between hues but collapsing the range. Chroma is nudged up because a
-     colour this dark loses apparent saturation. */
+  /* The backdrop must read near-black with only a hint of hue. The chart palette
+     (L 0.72) is right on a small swatch and far too light across a viewport, so
+     every colour is remapped into a narrow dark band — relative ordering between
+     hues survives, the range collapses. Chroma is raised because a colour this
+     dark loses apparent saturation. */
   const AMBIENT_L_BASE = 0.10;   // darkest a backdrop colour may be
   const AMBIENT_L_SPAN = 0.16;   // ...and how far the lightest may rise above it
   const AMBIENT_C_GAIN = 1.30;
@@ -95,8 +81,8 @@
     return m ? ambientTone(+m[1], +m[2], +m[3]) : null;
   }
 
-  // Neutral default — the deep violet/steel of the midnight theme, so the
-  // backdrop looks intentional before any data has been aggregated.
+  // Midnight theme's violet/steel, so the backdrop looks intentional before any
+  // data has been aggregated.
   const FALLBACK = [
     ambientTone(0.42, 0.10, 285),
     ambientTone(0.34, 0.07, 250),
@@ -208,8 +194,8 @@
 
   function start() {
     if (!init()) return;
-    // Paint one frame even when motion is off, so the backdrop still carries
-    // the library's colours — it just holds still.
+    // One frame even with motion off: the backdrop still carries the library's
+    // colours, it just holds still.
     draw(performance.now());
     sync();
   }

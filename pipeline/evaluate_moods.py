@@ -1,22 +1,16 @@
 """Mood classifier evaluation — measures what the audio features can actually infer.
 
-The centroid classifier is trained on the owner's own mood audit. That raises a
-question the pipeline never asked: *for which moods can audio features reproduce
-the owner's judgement at all?*
+Answers "for which moods can audio features reproduce the owner's judgement at
+all?" by k-fold cross-validation over the audit-labeled tracks, and derives the
+allowlist the centroid path is permitted to emit. Current numbers live in
+``mood_eval.json`` — nothing here hard-codes which moods pass.
 
-This module answers it with k-fold cross-validation over the audit-labeled
-tracks, reporting per-mood precision / recall / F1, and derives the allowlist of
-moods the centroid path is permitted to emit.
+The finding: the features recover only what is near a direct function of tempo or
+rhythm. Anything semantic (Happy, Sad, Love) collapses, and even Slow never
+clears the bar at any calibration setting.
 
-The finding that motivated it: the features recover only what is close to a
-direct function of tempo or rhythm. At the shipped operating point Fast reaches
-precision ~0.79 and Dance/Moody ~0.50, while everything semantic collapses —
-Happy ~0.10, Sad ~0.14, Love ~0.16. Even Slow, despite sounding tempo-shaped,
-never clears ~0.32 at any calibration setting.
-
-A hand-maintained suppression list had drifted to the point of banning the
-best-predicted moods and permitting the worst, so the list is now generated from
-measurement instead of memory.
+Replaces a hand-maintained suppression list that had drifted into banning the
+best-predicted moods and permitting the worst.
 
 Usage:
     python -m pipeline.evaluate_moods
@@ -40,21 +34,15 @@ from pipeline.config import (
 
 log = get_logger(__name__)
 
-# Report destination. Committed so the allowlist is reviewable in diffs rather
-# than being recomputed invisibly at import time.
+# Committed, so the allowlist is reviewable in diffs instead of being recomputed
+# invisibly at import time.
 MOOD_EVAL_PATH: Path = REPO_ROOT / "mood_eval.json"
 
-# A mood is emitted by the centroid path only if its cross-validated *precision*
-# clears this bar.
-#
-# Precision rather than F1, because the two errors are not symmetric on a
-# dashboard: a false tag is a wrong statement shown to the reader as fact, while
-# a missing tag is an honest gap that the labeling queue can fill later. F1
-# would trade the first away to buy the second.
-#
-# 0.45 sits in a natural gap in the measured spread — Fast 0.79, Dance 0.52,
-# Moody 0.50, then a drop to Groove 0.36 and below. See mood_eval.json for the
-# current numbers; the pipeline never hard-codes which moods pass.
+# The centroid may emit a mood only if its cross-validated *precision* clears this.
+# Precision, not F1: the errors aren't symmetric on a dashboard — a false tag is a
+# wrong statement shown as fact, a missing one is an honest gap the labeling queue
+# can fill. F1 would trade the first away to buy the second.
+# 0.45 sits in a natural gap in the measured spread (see mood_eval.json).
 ALLOWLIST_MIN_PRECISION: float = 0.45
 
 # Folds and seed are fixed so the report is reproducible across runs; a shifting
@@ -64,10 +52,8 @@ DEFAULT_SEED: int = 7
 
 
 def _shuffled(rows: list[Any], seed: int) -> list[Any]:
-    """Deterministic shuffle — stdlib ``random`` seeded per call.
-
-    Kept local so callers can't accidentally consume shared RNG state and make
-    the report drift between runs.
+    """Deterministic shuffle, seeded per call so no caller can consume shared RNG
+    state and make the report drift between runs.
     """
     import random
 
@@ -84,11 +70,9 @@ def cross_validate(
     seed: int = DEFAULT_SEED,
     percentile: float | None = None,
 ) -> dict[str, Any]:
-    """k-fold CV over ``(mood_tags, audio_features)`` rows.
-
-    Evaluates the centroid on held-out owner labels with suppression disabled,
-    so the result measures the features' raw ability to recover the owner's
-    judgement rather than the effect of any current policy.
+    """k-fold CV over ``(mood_tags, audio_features)`` rows, with suppression
+    disabled — measures the features' raw ability to recover the owner's
+    judgement, not the effect of current policy.
 
     Returns ``{per_mood: {mood: {...}}, macro_f1, exact_match, n}``.
     """
@@ -116,9 +100,8 @@ def cross_validate(
         test = buckets[i]
         train = [r for j, b in enumerate(buckets) if j != i for r in b]
         centroids = compute_centroids(train, stats)
-        # Calibrate on the training fold only — calibrating on all rows would
-        # leak the held-out labels and flatter the score. This must mirror what
-        # classify() actually ships, or the report describes a different
+        # Training fold only — calibrating on all rows leaks the held-out labels.
+        # Must mirror what classify() ships, or the report describes a different
         # classifier than the one in production.
         thresholds = (
             calibrate_thresholds(train, stats, centroids, percentile=percentile)

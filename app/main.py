@@ -17,9 +17,8 @@ from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pipeline.config import REPO_ROOT, SCROBBLES_PATH, TRACKS_PATH
 
-# Each pipeline phase load_dotenv()s for itself, but nothing under app/ did, so
-# the server process never saw .env: live sync reported itself unconfigured and
-# DASHBOARD_TOKEN was ignored. Must run before DASHBOARD_TOKEN is read below.
+# Pipeline phases each load_dotenv() for themselves; nothing under app/ did, so
+# the server never saw .env. MUST run before DASHBOARD_TOKEN is read below.
 load_dotenv(REPO_ROOT / ".env")
 
 import app.data as data
@@ -28,15 +27,14 @@ import app.query as query
 
 app = FastAPI(title="Music Dashboard")
 
-# No CORS middleware: the dashboard is served from the same origin as the API,
-# so it never needs cross-origin access. Allowing all origins would let any
-# website a user visits read their full listening history over the public tunnel.
+# No CORS middleware, deliberately: the SPA is same-origin, and allowing all
+# origins would let any site the user visits read their full listening history
+# over the public tunnel.
 
-# Shared secret guarding the mutating endpoints (refresh / sync / reload). The
-# SPA reads it from GET /api/config (same-origin only, since there is no CORS);
-# a cross-origin page can neither read it nor set the custom header without a
-# preflight that now fails — blocking drive-by CSRF triggering of pipeline runs.
-# Set DASHBOARD_TOKEN to keep the token stable across restarts.
+# Guards the mutating endpoints (refresh / sync / reload). The SPA reads it from
+# GET /api/config — which, with CORS off, a cross-origin page can neither read nor
+# set the custom header for. That is what blocks drive-by CSRF pipeline runs.
+# Set DASHBOARD_TOKEN to keep it stable across restarts.
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN") or secrets.token_urlsafe(32)
 
 
@@ -45,9 +43,8 @@ def require_token(x_dashboard_token: str = Header(default="")) -> None:
         raise HTTPException(status_code=403, detail="missing or invalid dashboard token")
 
 
-# Gzip every response above the threshold. This transparently compresses the
-# multi-MB JSONL data endpoints and all static assets (CSS/JSX), which is the
-# single biggest win for slow tunnelled mobile loads.
+# Compresses the multi-MB JSONL endpoints and static assets — the single biggest
+# win for slow tunnelled mobile loads.
 app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 # Load data eagerly at import time; tests override via data.use_paths().
@@ -56,9 +53,8 @@ data.load()
 
 @app.get("/api/config")
 def api_config():
-    """Same-origin client bootstrap. Returns the token the SPA must echo back in
-    the ``X-Dashboard-Token`` header on mutating requests. With CORS disabled,
-    cross-origin pages cannot read this response."""
+    """Token the SPA echoes in ``X-Dashboard-Token`` on mutating requests. With
+    CORS disabled, cross-origin pages cannot read this response."""
     return {"token": DASHBOARD_TOKEN}
 
 
@@ -73,7 +69,7 @@ def api_overview():
     return metrics.overview()
 
 
-# Window forms: "all", "2025", "2025-03", "2025-summer", "2025-03-01:2025-06-30".
+# Forms: "all" | "2025" | "2025-03" | "2025-summer" | "2025-03-01:2025-06-30".
 _WINDOW = Query(
     None,
     description='Listening window: "2025", "2025-03", "2025-summer", or "from:to".',

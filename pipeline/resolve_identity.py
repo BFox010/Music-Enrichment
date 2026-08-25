@@ -1,25 +1,19 @@
-"""Phase 4e — resolve recording identity across artist-credit variants.
+"""Phase 4e — merge recording identity across artist-credit variants.
 
-Last.fm reports whatever artist credit the scrobbling client sent, so one
-recording can arrive under several names: "Clipse" and "Clipse, Pharrell
-Williams, Pusha T & Malice"; "Danger Mouse" and "Danger Mouse & Black Thought".
-Every downstream phase keys on ``(artist_normalized, track_normalized)``, so
-those land as separate rows, get enriched separately, and get classified
-separately — the same recording ends up tagged Slow on one row and not-Slow on
-the other, and its plays are split between them.
+Last.fm reports whatever credit the scrobbling client sent, so one recording
+arrives under several names ("Clipse" vs "Clipse, Pharrell Williams, Pusha T &
+Malice"). Downstream phases key on ``(artist_normalized, track_normalized)``, so
+those become separate rows: enriched separately, classified separately (Slow on
+one, not-Slow on the other), plays split between them.
 
-This phase merges those rows on strong evidence only, then records the merged
-identities as ``identity_aliases`` so the scrobble log never has to be
-rewritten: ``scrobbles.jsonl`` stays an immutable record of what was played,
-and the aggregation layer resolves an alias to its canonical track at read
-time.
+Merges on strong evidence only, recording merged keys as ``identity_aliases``.
+``scrobbles.jsonl`` is never rewritten — the aggregation layer resolves an alias
+to its canonical row at read time.
 
-Runs after enrichment rather than after dedupe, because the decisive evidence —
-ISRC and MusicBrainz recording IDs — does not exist until Phase 4 has fetched
-it. Name-shape evidence alone would be a much weaker test. Phase 5a is ordered
-ahead of this phase for the same reason: it resolves the ISRCs this clustering
-reads, and it is where ``canonical_track_id`` gets a durable identifier rather
-than a normalized name that moves whenever normalization improves.
+Runs after enrichment, not after dedupe: the decisive evidence (ISRC, MusicBrainz
+recording ID) doesn't exist until Phase 4/5a have fetched it. This is also where
+``canonical_track_id`` is set, on a durable identifier rather than a normalized
+name that moves whenever normalization improves.
 
 Usage:
     python -m pipeline.resolve_identity
@@ -71,13 +65,11 @@ def _name_key(row: dict) -> tuple[str, str]:
 
 
 def _identity_title(row: dict) -> str:
-    """Feat-stripped, normalized title used to detect credit variants.
+    """Feat-stripped normalized title — "same recording" identity.
 
-    Distinct from ``track_normalized``, which keeps the guest credit — that
-    field is display identity; this one is "the same recording" identity. A
-    guest credit that moved into the title ("FML" vs "FML (feat. The
-    Weeknd)") never surfaces as a different ``artist_normalized``, so the
-    title is the only place left to strip it.
+    Not ``track_normalized``, which keeps the guest credit (display identity).
+    A guest credit that moved into the *title* ("FML" vs "FML (feat. The Weeknd)")
+    leaves ``artist_normalized`` identical, so the title is the only place to strip it.
     """
     return normalize_track(strip_feat(row.get("track") or ""))
 
@@ -103,22 +95,13 @@ class _Union:
 def _shape_matches(a: dict, b: dict) -> bool:
     """Do two rows *look* like the same recording under different credits?
 
-    Compares on the feat-stripped ``_identity_title`` rather than
-    ``track_normalized``, so a guest credit that moved into the title
-    ("FML" vs "FML (feat. The Weeknd)") is recognised as the same shape.
+    Matches on ``_identity_title``. Two accepted artist shapes:
+    - word-boundary prefix ("clipse" ⊂ "clipse pharrell williams pusha t malice")
+      — a featured-artist expansion
+    - identical artists, differing titles — a feat-in-title split
 
-    Two ways the artist side can show that shape:
-
-    - one artist name is a word-boundary prefix of the other — the shape a
-      featured-artist expansion takes ("clipse" ⊂ "clipse pharrell williams
-      pusha t malice")
-    - the artists are identical and only the title differs — the shape a
-      feat-in-title split takes, since the guest never touched the artist
-      field at all
-
-    Ignores strong identifiers (MusicBrainz ID, ISRC) entirely — those are a
-    separate veto, checked by the caller, so a conflict there can be told
-    apart from "this never looked like a variant in the first place".
+    Ignores MBID/ISRC deliberately: those are a separate veto in the caller, so a
+    conflict there stays distinguishable from "never looked like a variant".
     """
     title_a, title_b = _identity_title(a), _identity_title(b)
     if not title_a or title_a != title_b:
@@ -143,12 +126,11 @@ def _conflicts(a: dict, b: dict, field: str) -> bool:
     return bool(va and vb and va != vb)
 
 
-# An ISRC only overrules matching credit shape when it came from an exact
-# identifier join. Deezer's comes from a name search, and searching two title
-# variants of one recording routinely lands on two different releases — against
-# MusicBrainz it disagreed on 8.7% of a 150-track sample (2026-08-24). Letting
-# that veto a merge splits recordings the credit evidence correctly paired.
-# Unknown provenance counts as trusted: a wrong veto leaves a visible duplicate,
+# Sources whose ISRC is too fuzzy to veto a shape match. Deezer's comes from a
+# name search: two title variants of one recording routinely land on different
+# releases (disagreed with MusicBrainz on 8.7% of a 150-track sample), and letting
+# that veto splits pairs the credit evidence got right.
+# Unknown provenance counts as trusted — a wrong veto leaves a visible duplicate,
 # a wrong merge silently folds two recordings and sums their plays.
 _FUZZY_ISRC_SOURCES = frozenset({"deezer"})
 
@@ -163,26 +145,18 @@ def _isrc_vetoes_merge(a: dict, b: dict) -> bool:
 
 
 def is_credit_variant(a: dict, b: dict) -> bool:
-    """Do two rows look like the same recording under different credits?
+    """``_shape_matches`` plus no decisive conflicting identifier.
 
-    Requires ``_shape_matches`` *and* no conflicting ISRC from a source precise
-    enough to be decisive — an ISRC genuinely identifies a recording, so a
-    disagreement between two exact joins means two different recordings that
-    happen to share a title. A Deezer-derived ISRC does not carry that weight;
-    see ``_isrc_vetoes_merge``.
+    Conflicting ISRC from an exact join ⇒ two different recordings sharing a
+    title. A Deezer ISRC lacks that weight; see ``_isrc_vetoes_merge``.
 
-    A conflicting MBID is weaker evidence — Last.fm routinely returns a
-    different recording MBID for one recording under a different credit
-    string — and is treated differently depending on *which* credit changed:
-
-    - same artist, guest only in the title ("FML" vs "FML (feat. The
-      Weeknd)"): the artist field never gave Last.fm a different string to
-      hash a different MBID from, so a conflict here is expected noise, not
-      signal. Merges anyway.
-    - different artist strings (the Clipse-style prefix expansion): the
-      credit itself changed, so a conflicting MBID is more informative. The
-      caller routes this case to ``identity_review.jsonl`` instead of
-      merging blind.
+    A conflicting MBID is weaker — Last.fm hands out different recording MBIDs
+    for one recording under different credit strings — so it depends on which
+    credit changed:
+    - same artist, guest only in the title: Last.fm never saw a different artist
+      string, so the conflict is noise. Merge anyway.
+    - different artist strings (Clipse-style expansion): the credit itself moved,
+      so the conflict is informative. Caller routes it to identity_review.jsonl.
     """
     if not _shape_matches(a, b):
         return False
@@ -254,12 +228,10 @@ def _cluster(tracks: list[dict]) -> tuple[list[list[int]], list[dict]]:
 
 
 def _collect_aliases(rows: list[dict]) -> list[list[str]]:
-    """Every name the recordings in this cluster have ever been scrobbled under.
+    """Every name this cluster has been scrobbled under: own keys + inherited aliases.
 
-    Accumulates each row's own key *and* any aliases it already carries. The
-    inherited ones matter on re-runs: once a row has been absorbed it no longer
-    exists to contribute its own name, so dropping its alias would orphan every
-    play logged under it.
+    Inherited ones matter on re-runs — an absorbed row no longer exists to contribute
+    its own name, so dropping its alias orphans every play logged under it.
     """
     aliases: list[list[str]] = []
     for r in rows:
@@ -272,16 +244,13 @@ def _collect_aliases(rows: list[dict]) -> list[list[str]]:
 def _deconflict_aliases(rows: list[dict]) -> int:
     """Ensure every name is claimed by exactly one row. Returns drops made.
 
-    Two ways a name ends up contested, both seen in practice:
+    Contested two ways, both seen in practice: a live row owns the name outright
+    (fresh metadata split a previously-merged pair), or two rows inherited the same
+    alias from a row each absorbed at some point. Either way the aggregation layer
+    would route one row's plays to the other.
 
-    1. A live row owns the name outright — fresh metadata split a pair that
-       merged on an earlier run, so the other half must stop claiming it.
-    2. Two rows inherit the same alias from an absorbed row, because each
-       merged with it at some point in their history.
-
-    Either way the aggregation layer would route one row's plays to the other.
-    A contested alias is awarded to the row whose own title matches it, then to
-    the most-played, then alphabetically so the outcome is deterministic.
+    Awarded to the row whose own title matches, then most-played, then alphabetical
+    (deterministic).
     """
     owned = {_name_key(r): r for r in rows}
     dropped = 0
@@ -348,12 +317,9 @@ def merge_cluster(rows: list[dict]) -> dict:
     if len(rows) == 1:
         single = dict(rows[0])
         single["identity_aliases"] = _collect_aliases(rows)
-        # Stamped here too, not just on merged clusters. This is the phase that
-        # decides identity, so leaving singletons blank meant only the handful
-        # of rows 4e actually folded carried an id (163 of 3255 on 2026-08-24)
-        # and everything else waited for fill_defaults() at Phase 8 — deriving
-        # it from fields several phases had changed by then. Invariant 4 asks
-        # every phase to preserve canonical_track_id; something has to set it.
+        # Singletons get an id too. Leaving them blank defers to fill_defaults()
+        # at Phase 8, which derives it from fields several phases have since
+        # changed. This is the phase that decides identity; it must stamp every row.
         single["canonical_track_id"] = compute_canonical_track_id(single)
         return single
 

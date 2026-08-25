@@ -92,27 +92,19 @@ def _phase(phase_id: str, name: str, fn, *args, **kwargs) -> str:
 
 
 def failed_phases(results: dict[str, str]) -> list[str]:
-    """Phase IDs that genuinely failed (FAILED), excluding benign SKIPPED.
-
-    A SKIPPED phase is expected operationally — e.g. Phase 3c when no Exportify
-    CSV is present, or a phase whose optional intermediate input is missing.
-    Callers (refresh, the CLI) treat only FAILED phases as errors.
+    """Phase IDs that genuinely failed, excluding benign SKIPPED — an expected
+    no-op like Phase 3c with no Exportify CSV. Only these count as errors.
     """
     return [pid for pid, status in results.items() if status == FAILED]
 
 
 def _resolve_start_index(start_from: str) -> int:
-    """Convert --start-from value to a 0-based manifest index.
-
-    Accepts a phase ID ("3c", "A", "4") or an integer string ("4").
-    Integer N maps directly to phase ID str(N) first; if not found,
-    falls back to positional index N-1 for backwards compat.
+    """--start-from value → 0-based manifest index. Accepts a phase ID ("3c", "A",
+    "4"); an integer N tries phase ID str(N) first, then positional index N-1.
     """
-    # Try as a direct phase ID first
     for i, phase in enumerate(_PHASES):
         if str(phase["id"]) == start_from:
             return i
-    # Numeric fallback: --start-from 4 → 0-based index 3
     try:
         n = int(start_from)
         idx = n - 1
@@ -140,13 +132,10 @@ def run(
     force: str = FORCE_OFF,
     run_log_path: Path | None = None,
 ) -> dict[str, str]:
-    """Run pipeline phases in manifest order; return dict of phase_id → status.
+    """Run phases in manifest order; returns ``{phase_id: OK|SKIPPED|FAILED}``.
+    Use ``failed_phases()`` — SKIPPED is an expected no-op, not a failure.
 
-    Status is one of OK / SKIPPED / FAILED. Use ``failed_phases()`` to test for
-    genuine errors — a SKIPPED phase is an expected no-op, not a failure.
-
-    ``force`` reaches only the phases the manifest flags ``accepts_force`` — the
-    API-backed ones. See ``pipeline._http.FORCE_MODES``.
+    ``force`` reaches only phases the manifest flags ``accepts_force``.
     """
     if run_log_path is None:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
@@ -175,7 +164,7 @@ def run(
             results[phase_id] = OK  # assumed done
             continue
 
-        # ── Manual phase ────────────────────────────────────────────────
+        # ── Manual phase ──
         if phase_def.get("manual"):
             outputs = phase_def.get("outputs", [])
             output_exists = any((REPO_ROOT / f).exists() for f in outputs)
@@ -195,7 +184,7 @@ def run(
             results[phase_id] = OK if output_exists else SKIPPED
             continue
 
-        # ── Conditional: required file gate ─────────────────────────────
+        # ── Conditional: required file gate ──
         req_file = phase_def.get("requires_file")
         if req_file and not (REPO_ROOT / req_file).exists():
             log.warning(
@@ -205,7 +194,7 @@ def run(
             results[phase_id] = SKIPPED
             continue
 
-        # ── Dynamic import + execute ─────────────────────────────────────
+        # ── Dynamic import + execute ──
         module_path = phase_def.get("module")
         callable_name = phase_def.get("callable")
         optional = phase_def.get("optional", False)
@@ -227,7 +216,7 @@ def run(
             kwargs["force"] = force
         results[phase_id] = _phase(phase_id, phase_def["name"], fn, **kwargs)
 
-    # ── Summary ──────────────────────────────────────────────────────────
+    # ── Summary ──
     log.info("=" * 60)
     log.info("Pipeline summary:")
     for phase_id, status in results.items():

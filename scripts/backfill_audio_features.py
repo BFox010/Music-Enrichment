@@ -1,11 +1,8 @@
 """Run Phase 5a/5b directly against tracks.jsonl (issue #37).
 
-The full pipeline can't run in a fresh checkout — inputs/ is gitignored — but
-the 1,008-track audio_features gap this closes lives in the already-committed
-tracks.jsonl, in place. This is the operational way to actually spend the
-MusicBrainz/Deezer/ReccoBeats rate limits against it: resolve_isrcs (5a) then
-enrich_audio_features (5b), writing straight back to tracks.jsonl rather than
-threading through the full intermediate chain.
+The full pipeline can't run in a fresh checkout (inputs/ is gitignored), but the
+audio_features gap it closes lives in the committed tracks.jsonl. Runs 5a then 5b
+straight back into tracks.jsonl instead of threading the intermediate chain.
 
 Usage:
     python scripts/backfill_audio_features.py             # resolve + fetch, write in place

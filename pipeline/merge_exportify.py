@@ -1,12 +1,10 @@
 """Phase 3c — merge Exportify audio-features CSV into the track set.
 
-Reads an Exportify CSV (default: ``inputs/exportify.csv``) and merges audio
-features into the latest available intermediate JSONL. Handles the known
-Exportify column layout; tolerates missing optional columns.
+Merges an Exportify CSV (default ``inputs/exportify.csv``) into the deepest
+available intermediate. Tolerates missing optional columns.
 
-Includes a sanity check for the documented energy-scale bug from the prior
-pipeline iteration (median energy < 0.1 means values are off by ~10×). If
-the new run hits that, abort before writing anything.
+Aborts before writing if median energy < 0.1 — that signals the known
+scale bug where values arrive ~10× too small.
 
 Usage:
     python -m pipeline.merge_exportify

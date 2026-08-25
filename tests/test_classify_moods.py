@@ -162,10 +162,8 @@ class TestClassifyTrack:
     def test_no_quota_by_default(self) -> None:
         """Every mood inside its radius is emitted — no fixed slot count.
 
-        The old rule took the nearest three centroids regardless of fit, which
-        forced three tags onto ~88% of the library. Assignment is now an
-        absolute per-mood judgement, so a track sitting near four centroids
-        gets four tags.
+        Assignment is an absolute per-mood judgement, so a track near four
+        centroids gets four tags (and one near none gets zero).
         """
         stats = compute_global_stats([_features()])
         training = [

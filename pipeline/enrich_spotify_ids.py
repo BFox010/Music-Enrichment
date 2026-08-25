@@ -8,37 +8,25 @@ match wins, otherwise we move on rather than guess. On a miss we retry with the
 shared ``name_variations`` recovery rules (strip_feat / strip_parens /
 first_artist), exactly like the Last.fm enrichment phase.
 
-Why this exists: Spotify deprecated the ``audio-features`` endpoint for new apps
-(2024-11-27), but **Search is unaffected**. Resolving identifiers here lets
-downstream phases (e.g. a future ReccoBeats feature fetch) work without the
-manual TuneMyMusic→Exportify step, which was previously the only source of IDs.
+**The ISRC is the point of this phase; ``spotify_id`` is incidental.** A matched
+result carries ``external_ids.isrc`` — an open standard ReccoBeats, MusicBrainz
+and AcousticBrainz all accept, which keeps the feature source swappable.
+``spotify_id`` is re-resolvable only through Spotify (whose eligibility rules
+keep tightening) and is stored only because ReccoBeats also takes it.
 
-**The ISRC is the point of this phase; the Spotify ID is incidental.** A matched
-search result carries ``external_ids.isrc``, and that identifier is an open
-standard accepted by ReccoBeats, MusicBrainz and AcousticBrainz alike — so it
-keeps the audio-feature source swappable. ``spotify_id`` is re-resolvable only
-through Spotify, whose eligibility rules tightened again in March 2026, so it is
-stored because ReccoBeats also accepts it, not as the identifier of record.
+Spotify closed ``audio-features`` to new apps (2024-11-27); **Search is unaffected**.
 
-Standing on that: this phase is the **last-resort resolver**. Issue #37 plans a
-Spotify-free chain, and cheaper routes should run first — MusicBrainz
-(``musicbrainz_id`` → ISRC, already on most of the library and needing no auth),
-then Deezer. Phase B is for whatever those leave unresolved, and should be
-retired outright if they get coverage high enough.
+This is the **last-resort resolver**: Phases 5a/5b now cover the same ground
+without auth, so B only runs for what they leave unresolved.
 
-Auth: Client-Credentials flow (no user login) — needs only a free Spotify app's
-Client ID + Secret, via the ``SPOTIFY_CLIENT_ID`` / ``SPOTIFY_CLIENT_SECRET``
-env vars or ``inputs/spotify_credentials.json``. If neither is present the phase
-raises ``FileNotFoundError`` and the orchestrator skips it (Exportify path keeps
-working untouched).
+Auth: Client-Credentials (no user login) via ``SPOTIFY_CLIENT_ID`` /
+``SPOTIFY_CLIENT_SECRET`` or ``inputs/spotify_credentials.json``. Neither present
+⇒ raises ``FileNotFoundError`` and the orchestrator SKIPs the phase.
 
-Caching: ``.cache/spotify_search.json``, keyed by ``artist_norm|track_norm``
-(+variation label), so re-runs resume and never re-hit resolved tracks.
+Cache ``.cache/spotify_search.json``, keyed ``artist_norm|track_norm`` (+variation).
 
-Not done here: an ISRC → ``spotify_id`` lookup. It reads like a precise
-short-circuit, but in the ReccoBeats chain a track that already has an ISRC
-needs nothing further from Spotify — ReccoBeats takes the ISRC directly — so the
-call only spends rate limit to learn a redundant key.
+No ISRC → ``spotify_id`` lookup: a track that has an ISRC needs nothing further
+from Spotify, so it would only spend rate limit on a redundant key.
 
 Usage:
     python -m pipeline.enrich_spotify_ids

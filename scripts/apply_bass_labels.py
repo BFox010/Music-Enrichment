@@ -1,29 +1,20 @@
 """Apply owner-reviewed Heavy Bass labels to tracks.jsonl (durable overlay).
 
-Heavy Bass never reaches the centroid path: the 9 audio features carry no bass
-descriptor, so pipeline.evaluate_moods measures its precision below the allowlist
-threshold and derive_allowlist withholds it (currently only Dance/Fast/Moody
-clear the bar). The automated pipeline therefore cannot assign it at all. This
-script layers the owner's hand-reviewed verdicts back on top, recovering the
-recall that withholding necessarily gives up.
+Heavy Bass can never come from the centroid: the 9 audio features carry no bass
+descriptor, so evaluate_moods measures its precision under the allowlist bar and
+derive_allowlist withholds it. This layers the owner's hand-reviewed verdicts back
+on, recovering the recall that withholding gives up. (The verdicts predate the
+measured allowlist and were made against a hand-kept suppression list;
+measurement reached the same verdict independently — see
+docs/mood_centroid_decisions.md.)
 
-Note the verdicts predate main's measured allowlist and were made against an
-earlier hand-kept suppression list. The conclusion held: measurement reached the
-same verdict for Heavy Bass independently. See docs/mood_centroid_decisions.md
-for the original evidence.
+Verdicts live in a version-controlled CSV (artist, track, decision); only
+``decision == "keep"`` is applied. Each kept row gets "Heavy Bass" ADDED to its
+mood_tags (co-moods preserved, nothing pruned) and is marked owner-owned
+(mood_source="manual", mood_confidence="high") so it survives a Phase 6 re-run.
 
-The verdicts live in a version-controlled CSV (artist, track, decision) produced
-from an Excel review sheet. Only ``decision == "keep"`` rows are applied. For each
-kept track this script:
-
-  * adds "Heavy Bass" to the existing mood_tags (co-moods are PRESERVED — nothing
-    is pruned), and
-  * marks the row owner-owned: mood_source="manual", mood_confidence="high",
-
-so the label is protected from the centroid cleanup/suppression and survives a
-future Phase 6 re-run. Run it as the LAST mood step (after Phase 8 and
-cleanup_centroid_moods) so the human bass overlay sits on top of fresh pipeline
-output. It is idempotent — re-running changes nothing.
+Run it LAST, after Phase 8, so the overlay sits on fresh pipeline output.
+Idempotent.
 
     python scripts/apply_bass_labels.py            # dry-run diff
     python scripts/apply_bass_labels.py --apply    # write tracks.jsonl

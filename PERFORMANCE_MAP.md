@@ -14,8 +14,8 @@ today:**
   exists** (in-browser Babel, development React). Read it as history.
 
 Everything in Part II was measured against the **2,730-track / 13,669-scrobble**
-library. The library has since grown to 3,336 tracks and 16,549 scrobbles, so
-absolute milliseconds there run low. The complexity columns still hold.
+library. The library has grown since, so absolute milliseconds there run low —
+the complexity columns still hold.
 
 **Confidence legend:** ✅ measured (real run) · ⚠️ estimated / derived (static or
 extrapolated) · 🔴 could not measure (reason given).

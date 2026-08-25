@@ -178,7 +178,7 @@ class TestIngestFromRecords:
             assert n == 1
 
 
-# ── Shrink guard: scrobbles.jsonl is the base record; never lose rows ──────
+# ── Shrink guard: scrobbles.jsonl is the base record; never lose rows ──
 
 
 @contextmanager
@@ -420,7 +420,7 @@ class TestCliArgs:
         assert _parse_args(["--allow-shrink"]).allow_shrink
 
 
-# ── Chain: partial ingest → dedupe → play-count integrity ─────────────────
+# ── Chain: partial ingest → dedupe → play-count integrity ──
 
 
 class TestIntegrityAfterPartialExport:

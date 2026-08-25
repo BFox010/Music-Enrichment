@@ -3,15 +3,12 @@
 Reads the Last.fm JSON export (owner-provided, placed in inputs/) and writes
 scrobbles.jsonl — one row per play event in the canonical schema.
 
-**Ingest is additive.** The documented owner workflow is a partial export
-covering "today back to the last pull", so the default merges with whatever is
-already in scrobbles.jsonl, dedupes on
-``(scrobbled_at, artist_normalized, track_normalized)`` and re-sorts. A full
-replace is available behind ``--replace``, and either way a write that would
-leave fewer rows than the existing file aborts with ``ScrobbleShrinkError``
-unless ``--allow-shrink`` is passed too. scrobbles.jsonl is the base record every
-play-weighted number in the dashboard derives from; losing rows from it is silent
-and corrupts everything downstream.
+**Ingest is additive.** The owner's export is a partial pull ("today back to the
+last pull"), so the default merges into scrobbles.jsonl, dedupes on
+``(scrobbled_at, artist_normalized, track_normalized)`` and re-sorts. ``--replace``
+overwrites. Either way, a write leaving fewer rows than the file on disk raises
+``ScrobbleShrinkError`` unless ``--allow-shrink`` is also passed: this file is the
+base record for every play-weighted number, and losing rows is silent.
 
 Usage:
     python -m pipeline.ingest_scrobbles
@@ -94,10 +91,8 @@ def parse_raw_scrobble(record: dict) -> dict | None:
 
     dt = datetime.fromtimestamp(uts, tz=timezone.utc)
 
-    # MusicBrainz IDs ride along in the export and are the strongest identity
-    # evidence available anywhere in the pipeline — Phase 4e uses them to fold
-    # credit variants of the same recording together. Capturing them here costs
-    # nothing and needs no network, so they are kept even when empty-string.
+    # MBIDs ride along free in the export and are the strongest identity evidence
+    # in the pipeline — Phase 4e folds credit variants on them.
     return {
         "artist": artist,
         "track": track,
@@ -157,15 +152,13 @@ def ingest_from_records(
                         existing.append(json.loads(line))
                     except json.JSONDecodeError:
                         pass
-        # Re-derive the normalized fields on rows already on disk before using
-        # them as the dedupe key. They are *derived*, so a change to
-        # normalize_artist/normalize_track silently redefines the key and every
-        # previously-ingested scrobble stops matching itself: the export
-        # re-delivers it and it lands a second time. That is not hypothetical —
-        # `&` → "and" (#27) re-added 1102 historical plays across 104 artists,
-        # inflating play_count and splitting 28 recordings into two rows each.
-        # Recomputing both sides makes the key immune to that, and refreshing
-        # the stored values lets scrobbles.jsonl heal itself on the next ingest.
+        # Re-derive the normalized fields on disk rows before keying on them.
+        # They are *derived*, so any change to normalize_artist/normalize_track
+        # silently redefines the key: every stored scrobble stops matching itself
+        # and the export re-delivers it as a duplicate. (`&` → "and" in #27 did
+        # exactly this — 1102 plays re-added, 28 recordings split in two.)
+        # Recomputing both sides is immune, and rewriting the stored values lets
+        # the file heal itself.
         renormalized = 0
         for row in existing:
             artist_norm = normalize_artist(row.get("artist", ""))
@@ -210,8 +203,8 @@ def ingest_from_records(
             f"--replace --allow-shrink)."
         )
 
-    # Atomic: a crash mid-write must not leave scrobbles.jsonl half-truncated,
-    # which is the same history loss this guard exists to prevent.
+    # Atomic: a crash mid-write would half-truncate the file — the same history
+    # loss the shrink guard above exists to prevent.
     output_path.parent.mkdir(parents=True, exist_ok=True)
     tmp = output_path.with_suffix(output_path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:

@@ -63,36 +63,28 @@ def _parse_tier(raw: str) -> int | None:
 
 
 def _split_track_artist(item: str) -> tuple[str | None, str]:
-    """Pull (track, artist) out of a bullet line. ``track`` is None for whole-artist entries.
+    """Bullet line → (track, artist); ``track`` is None for a whole-artist entry.
 
-    Supported formats (in order of precedence):
-      "Track" by Artist              → (Track, Artist)
-      Track — Artist                 → (Track, Artist)
-      Track - Artist                 → (Track, Artist) when '-' is surrounded by spaces
-      Artist                         → (None, Artist)
+    Formats, highest precedence first: ``"Track" by Artist``, ``Track by Artist``,
+    ``Track — Artist``, ``Track - Artist``, bare ``Artist``.
     """
     s = item.strip()
-    # Quote-form: "Track" by Artist
     m = re.match(r'^[\"“](.+?)[\"”]\s+by\s+(.+)$', s, re.IGNORECASE)
     if m:
         return m.group(1).strip(), m.group(2).strip()
-    # by-form (no quotes): Track by Artist
     m = re.match(r"^(.+?)\s+by\s+(.+)$", s, re.IGNORECASE)
     if m:
         return m.group(1).strip(), m.group(2).strip()
-    # Em-dash form: Track — Artist
     if " — " in s:
         track, _, artist = s.partition(" — ")
         return track.strip(), artist.strip()
-    # Hyphen form: Track - Artist (require spaces; reject "a-ha")
-    if " - " in s:
+    if " - " in s:   # spaces required, so "a-ha" is not split
         track, _, artist = s.partition(" - ")
         return track.strip(), artist.strip()
-    # Whole-artist fallback
     return None, s
 
 
-# ── rich parser (v4 taste profile format) ───────────────────────────────
+# ── rich parser (v4 taste profile format) ──
 
 
 _QUOTED_TRACK_RE = re.compile(r'([^"]+?)"([^"]+)"')
@@ -159,16 +151,14 @@ def _table_first_column(text: str) -> list[str]:
 
 
 def _inline_dot_list(text: str) -> list[str]:
-    """Parse '·'-separated artist list, stripping (count) parentheticals.
+    """Parse a '·'-separated artist list, stripping (count) parentheticals.
 
-    Multi-line segments (which happen for the first/last segment when the
-    surrounding section header is included in the slice) are reduced to the
-    first non-header line. 'Tyler, The Creator' is preserved as one entry —
-    the comma is internal, not a separator.
+    Multi-line segments — which happen when a section header lands in the slice —
+    reduce to their first non-header line. Splits on '·' only, so
+    "Tyler, The Creator" survives as one entry.
     """
     out: list[str] = []
     for segment in text.split("·"):
-        # Take only non-blank lines that aren't a bold/markdown header artifact
         lines = [
             line.strip()
             for line in segment.splitlines()
@@ -180,12 +170,10 @@ def _inline_dot_list(text: str) -> list[str]:
         ]
         if not lines:
             continue
-        # The artist is on the first surviving line; downstream lines are
-        # next section's header that bled into the slice.
+        # Artist is the first surviving line; later ones are the next section's
+        # header bleeding into the slice.
         cleaned = lines[0]
-        # Strip trailing parenthetical: "(220)" or "(37 but deep emotional impact)"
-        cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", cleaned).strip()
-        # Strip stray markdown bold markers at edges
+        cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", cleaned).strip()   # "(220)", "(37 but deep …)"
         cleaned = cleaned.strip("*").strip()
         if cleaned:
             out.append(cleaned)
@@ -193,11 +181,9 @@ def _inline_dot_list(text: str) -> list[str]:
 
 
 def _playlist_prose_entries(text: str) -> dict[tuple[str, str], dict]:
-    """Parse playlist sections from rich prose format.
-
-    Looks for ``**Name:**`` headers, then ``Locked:`` / ``Spine:`` / ``Known:`` /
-    ``Discovery picks accepted:`` / ``Rejected:`` segments inside each section.
-    Tracks are ``Artist "Track Name"`` pairs.
+    """Parse rich-prose playlist sections: ``**Name:**`` headers, then the
+    ``_LABELED_SEGMENT_STATES`` segments inside each. Tracks read as
+    ``Artist "Track Name"``.
     """
     out: dict[tuple[str, str], dict] = {}
     matches = list(_PLAYLIST_HEADER_BOLD_RE.finditer(text))
@@ -207,18 +193,15 @@ def _playlist_prose_entries(text: str) -> dict[tuple[str, str], dict]:
         name_lower = name_raw.lower()
         slug = _PLAYLIST_SLUG_MAP.get(name_lower)
         if slug is None:
-            # Try without parenthetical
             cleaned = re.sub(r"\s*\([^)]*\)\s*$", "", name_raw).strip().lower()
             slug = _PLAYLIST_SLUG_MAP.get(cleaned)
         if slug is None:
             continue
 
-        # Content runs to next bold header or end
         content_start = m.end()
         content_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
         content = text[content_start:content_end]
 
-        # Find each segment label's position
         label_positions: list[tuple[int, str, str]] = []
         for label, state in _LABELED_SEGMENT_STATES:
             idx = content.find(label)
@@ -233,9 +216,8 @@ def _playlist_prose_entries(text: str) -> dict[tuple[str, str], dict]:
 
             for tm in _QUOTED_TRACK_RE.finditer(segment):
                 raw_artist = tm.group(1).strip()
-                # Strip leading punctuation/separators
                 cleaned_artist = re.sub(r"^[,.\s·]+", "", raw_artist).strip()
-                # Strip leading parenthetical from a previous item
+                # a previous item's trailing parenthetical can lead this one
                 cleaned_artist = re.sub(r"^\([^)]*\)\s*", "", cleaned_artist).strip()
                 track = tm.group(2).strip()
                 if not cleaned_artist or not track:
@@ -257,8 +239,8 @@ def parse_rich_taste_profile(markdown: str) -> dict:
     """Parse the v4 rich taste-profile format (tables, inline dot-lists, prose)."""
     tier_by_artist: dict[str, int] = {}
 
-    # Saturation tiers — end at next H2 section, not the next `---` (which can
-    # match `|---|` inside a markdown table separator row).
+    # End at the next H2, NOT the next `---` — that matches `|---|` inside a
+    # markdown table separator row.
     sat_section = _slice_section(markdown, "## SATURATION TIERS", "\n## ")
 
     tier1_section = _slice_section(sat_section, "TIER 1", "TIER 2")
@@ -271,14 +253,12 @@ def parse_rich_taste_profile(markdown: str) -> dict:
         if norm not in tier_by_artist:  # Tier 1 wins over Tier 2
             tier_by_artist[norm] = 2
 
-    # Tier 3 runs to the end of sat_section (no explicit end marker)
     tier3_section = _slice_section(sat_section, "TIER 3", None)
     for artist in _inline_dot_list(tier3_section):
         norm = normalize_artist(artist)
         if norm not in tier_by_artist:
             tier_by_artist[norm] = 3
 
-    # Existing playlists (prose with `**Name:**` headers and Locked/Rejected segments)
     pl_section = _slice_section(markdown, "## EXISTING PLAYLIST DNA", "\n## ")
     playlists = _playlist_prose_entries(pl_section)
 
@@ -288,7 +268,7 @@ def parse_rich_taste_profile(markdown: str) -> dict:
     }
 
 
-# ── parser ──────────────────────────────────────────────────────────────
+# ── parser ──
 
 
 def parse_taste_profile(markdown: str) -> dict:
@@ -310,8 +290,7 @@ def parse_simple_taste_profile(markdown: str) -> dict:
     tier_by_artist: dict[str, int] = {}
     playlists: dict[tuple[str, str], dict] = {}
 
-    # State machine: which top-level section are we in?
-    section: str = "unknown"          # "tiers", "playlists", "unknown"
+    section: str = "unknown"          # "tiers" | "playlists" | "unknown"
     current_tier: int | None = None
     current_playlist: tuple[str, str] | None = None  # (slug, state)
 
@@ -320,7 +299,7 @@ def parse_simple_taste_profile(markdown: str) -> dict:
         if not line.strip():
             continue
 
-        # Match playlist header FIRST — it's most specific (### slug (state))
+        # Playlist header first — `### slug (state)` is the most specific pattern.
         plm = _PLAYLIST_HEADER_RE.match(line)
         if plm:
             slug = plm.group(1).lower()
@@ -330,11 +309,10 @@ def parse_simple_taste_profile(markdown: str) -> dict:
             section = "playlists"
             continue
 
-        # Generic header
         hm = _HEADER_RE.match(line)
         if hm:
             text = hm.group(2).lower().strip(" *_")
-            current_playlist = None  # leaving any playlist
+            current_playlist = None
             if "saturation" in text or "tier" in text and "tiers" in text:
                 section = "tiers"
                 current_tier = None
@@ -343,16 +321,13 @@ def parse_simple_taste_profile(markdown: str) -> dict:
                 section = "playlists"
                 current_tier = None
                 continue
-            # Tier sub-headers like "### Tier 1 — heavy rotation"
             tm = _TIER_HEADER_RE.search(text)
             if tm and section in ("tiers", "unknown"):
                 current_tier = _parse_tier(tm.group(1))
                 section = "tiers"
                 continue
-            # Unknown sub-header inside a known section: stay in section
-            continue
+            continue   # unknown sub-header: stay in the current section
 
-        # Bullet item — what we do depends on the section
         bm = _BULLET_RE.match(line)
         if not bm:
             continue
@@ -368,15 +343,14 @@ def parse_simple_taste_profile(markdown: str) -> dict:
             slug, state = current_playlist
             track, artist = _split_track_artist(item)
             if not track:
-                # Bare artist in a playlist section — skip with a debug log
                 log.debug("Skipping bare-artist entry in playlist %s: %r", slug, item)
                 continue
             key = (normalize_artist(artist), normalize_track(track))
             entry = playlists.setdefault(key, {"playlists": [], "curation_state": None})
             if slug not in entry["playlists"]:
                 entry["playlists"].append(slug)
-            # If multiple playlists list the same track with different states, prefer
-            # the strongest: locked > rejected > approved. Rejected is intentional.
+            # Strongest state wins across playlists: locked > rejected > approved.
+            # Rejected outranking approved is intentional.
             order = {"locked": 3, "rejected": 2, "approved": 1}
             if (entry["curation_state"] is None
                     or order.get(state, 0) > order.get(entry["curation_state"], 0)):
@@ -388,17 +362,15 @@ def parse_simple_taste_profile(markdown: str) -> dict:
     }
 
 
-# ── apply manifest to tracks ─────────────────────────────────────────────
+# ── apply manifest to tracks ──
 
 
 def _track_identity_keys(track: dict) -> list[tuple[str, str]]:
-    """Every (artist_normalized, track_normalized) this track has ever been
-    scrobbled under — its own key plus whatever Phase 4e folded into it.
+    """Every (artist_normalized, track_normalized) this row answers to — its own
+    key plus whatever Phase 4e folded in.
 
-    Without this, a taste_profile.md entry written against a credit variant
-    that Phase 4e later merged away (a different artist-credit string, or a
-    guest that used to live only in the title) would silently stop matching
-    the moment identity resolution folds the two rows together.
+    Without this, a taste_profile.md entry written against a credit variant that
+    4e later merges away silently stops matching.
     """
     own = (track.get("artist_normalized") or "", track.get("track_normalized") or "")
     keys = [own]
@@ -411,18 +383,17 @@ def _track_identity_keys(track: dict) -> list[tuple[str, str]]:
 
 
 def apply_manifest(tracks: Iterable[dict], manifest: dict) -> dict[str, int]:
-    """Mutate ``tracks`` in-place; return counts of how many fields were set.
+    """Mutate ``tracks`` in place; return how many fields were set.
 
-    Checked against every identity the track has ever carried (its own key
-    plus ``identity_aliases``), not just its current display key — see
-    ``_track_identity_keys``.
+    Matched against every identity the row carries (``_track_identity_keys``),
+    not just its current display key.
     """
     stats = {"tiered": 0, "in_playlists": 0, "curation_set": 0}
     for track in tracks:
         keys = _track_identity_keys(track)
         artists = [k[0] for k in keys]
 
-        # Tier — keyed on artist alone, so any alias's artist credit counts.
+        # Keyed on artist alone, so any alias's artist credit counts.
         tier = None
         for artist_norm in artists:
             tier = manifest["tier_by_artist"].get(artist_norm)
@@ -432,7 +403,6 @@ def apply_manifest(tracks: Iterable[dict], manifest: dict) -> dict[str, int]:
         if tier is not None:
             stats["tiered"] += 1
 
-        # Playlists
         plist = None
         for key in keys:
             candidate = manifest["playlists"].get(key)

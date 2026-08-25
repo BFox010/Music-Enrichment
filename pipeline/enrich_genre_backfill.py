@@ -1,27 +1,22 @@
 """Phase 4d — genre backfill from artist-level sources.
 
-Phase 4c derives genres from a track's *own* iTunes genre, Discogs styles, and
-Last.fm *track* tags. Whatever it leaves with ``genres: []`` is mostly not
-genuinely genre-less — we simply never asked the artist-level sources. Most of
-that gap already carries a MusicBrainz or Spotify ID, so the genre data exists,
-just one level up.
+Phase 4c works from a track's *own* iTunes genre, Discogs styles, and Last.fm
+*track* tags. What it leaves at ``genres: []`` is mostly not genre-less — the
+artist-level sources were simply never asked.
 
-This phase backfills ONLY the gap tracks (``genres == []``) from two sources
-that need no new auth, cheapest first:
+Backfills ONLY the gap rows, cheapest source first, neither needing new auth:
 
-  1. Last.fm ``artist.getTopTags`` — same API key as phase 4, ~5 req/s, cached
-     per artist so a heavily-scrobbled artist costs one call for all its tracks.
-  2. MusicBrainz ``artist/{mbid}?inc=genres+tags`` — free, 1 req/s, queried only
-     when Last.fm artist tags produced nothing and an ``artist_mbid`` exists.
+  1. Last.fm ``artist.getTopTags`` — phase 4's API key, cached per artist so a
+     heavily-scrobbled artist costs one call for all its tracks.
+  2. MusicBrainz ``artist/{mbid}?inc=genres+tags`` — only when Last.fm returned
+     nothing and an ``artist_mbid`` exists.
 
-Both are artist-level: a track with no community tags of its own still inherits
-its artist's genre (an untagged A$AP Rocky deep cut still resolves to
-Hip-Hop / Rap). Everything is mapped through phase 4c's GENRE_TAG_MAP, so the
-canonical taxonomy never diverges. Tracks that already have genres pass through
-untouched, so the API cost is bounded by the size of the gap, not the library.
+Both are artist-level, so an untagged deep cut inherits its artist's genre.
+Mapped through 4c's GENRE_TAG_MAP so the taxonomy never diverges. Rows that
+already have genres pass through untouched — API cost scales with the gap, not
+the library.
 
-Adds fields: ``lastfm_artist_tags``, ``musicbrainz_genres`` (raw, for
-transparency) on the tracks it touches.
+Also writes raw ``lastfm_artist_tags`` / ``musicbrainz_genres`` for transparency.
 
 Usage:
     python -m pipeline.enrich_genre_backfill

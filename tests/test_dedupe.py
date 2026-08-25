@@ -16,7 +16,7 @@ from pipeline.dedupe import (
 from pipeline.normalize import normalize_artist, normalize_track
 
 
-# ── helpers ──────────────────────────────────────────────────────────────
+# ── helpers ──
 
 
 def _make_scrobble(
@@ -51,7 +51,7 @@ def _read_skeleton(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-# ── unit tests ────────────────────────────────────────────────────────────
+# ── unit tests ──
 
 
 class TestHelpers:
@@ -163,7 +163,7 @@ class TestMergeByExportMbid:
         assert merged["artist_mbid"] == "am-1"
 
 
-# ── integration tests ─────────────────────────────────────────────────────
+# ── integration tests ──
 
 
 class TestDedupe:

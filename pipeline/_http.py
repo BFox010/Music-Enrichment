@@ -1,17 +1,11 @@
 """Shared HTTP utilities: rate-limited client with retry and disk-backed cache.
 
-Used by enrich_metadata (Last.fm), enrich_discogs, enrich_genre_backfill
-(Last.fm + MusicBrainz) and check_apple_music (iTunes Search). Each client
-instance owns its rate limit + cache file path.
+Each client instance owns its own rate limit and cache file.
 
-Cache format
-------------
-A flat JSON dict keyed by ``cache_key``. Successful responses are stored raw,
-exactly as the API returned them. Failures are stored as
-``{"_error": "<reason>", "_cached_at": <epoch seconds>}`` — the timestamp is what
-lets a negative entry expire. Entries written before ``_cached_at`` existed load
-fine and are treated as expired, so upgrading gives one free retry pass over
-previously-poisoned keys.
+Cache: a flat JSON dict keyed by ``cache_key``. Successes stored raw as the API
+returned them; failures as ``{"_error": <reason>, "_cached_at": <epoch>}``, whose
+timestamp is what lets the entry expire. Pre-``_cached_at`` entries load fine and
+read as expired, so upgrading buys one free retry over poisoned keys.
 """
 
 from __future__ import annotations
@@ -48,11 +42,8 @@ KIND_TRANSIENT = "transient"
 
 
 def _error_kind(entry: Any) -> str | None:
-    """Classify a cache entry: ``None`` for a success, else its error kind.
-
-    ``not_found`` is a stable negative (the API says this track does not exist).
-    Everything else — ``max_retries``, ``invalid_json: …`` — is transient and
-    worth retrying sooner.
+    """``None`` for a success, else the error kind. ``not_found`` is a stable
+    negative; everything else (``max_retries``, ``invalid_json``) is transient.
     """
     if not isinstance(entry, dict):
         return None
@@ -70,10 +61,9 @@ def _is_expired(
 ) -> bool:
     """True if ``entry`` is a failure whose TTL has elapsed.
 
-    Success entries never expire here — phases that need freshness enforce it
-    themselves (e.g. ``check_apple_music`` via ``apple_music_checked_at``).
-    A missing ``_cached_at`` (pre-TTL cache file) counts as expired, and so does
-    a timestamp in the future, so a skewed clock cannot pin an entry forever.
+    Successes never expire here — phases needing freshness enforce it themselves
+    (check_apple_music via ``apple_music_checked_at``). A missing ``_cached_at``
+    or one in the future counts as expired, so a skewed clock can't pin an entry.
     """
     kind = _error_kind(entry)
     if kind is None:
@@ -88,23 +78,11 @@ def _is_expired(
 
 
 class RateLimitedClient:
-    """A small HTTP client with rate limiting, exponential backoff, and JSON cache.
+    """Rate-limited HTTP client with exponential backoff and a JSON disk cache.
 
-    Parameters
-    ----------
-    cache_path: Path
-        File path to load/save the cache JSON.
-    rate_per_second: float
-        Maximum sustained request rate (requests/second).
-    user_agent: str
-        Sent in the User-Agent header. MusicBrainz requires this.
-    flush_every: int
-        Flush cache to disk every N new entries.
-    force: str
-        One of ``FORCE_MODES``. See the module docstring.
-    negative_ttl / transient_ttl: float
-        Seconds a cached ``not_found`` / transient failure stays valid.
-        Injectable so tests need not sleep.
+    ``user_agent`` is required by MusicBrainz. ``flush_every`` writes the cache to
+    disk every N new entries. ``force`` is one of ``FORCE_MODES``.
+    ``negative_ttl``/``transient_ttl`` are injectable so tests need not sleep.
     """
 
     def __init__(
@@ -172,13 +150,11 @@ class RateLimitedClient:
         except OSError as e:
             log.error("Failed to write cache %s: %s", self.cache_path, e)
 
-    # ── Observability ────────────────────────────────────────────────────
+    # ── Observability ──
 
     def error_counts(self) -> dict[str, int]:
-        """How many cached entries are failures, split by kind.
-
-        This is what makes "how much of the miss rate is a genuine no-match
-        versus a poisoned cache entry" answerable.
+        """Cached failures by kind — separates a genuine no-match rate from a
+        poisoned cache.
         """
         counts = {KIND_NOT_FOUND: 0, KIND_TRANSIENT: 0}
         for entry in self.cache.values():
@@ -217,7 +193,7 @@ class RateLimitedClient:
             1.0 / self.min_interval, minutes,
         )
 
-    # ── Fetch ────────────────────────────────────────────────────────────
+    # ── Fetch ──
 
     def _should_refetch(self, cache_key: str) -> bool:
         """Decide whether ``cache_key`` must go to the network. Updates stats."""

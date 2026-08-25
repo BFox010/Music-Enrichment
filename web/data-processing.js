@@ -1,12 +1,6 @@
-/* ============================================================
-   data-processing.js — pure data transforms shared by the main
-   thread (dashboard.jsx) and the off-main-thread parser
-   (data-worker.js, via importScripts). No React / DOM / JSX here
-   so the same code runs inside a Web Worker.
-
-   Loaded as a classic <script defer> BEFORE app.bundle.js, so these
-   top-level declarations are globals the bundle references by name.
-   ============================================================ */
+/* Pure transforms shared by dashboard.jsx and data-worker.js (via importScripts).
+   No React/DOM/JSX — must run inside a Web Worker.
+   Loaded as <script defer> BEFORE app.bundle.js; these top-level decls are globals. */
 
 const SEASON_BY_MONTH = { 12: "winter", 1: "winter", 2: "winter", 3: "spring", 4: "spring", 5: "spring", 6: "summer", 7: "summer", 8: "summer", 9: "fall", 10: "fall", 11: "fall" };
 const SEASONS_LIST = ["winter", "spring", "summer", "fall"];
@@ -228,21 +222,19 @@ function buildDrill(rawTracks, scrobbleRows) {
   return { season, hour, dow };
 }
 
-/* ---------- scrobble cube ----------
+/* ── scrobble cube ──
+   The overview charts cross-filter, so each re-aggregates whenever the timeframe
+   or another chart's selection changes. Pre-baked buckets (byHour / byDow /
+   buildDrill) cannot answer "hours, but only on Tuesdays, this month", so the
+   per-scrobble facts are kept as parallel typed arrays instead of objects.
 
-   The overview charts are cross-filtered: each one re-aggregates whenever the
-   timeframe or another chart's selection changes. Pre-baked buckets (byHour /
-   byDow / buildDrill) cannot answer "hours, but only on Tuesdays, this month",
-   so we keep the per-scrobble facts instead — as parallel typed arrays rather
-   than objects.
+   Transferable to the main thread with no structured-clone cost, and a full
+   re-aggregation is one linear pass over contiguous memory — sub-millisecond,
+   so filtering stays instant.
 
-   For ~16.5k scrobbles this is ~130KB, transferable to the main thread with no
-   structured-clone cost, and a full re-aggregation is one linear pass over
-   contiguous memory: well under a millisecond, so filtering stays instant.
-
-   `tf` holds a bitmask of which timeframe windows each scrobble falls in,
-   computed here from the same ANCHOR that drives playInWindow() — that is what
-   keeps the charts numerically consistent with the KPI row. */
+   `tf` is a bitmask of which timeframe windows each scrobble falls in, computed
+   from the same ANCHOR that drives playInWindow(). That is what keeps the charts
+   numerically consistent with the KPI row. */
 
 const TF_BITS = {
   year_this: 1, year_last: 2, season_this: 4, season_last: 8,

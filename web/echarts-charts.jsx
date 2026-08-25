@@ -1,10 +1,7 @@
-/* ============================================================
-   echarts-charts.jsx — ECharts React wrappers
-   Requires echarts loaded globally via CDN (window.echarts).
-   ============================================================ */
+/* ECharts React wrappers. Requires window.echarts (loaded lazily, see below). */
 const { useEffect, useRef, useState, useCallback, useMemo } = React;
 
-/* ── CSS-variable theme colours ────────────────────────────────────────── */
+/* ── CSS-variable theme colours ── */
 function themeVars() {
   const s = getComputedStyle(document.documentElement);
   const v = (n) => s.getPropertyValue(n).trim();
@@ -18,11 +15,10 @@ function themeVars() {
   };
 }
 
-/* ── lazy ECharts loader ────────────────────────────────────────────────────
-   ECharts (~1 MB) is no longer in index.html. It is injected on demand: the
-   dashboard prefetches it during idle time after first paint, and loads it
-   immediately when a chart view is opened. ensureECharts() is a singleton —
-   the <script> is added at most once and the same promise is reused. */
+/* ── lazy ECharts loader ──
+   ECharts (~1 MB) is not in index.html; it is injected on demand — prefetched on
+   idle after first paint, loaded immediately when a chart view opens.
+   Singleton: the <script> is added at most once and the promise is reused. */
 let __echartsPromise = null;
 function ensureECharts() {
   if (window.echarts) return Promise.resolve(window.echarts);
@@ -38,7 +34,7 @@ function ensureECharts() {
   return __echartsPromise;
 }
 
-/* ── shared ECharts mount hook ──────────────────────────────────────────── */
+/* ── shared ECharts mount hook ── */
 function useEChart(ref) {
   const chartRef = useRef(null);
   useEffect(() => {
@@ -77,18 +73,18 @@ function useEChart(ref) {
   return chartRef;
 }
 
-/* ── Loading skeleton ───────────────────────────────────────────────────── */
+/* ── Loading skeleton ── */
 function ChartLoading({ height = 420 }) {
   return <div className="echart-loading" style={{ height }}>Loading…</div>;
 }
 
-/* ── shared bits ────────────────────────────────────────────────────────── */
+/* ── shared bits ── */
 // right-aligned cluster for a card-head that also holds a control (seg) + meta
 const cardTools = { display: "flex", alignItems: "center", gap: 14, flexShrink: 0, flexWrap: "wrap", justifyContent: "flex-end" };
 // one-line explainer that sits directly under a card-head
 const cardDesc  = { margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.55, color: "var(--muted-s)", maxWidth: 640 };
 
-/* ── Timeline chart ─────────────────────────────────────────────────────── */
+/* ── Timeline chart ── */
 function TimelineChart({ active }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
@@ -157,7 +153,7 @@ function TimelineChart({ active }) {
   );
 }
 
-/* ── Artist Trajectory (line / stream + artist picker) ──────────────────── */
+/* ── Artist Trajectory (line / stream + artist picker) ── */
 function ArtistTrajectory({ active }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
@@ -274,7 +270,7 @@ function ArtistTrajectory({ active }) {
   );
 }
 
-/* ── Listening Map: calendar heatmap (per year) + hour×day grid ─────────── */
+/* ── Listening Map: calendar heatmap (per year) + hour×day grid ── */
 function ListeningMap({ active }) {
   const calRef  = useRef(null);
   const hwRef   = useRef(null);
@@ -291,8 +287,8 @@ function ListeningMap({ active }) {
     fetch("/api/time-of-day" + q)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
-        // First pass (year unknown): learn the available years, default to the
-        // most recent, and let the effect re-run with that year filter.
+        // First pass: learn the available years, default to the most recent, and
+        // let the effect re-run with that filter.
         if (year == null) {
           if (data.years && data.years.length) { setYears(data.years); setYear(data.years[data.years.length - 1]); }
           else setLoading(false);
@@ -383,7 +379,7 @@ function ListeningMap({ active }) {
   );
 }
 
-/* ── Audio Features: scatter + histograms ───────────────────────────────── */
+/* ── Audio Features: scatter + histograms ── */
 function AudioFeaturesChart({ active }) {
   const scRef   = useRef(null);
   const histRef = useRef(null);
@@ -491,7 +487,7 @@ function AudioFeaturesChart({ active }) {
   );
 }
 
-/* ── Saturation donut (folded into the Coverage page) ───────────────────── */
+/* ── Saturation donut (folded into the Coverage page) ── */
 function SaturationChart({ active }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
@@ -555,15 +551,15 @@ function SaturationChart({ active }) {
   );
 }
 
-/* ── Albums (most-played, with listening spread) ────────────────────────── */
+/* ── Albums (most-played, with listening spread) ── */
 function _albumHue(s) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % 360;
 }
-// Most-played albums, scored by total plays + how evenly listening spreads
-// across the album's tracks. Computed in-browser from the already-loaded
-// `tracks` (no /api/albums round-trip) — mirrors app/metrics.py::albums.
+// Scored by total plays + how evenly listening spreads across the album's tracks.
+// In-browser from the loaded `tracks` (no /api/albums round-trip); mirrors
+// app/metrics.py::albums.
 function computeAlbums(tracks, { top = 60, minTracks = 3 } = {}) {
   if (!tracks || !tracks.length) return [];
   const byAlbum = new Map();
@@ -656,7 +652,7 @@ function AlbumsPage({ active, tracks }) {
   );
 }
 
-/* ── Tag Constellation (force graph) ────────────────────────────────────── */
+/* ── Tag Constellation (force graph) ── */
 function TagConstellation({ active }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
@@ -833,7 +829,7 @@ function TagConstellation({ active }) {
   );
 }
 
-/* ── Forgotten Favorites sparkline (pure SVG, no ECharts) ──────────────── */
+/* ── Forgotten Favorites sparkline (pure SVG, no ECharts) ── */
 function FfSparkline({ sparkline, peakYear, recentStart }) {
   if (!sparkline || !sparkline.length) return null;
   const W = 120, H = 38, GAP = 2;
@@ -866,7 +862,7 @@ function FfSparkline({ sparkline, peakYear, recentStart }) {
   );
 }
 
-/* ── Forgotten Favorites page ───────────────────────────────────────────── */
+/* ── Forgotten Favorites page ── */
 function ForgottenFavoritesPage({ active, refreshVersion = 0 }) {
   const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(false);

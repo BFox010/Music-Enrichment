@@ -1,22 +1,18 @@
 """Last.fm folksonomy tag noise filtering.
 
-Last.fm community tags carry a lot of noise that pollutes genre/mood signal.
-This module drops four specific noise classes the owner flagged, while
-preserving genres, decades, and genuine descriptive/reaction tags:
+Drops four noise classes, keeping genres, decades, and real descriptors:
 
-  1. Radio-station tags     — e.g. "wsum 91.7 fm madison", "88.5 fm".
-  2. Artist-name-as-tag      — e.g. "kanye west", "drake" (matched against the
-                               library's own artist set so it adapts per run).
-  3. Personal-collection tags— e.g. "my top songs", "my favorites".
-  4. Specific-year tags      — e.g. "2016", "2022". Decades ("90s", "2010s",
-                               "00s") are intentionally KEPT.
+  1. Radio stations   — "wsum 91.7 fm madison", "88.5 fm"
+  2. Artist-as-tag    — "kanye west" (matched against the library's own artist
+                        set, so it adapts per run)
+  3. Personal lists   — "my top songs", "my favorites"
+  4. Specific years   — "2016". Decades ("90s", "2010s") are KEPT.
 
-Design bias is toward *under*-blocking: a small protected allowlist of
-genre/mood/reaction words guarantees real descriptors are never dropped even
-if they happen to coincide with an artist name.
+Biased toward *under*-blocking: a protected allowlist of genre/mood/reaction
+words guarantees real descriptors survive even when they collide with an
+artist name.
 
-Used by Phase 4 (``enrich_metadata``) to filter before writing, and by the
-one-off cleanup that scrubs already-written JSONL files.
+Used by Phase 4 before writing, and by the cleanup that scrubs written JSONL.
 """
 
 from __future__ import annotations
@@ -26,23 +22,19 @@ from collections.abc import Iterable
 
 from pipeline.normalize import normalize_artist
 
-# Bare 4-digit year, 1900–2099 → block. Decade forms ("90s", "2010s", "00s")
-# do not match this anchored pattern and therefore survive.
+# Bare 4-digit year. Anchored, so decade forms ("90s", "2010s") survive.
 _YEAR_RE = re.compile(r"^(?:19|20)\d{2}$")
 
-# A radio frequency embedded anywhere in the tag, e.g. "wsum 91.7 fm madison",
-# "88.5 fm", "1010 am". The digits-immediately-before-fm/am combo is the
-# station signature; requiring ≥2 leading digits keeps song-ish tags like
-# "3am" from matching.
+# Station signature: digits immediately before fm/am ("wsum 91.7 fm madison").
+# The ≥2-digit requirement keeps song-ish tags like "3am" from matching.
 _FREQ_RE = re.compile(r"\b\d{2,4}(?:\.\d+)?\s*(?:fm|am)\b", re.IGNORECASE)
 
-# Personal-collection tags: "my top songs", "my favorites", "my favourites".
+# "my top songs", "my favorites", ...
 _MY_RE = re.compile(r"^my\b", re.IGNORECASE)
 
-# Genre / mood / reaction words that must NEVER be dropped, even if they
-# coincide with an artist name in the library (e.g. the band "Muse", the
-# rapper "Future"). This only guards the artist-name rule — the year/radio/
-# "my" rules never hit these words anyway.
+# NEVER dropped, even when they collide with an artist in the library (the band
+# "Muse", the rapper "Future"). Guards the artist-name rule only — the other
+# three never hit these words.
 _PROTECTED_RAW = {
     # 14 mood categories
     "fast", "moody", "slow", "heavy bass", "dance", "sad", "groove",
@@ -75,20 +67,15 @@ def is_noise_tag(tag: object, artist_block: frozenset[str] = frozenset()) -> boo
     low = raw.lower()
     norm = normalize_artist(raw)
 
-    # Protected genre/mood/reaction words are always kept.
     if norm in _PROTECTED:
         return False
 
-    # 1. Specific year (decades survive — they don't match _YEAR_RE).
     if _YEAR_RE.match(low):
         return True
-    # 2. Radio-station frequency.
     if _FREQ_RE.search(low):
         return True
-    # 3. Personal-collection ("my …") tags.
     if _MY_RE.match(raw):
         return True
-    # 4. Artist-name-as-tag.
     if norm and norm in artist_block:
         return True
     return False

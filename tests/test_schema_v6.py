@@ -35,7 +35,7 @@ from pipeline.schema import (
 )
 
 
-# ── Registry + version constants ─────────────────────────────────────────
+# ── Registry + version constants ──
 
 
 class TestSchemaRegistry:
@@ -55,7 +55,7 @@ class TestSchemaRegistry:
             get_schema(999)
 
 
-# ── #63: blacklisted / rejected_reason are gone; isrc provenance added ────
+# ── #63: blacklisted / rejected_reason are gone; isrc provenance added ──
 
 
 class TestV6FieldRemovals:
@@ -82,7 +82,7 @@ class TestV6FieldRemovals:
         assert out["isrc_retrieved_at"] is None
 
 
-# ── _schema_version FIRST field discipline ───────────────────────────────
+# ── _schema_version FIRST field discipline ──
 
 
 class TestSchemaVersionFirstField:
@@ -115,7 +115,7 @@ class TestSchemaVersionFirstField:
         assert line.lstrip().startswith('{"_schema_version":')
 
 
-# ── Stable field order ────────────────────────────────────────────────────
+# ── Stable field order ──
 
 
 class TestStableFieldOrder:
@@ -134,7 +134,7 @@ class TestStableFieldOrder:
         assert a.index("artist") < a.index("track") < a.index("album")
 
 
-# ── Unknown / future-version fields ───────────────────────────────────────
+# ── Unknown / future-version fields ──
 
 
 class TestUnknownFieldsIgnored:
@@ -181,7 +181,7 @@ class TestUnknownFieldsIgnored:
         assert keys.index("future_unknown_field") > keys.index("enrichment_sources")
 
 
-# ── v6 roundtrip ──────────────────────────────────────────────────────────
+# ── v6 roundtrip ──
 
 
 class TestV6Roundtrip:
@@ -218,7 +218,7 @@ class TestV6Roundtrip:
             assert out[key] == row[key], f"mismatch on {key}"
 
 
-# ── Legacy / v4 reader compat ─────────────────────────────────────────────
+# ── Legacy / v4 reader compat ──
 
 
 class TestLegacyRecordCompat:
@@ -266,7 +266,7 @@ class TestLegacyRecordCompat:
         )
 
 
-# ── canonical_track_id priority chain ─────────────────────────────────────
+# ── canonical_track_id priority chain ──
 
 
 class TestCanonicalTrackId:

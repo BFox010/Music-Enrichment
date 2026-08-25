@@ -171,12 +171,10 @@ class TestIsrcVetoRespectsProvenance:
 
 
 class TestCanonicalIdIsStampedOnEveryRow:
-    """4e is the phase that decides identity, so it must set it on every row.
+    """4e decides identity, so it must stamp every row, singletons included.
 
-    Only merged clusters used to get one — 163 of 3255 rows on 2026-08-24 —
-    leaving the rest to fill_defaults() at Phase 8, which derived the id from
-    fields several later phases had already changed. Invariant 4 asks every
-    phase to preserve canonical_track_id; this is where it comes from.
+    Leaving the rest to fill_defaults() at Phase 8 derived the id from fields
+    later phases had already changed.
     """
 
     def test_singleton_row_gets_an_id(self):

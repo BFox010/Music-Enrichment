@@ -37,7 +37,7 @@ class TestExtractHelpers:
         assert _names_from_musicbrainz_artist({"_error": "max_retries"}) == []
 
 
-# ── Cascade (fake client, no network) ─────────────────────────────────────────
+# ── Cascade (fake client, no network) ──
 
 NOT_FOUND = {"_error": "not_found"}
 

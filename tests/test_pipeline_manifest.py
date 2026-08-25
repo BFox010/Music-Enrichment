@@ -33,7 +33,7 @@ def phases(manifest):
     return get_phases(manifest)
 
 
-# ── Manifest loads and is structurally valid ──────────────────────────────
+# ── Manifest loads and is structurally valid ──
 
 
 class TestManifestStructure:
@@ -93,7 +93,7 @@ class TestManifestStructure:
             )
 
 
-# ── Known phases are present ──────────────────────────────────────────────
+# ── Known phases are present ──
 
 
 class TestExpectedPhases:
@@ -119,7 +119,7 @@ class TestExpectedPhases:
         )
 
 
-# ── Anti-drift: README phase table matches manifest ────────────────────────
+# ── Anti-drift: README phase table matches manifest ──
 
 _README_ROW_RE = re.compile(
     r"^\|\s*(\S+)\s*\|\s*(?:\[(\w+)\]\([^)]+\)|_\(manual[^)]*\)_)\s*\|",
@@ -179,7 +179,7 @@ class TestReadmeAntiDrift:
                 )
 
 
-# ── Anti-drift: orchestrator execution order matches manifest ─────────────
+# ── Anti-drift: orchestrator execution order matches manifest ──
 
 
 class TestOrchestratorAntiDrift:
@@ -207,7 +207,7 @@ class TestOrchestratorAntiDrift:
         assert _PHASES is get_phases(_MANIFEST)
 
 
-# ── Module importability ──────────────────────────────────────────────────
+# ── Module importability ──
 
 
 class TestModuleImports:
@@ -254,7 +254,7 @@ class TestModuleImports:
         )
 
 
-# ── Anti-drift: accepts_force matches the real signatures ─────────────────
+# ── Anti-drift: accepts_force matches the real signatures ──
 
 
 class TestAcceptsForceAntiDrift:
@@ -461,7 +461,7 @@ class TestForceCliParsing:
             _parse_args(["--force", "--force-errors"])
 
 
-# ── find_phase_index helper ───────────────────────────────────────────────
+# ── find_phase_index helper ──
 
 
 class TestFindPhaseIndex:

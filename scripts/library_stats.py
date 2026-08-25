@@ -58,7 +58,7 @@ def main(top: int = 20) -> None:
         last = max(years.keys())
         print(f"  Scrobble range: {first}-{last}")
 
-    # ── Coverage ─────────────────────────────────────────────────────────
+    # ── Coverage ──
     _print_header("Coverage")
     fields = [
         ("Last.fm tags", "lastfm_tags"),
@@ -76,7 +76,7 @@ def main(top: int = 20) -> None:
         pct = n / len(tracks) * 100
         print(f"  {label:25s} {n:>6}  ({pct:>4.1f}%)  {_bar(n, len(tracks), 30)}")
 
-    # ── Top artists by play count ────────────────────────────────────────
+    # ── Top artists by play count ──
     _print_header(f"Top {top} artists by total plays")
     artist_plays: Counter[str] = Counter()
     for t in tracks:
@@ -85,7 +85,7 @@ def main(top: int = 20) -> None:
     for artist, plays in artist_plays.most_common(top):
         print(f"  {plays:>6}  {_bar(plays, max_plays, 20)}  {artist}")
 
-    # ── Top tracks by play count ─────────────────────────────────────────
+    # ── Top tracks by play count ──
     _print_header(f"Top {top} tracks by play count")
     by_plays = sorted(tracks, key=lambda t: -int(t.get("play_count") or 0))[:top]
     max_plays = int(by_plays[0].get("play_count") or 0) if by_plays else 0
@@ -94,7 +94,7 @@ def main(top: int = 20) -> None:
         print(f"  {plays:>4}  {_bar(plays, max_plays, 20)}  "
               f"{t['artist'][:30]:30s}  {t['track'][:40]}")
 
-    # ── Top Last.fm tags ─────────────────────────────────────────────────
+    # ── Top Last.fm tags ──
     _print_header(f"Top {top} Last.fm tags")
     tag_counts: Counter[str] = Counter()
     for t in tracks:
@@ -104,7 +104,7 @@ def main(top: int = 20) -> None:
     for tag, n in tag_counts.most_common(top):
         print(f"  {n:>5}  {_bar(n, max_n, 20)}  {tag}")
 
-    # ── iTunes genres ────────────────────────────────────────────────────
+    # ── iTunes genres ──
     _print_header("iTunes genres (122 matched tracks)")
     itunes_genres: Counter[str] = Counter(
         t["itunes_genre"] for t in tracks if t.get("itunes_genre")
@@ -116,7 +116,7 @@ def main(top: int = 20) -> None:
     else:
         print("  (no iTunes-genre tags yet)")
 
-    # ── Year distribution (release year) ─────────────────────────────────
+    # ── Year distribution (release year) ──
     _print_header("Release year distribution")
     decades: Counter[str] = Counter()
     for t in tracks:
@@ -132,7 +132,7 @@ def main(top: int = 20) -> None:
     else:
         print("  (no release_year data yet — comes from iTunes / Exportify)")
 
-    # ── Listening-time patterns from scrobbles ───────────────────────────
+    # ── Listening-time patterns from scrobbles ──
     if scrobbles:
         _print_header("Listening pattern by hour of day (UTC)")
         by_hour: Counter[int] = Counter(s["hour"] for s in scrobbles)
@@ -156,7 +156,7 @@ def main(top: int = 20) -> None:
             n = by_season.get(season, 0)
             print(f"  {season:8s} {n:>5}  {_bar(n, max_n, 40)}")
 
-    # ── Mood distribution (when available) ───────────────────────────────
+    # ── Mood distribution (when available) ──
     mood_counts: Counter[str] = Counter()
     for t in tracks:
         for m in t.get("mood_tags") or []:
@@ -167,7 +167,7 @@ def main(top: int = 20) -> None:
         for mood, n in mood_counts.most_common():
             print(f"  {n:>5}  {_bar(n, max_n, 25)}  {mood}")
 
-    # ── iTunes vs Last.fm play counts (top 10) ───────────────────────────
+    # ── iTunes vs Last.fm play counts (top 10) ──
     itunes_overlap = [t for t in tracks
                       if t.get("itunes_play_count") and t.get("play_count")]
     if itunes_overlap:

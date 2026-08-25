@@ -20,11 +20,9 @@ DISPLAY_COLUMNS: list[str] = [
     "first_scrobbled", "last_scrobbled",
 ]
 
-# Fields the web dashboard's client-side code (web/dashboard.jsx::normalizeTrack +
-# the chart/explorer components) actually reads off each raw track. The canonical
-# tracks.jsonl carries ~40 fields/row; the browser only needs these, so the
-# /tracks.min.jsonl route projects to this set to shrink the first-paint payload.
-# Nothing is lost — tracks.jsonl on disk and the /api/* endpoints keep every field.
+# The only raw-track fields the client reads (dashboard.jsx::normalizeTrack plus
+# the chart/explorer components). /tracks.min.jsonl projects to this set to shrink
+# the first-paint payload; tracks.jsonl and /api/* still carry every field.
 MIN_TRACK_FIELDS: tuple[str, ...] = (
     "artist", "track", "album", "release_year",
     "genres", "lastfm_tags", "discogs_styles",
@@ -32,12 +30,12 @@ MIN_TRACK_FIELDS: tuple[str, ...] = (
     "play_count", "peak_year",
     "first_scrobbled", "last_scrobbled",
     "apple_music_available", "enrichment_sources", "saturation_tier", "playlists",
-    # join keys used to attach scrobble-derived play windows + drill-downs client-side
+    # join keys for the client-side scrobble cross-join
     "artist_normalized", "track_normalized",
 )
 
-# Only these audio-feature sub-fields are charted client-side; the rest (tempo,
-# loudness, speechiness, …) are used server-side by /api/audio-features only.
+# Charted client-side. The rest (tempo, loudness, …) stay server-side in
+# /api/audio-features.
 _MIN_AUDIO_FEATURES: tuple[str, ...] = (
     "energy", "valence", "danceability", "acousticness",
 )

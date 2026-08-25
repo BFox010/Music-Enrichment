@@ -12,7 +12,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 
-# ── Unit: refresh() calls each step in order ─────────────────────────────────
+# ── Unit: refresh() calls each step in order ──
 
 class TestRefresh:
     def _run(self, coro):
@@ -164,7 +164,7 @@ class TestRefresh:
         self._run(scenario())
 
 
-# ── API: POST /api/refresh ────────────────────────────────────────────────────
+# ── API: POST /api/refresh ──
 
 class TestApiRefresh:
     @pytest.fixture
@@ -219,7 +219,7 @@ class TestApiRefresh:
         assert "already running" in r.json()["detail"]
 
 
-# ── Unit: export_pending() ────────────────────────────────────────────────────
+# ── Unit: export_pending() ──
 
 class TestExportPending:
     def _make_tracks(self, path: Path, tracks: list[dict]) -> None:

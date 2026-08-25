@@ -1,27 +1,15 @@
-/* ============================================================
-   motion.js — shared motion primitives for the dashboard.
+/* Shared motion primitives, exposed as window.MOTION. Loaded as <script> before
+   app.bundle.js (like data-processing.js). Framework-free: React calls in, never out.
 
-   Loaded as a plain <script> before app.bundle.js (same pattern as
-   data-processing.js), so everything here is available to the JSX as
-   window.MOTION. Deliberately framework-free: the React side only ever calls
-   into it, never the other way round.
+   1. pointer loop — card spotlight + magnetic pull. One listener, one rAF, idle = zero work.
+   2. FLIP helpers — re-ranked lists travel to their new order.
+   3. View Transitions wrapper for page switches.
 
-   Three things live here:
-
-     1. A single pointer loop that drives the card spotlight and the magnetic
-        pull on small controls. One listener, one rAF, zero work when idle.
-     2. FLIP helpers, so a list that re-ranks under a filter travels to its new
-        order instead of blinking to it.
-     3. A View Transitions wrapper for page switches.
-
-   All three are inert under `prefers-reduced-motion: reduce`, and the pointer
-   loop is additionally inert for coarse pointers (touch), where proximity has
-   no meaning.
-   ============================================================ */
+   All inert under prefers-reduced-motion; (1) also inert for coarse pointers. */
 (function () {
   "use strict";
 
-  /* ---------- capability + preference gates ---------- */
+  /* ── capability + preference gates ── */
   const mqReduce = window.matchMedia("(prefers-reduced-motion: reduce)");
   const mqFine = window.matchMedia("(hover: hover) and (pointer: fine)");
 
@@ -33,13 +21,11 @@
   };
   const pointerActive = () => state.fine && !state.reduced && state.pointerFx;
 
-  /* ---------- 1. pointer loop: spotlight + magnetism ---------- */
+  /* ── 1. pointer loop: spotlight + magnetism ── */
 
-  /* The pointer effects are scoped to whatever container the cursor is in.
-     Keeping the working set to one container is what makes this cheap: we read
-     layout once on entry (a handful of rects) and then do pure arithmetic per
-     frame, instead of measuring the whole page. It is also the restraint —
-     exactly one card is ever lit. */
+  /* Scoped to whichever container the cursor is in. That is what makes it cheap:
+     one layout read on entry, then pure arithmetic per frame instead of measuring
+     the page. It is also the restraint — exactly one card is ever lit. */
   const SCOPE_SEL = ".card, .kpi, .appbar, .sidebar, .filterbar, .drill-panel, .kpis";
   const SPOTLIGHT_SEL = ".card, .kpi";
   const MAGNET_SEL = [
@@ -47,10 +33,9 @@
     ".season.clickable", ".sidenav-item", ".seg button", ".fb-clear",
   ].join(", ");
 
-  // Pull radius and peak displacement. 4px is the ceiling on purpose: at this
-  // amplitude the lean registers as responsiveness rather than as a toy.
-  // The radius is measured from the element's edge, not its centre, so a wide
-  // button and a small chip both start responding at the same visual distance.
+  // 4px is the ceiling on purpose — at this amplitude the lean reads as
+  // responsiveness, not as a toy. RADIUS measures from the element's EDGE, not its
+  // centre, so a wide button and a small chip respond at the same distance.
   const RADIUS = 72;
   const STRENGTH = 4;
   const EASE = 0.22;      // per-frame approach to the target (critically-damped feel)
@@ -80,7 +65,7 @@
     if (!el) return;
     spotEl = el.matches(SPOTLIGHT_SEL) ? el : null;
     if (spotEl) spotEl.classList.add("lit");
-    // One layout read per scope entry, cached for as long as the cursor stays.
+    // One layout read per scope entry, cached while the cursor stays.
     magnets = Array.from(el.querySelectorAll(MAGNET_SEL)).map((node) => {
       const r = node.getBoundingClientRect();
       return {
@@ -97,8 +82,7 @@
     let moving = false;
 
     if (spotEl) {
-      // Written as CSS custom properties so the highlight itself is pure CSS;
-      // JS never touches the gradient.
+      // Custom properties only — the gradient itself is pure CSS.
       const r = spotEl.getBoundingClientRect();
       spotEl.style.setProperty("--mx", (px - r.left).toFixed(1) + "px");
       spotEl.style.setProperty("--my", (py - r.top).toFixed(1) + "px");
@@ -107,9 +91,9 @@
     for (const m of magnets) {
       let tx = 0, ty = 0;
       if (scopeEl) {
-        // Falloff is keyed to the gap to the element's box (zero once the
-        // cursor is over it); the direction comes from the centre, so an
-        // element under the cursor leans toward it rather than going slack.
+        // Falloff keys off the gap to the box (zero once the cursor is over it);
+        // direction comes from the centre, so an element under the cursor leans
+        // toward it instead of going slack.
         const gx = px < m.l ? m.l - px : px > m.r ? px - m.r : 0;
         const gy = py < m.t ? m.t - py : py > m.b ? py - m.b : 0;
         const gap = Math.sqrt(gx * gx + gy * gy);
@@ -129,15 +113,15 @@
         if (m.el.style.translate) m.el.style.translate = "";
         m.x = 0; m.y = 0;
       } else {
-        // The `translate` property composes independently of `transform`, so
-        // this never fights the hover transforms already in themes.css.
+        // `translate` composes independently of `transform`, so this never fights
+        // the hover transforms in themes.css.
         m.el.style.translate = m.x.toFixed(2) + "px " + m.y.toFixed(2) + "px";
         moving = true;
       }
     }
 
-    // Idle means idle: with nothing lit and everything settled, the loop stops
-    // entirely rather than spinning at 60fps behind a static page.
+    // Idle means idle — the loop stops rather than spinning at 60fps behind a
+    // static page.
     if (moving || spotEl) raf = requestAnimationFrame(frame);
   }
 
@@ -161,8 +145,8 @@
   document.addEventListener("pointermove", onPointerMove, { passive: true });
   document.addEventListener("pointerleave", release, { passive: true });
   document.addEventListener("pointerdown", release, { passive: true });
-  // Cached rects go stale the moment the page scrolls or reflows; dropping the
-  // scope is cheaper than re-measuring, and the next pointermove rebuilds it.
+  // Rects go stale on scroll/reflow. Dropping the scope is cheaper than
+  // re-measuring; the next pointermove rebuilds it.
   window.addEventListener("scroll", release, { passive: true, capture: true });
   window.addEventListener("resize", release, { passive: true });
   window.addEventListener("blur", release);
@@ -173,9 +157,9 @@
   mqReduce.addEventListener("change", (e) => { state.reduced = e.matches; syncPointerGate(); });
   mqFine.addEventListener("change", (e) => { state.fine = e.matches; syncPointerGate(); });
 
-  /* ---------- 2. FLIP: lists that travel to their new order ---------- */
+  /* ── 2. FLIP: lists that travel to their new order ── */
 
-  /* Used by the ranked lists in charts.jsx. The point is legibility, not
+  /* Used by charts.jsx's ranked lists. The point is legibility, not
      decoration: when a filter re-ranks the top artists you get to watch which
      rows survived and which collapsed, instead of diffing two static frames
      from memory. */
@@ -198,8 +182,7 @@
     const els = container.querySelectorAll(FLIP_SEL);
     let entered = 0;
     els.forEach((el) => {
-      // A second filter click interrupts the first rather than queueing behind
-      // it, so rapid clicking stays responsive instead of feeling laggy.
+      // A second click interrupts the first instead of queueing behind it.
       for (const a of el.getAnimations()) if (a.id === "flip") a.cancel();
       const before = prev.get(el.dataset.flipKey);
       const r = el.getBoundingClientRect();
@@ -221,7 +204,7 @@
     });
   }
 
-  /* ---------- 3. View Transitions for page switches ---------- */
+  /* ── 3. View Transitions for page switches ── */
 
   /* Falls back to a plain call everywhere it is not supported or not wanted,
      so the caller never has to branch. */

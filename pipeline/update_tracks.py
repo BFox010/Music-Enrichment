@@ -1,14 +1,12 @@
 """Phase 8 — final merge into canonical tracks.jsonl.
 
-Reads the latest available intermediate (preferring the deepest in the
-enrichment chain) and writes/updates ``tracks.jsonl``. On re-runs:
-  - Human-edited fields (curation_state) are PRESERVED
-  - Higher-confidence mood data is PRESERVED over fresher centroid passes
-  - All other enrichment fields are UPDATED from the new pass
-  - enrichment_sources is recomputed each run; enriched_at is bumped only for
-    rows whose data actually changed (so reruns don't churn every line)
+Reads the deepest available intermediate and merges it into ``tracks.jsonl``.
+On re-runs: human-edited fields and higher-confidence mood data are PRESERVED,
+everything else is UPDATED. ``enrichment_sources`` is recomputed every run;
+``enriched_at`` is bumped only for rows that actually changed, so a no-op regen
+doesn't churn every line.
 
-Schema is validated before write — aborts if invalid rows are present.
+Validates the schema before writing — aborts on invalid rows.
 
 Usage:
     python -m pipeline.update_tracks
@@ -58,7 +56,7 @@ _INPUT_PRIORITY: list[Path] = [
     TRACKS_SKELETON_PATH,
 ]
 
-# Map presence of fields → which sources contributed
+# Field present ⇒ these sources contributed.
 _SOURCE_TRIGGERS: dict[str, list[str]] = {
     "lastfm_tags": ["lastfm_tags"],
     "musicbrainz_id": ["musicbrainz"],
@@ -90,24 +88,18 @@ def _load_jsonl(path: Path) -> list[dict]:
 def _candidate_keys(row: dict, context: str) -> list[tuple[str, str]]:
     """Identity candidates for the merge, strongest first.
 
-    Neither key alone is sufficient, because both move for reasons that have
-    nothing to do with the track changing:
+    Neither key alone is sufficient — both move for reasons unrelated to the
+    track changing:
 
-    - The **normalized name pair** moves whenever normalization improves. #27's
-      feat-credit work rewrote it on 183 rows; keyed on names alone the merge
-      saw 183 brand-new tracks and dropped the human-edited fields that live
-      only in tracks.jsonl — 54 rows lost curation_state, 49 lost mood labels.
-    - The **canonical id** moves as the identity chain promotes a row. It is not
-      carried through the intermediates (Phase 4e stamps it on the few rows it
-      clusters; fill_defaults computes the rest at write time), so it is derived
-      fresh each run from whatever identity fields exist *then*. Phase 5a
-      resolving an ISRC re-keys a row from ``norm:…`` to ``isrc:…`` — measured
-      against this library, keying on it alone matched 2608 rows where the name
-      pair matched 3105.
+    - The **name pair** moves whenever normalization improves. #27's feat-credit
+      work rewrote it on 183 rows; on names alone the merge saw 183 brand-new
+      tracks and dropped human-edited fields that exist only in tracks.jsonl.
+    - The **canonical id** moves as the identity chain promotes a row: 5a
+      resolving an ISRC re-keys it ``norm:…`` → ``isrc:…``.
 
-    Trying both matched 3172 — more than either alone. An existing row is
-    claimed at most once, so a promoted id can't pull two source rows onto the
-    same track.
+    Measured on this library, each alone matched fewer rows than the two
+    together. An existing row is claimed at most once, so a promoted id cannot
+    pull two source rows onto the same track.
     """
     keys: list[tuple[str, str]] = []
 
@@ -141,8 +133,8 @@ def _index_by_key(rows: list[dict]) -> dict[tuple[str, str], dict]:
             raise ValueError(f"duplicate existing track key {primary!r}")
         seen_primary.add(primary)
         for candidate in candidates:
-            # First row wins an ambiguous key rather than silently replacing the
-            # earlier one; the loser is still reachable by its other candidate.
+            # First row wins an ambiguous key; the loser is still reachable by
+            # its other candidate.
             index.setdefault(candidate, row)
     return index
 
@@ -167,14 +159,13 @@ def _enrichment_sources(row: dict) -> list[str]:
     sources: list[str] = []
     for trigger, src_list in _SOURCE_TRIGGERS.items():
         value = row.get(trigger)
-        if value:  # non-empty/non-None
+        if value:
             for src in src_list:
                 if src not in sources:
                     sources.append(src)
 
-    # audio_features and isrc each carry their own provenance (Exportify vs.
-    # ReccoBeats; MusicBrainz vs. Deezer vs. Spotify Search) rather than a
-    # fixed trigger — read the actual source instead of assuming one.
+    # audio_features and isrc carry their own provenance, so read the actual
+    # source rather than mapping from a fixed trigger.
     af = row.get("audio_features")
     if isinstance(af, dict) and af.get("source") and af["source"] not in sources:
         sources.append(af["source"])
@@ -185,33 +176,24 @@ def _enrichment_sources(row: dict) -> list[str]:
     return sources
 
 
-# Identity fields: fill a gap, never overwrite. These feed
-# compute_canonical_track_id() and Phase 4e's clustering, so churn here would
-# reshuffle which rows merge from one run to the next. Scrobble-derived MBIDs
-# are welcome where a track has none and must not displace one that a
-# dedicated enrichment lookup already established.
+# Fill a gap, never overwrite. These feed compute_canonical_track_id() and 4e's
+# clustering, so churn reshuffles which rows merge between runs. A scrobble-derived
+# MBID may fill a blank but must not displace a dedicated lookup's answer.
 _FILL_ONLY_FIELDS: frozenset[str] = frozenset({"musicbrainz_id", "artist_mbid", "isrc"})
 
-# Fields where an explicit null from the incoming row means "there is no value"
-# rather than "this file didn't carry the field". Phase 6 sets all of these on
-# every row it processes, so a null here is a deliberate verdict.
+# An explicit null here means "no value", not "this file lacked the field" —
+# Phase 6 sets all of them on every row it touches, so null is a verdict.
 _AUTHORITATIVE_NULL_FIELDS: frozenset[str] = frozenset(
     {"mood_tags", "mood_source", "mood_confidence", "mood_distance"}
 )
 
 
 def _merge_with_existing(new: dict, existing: dict | None) -> dict:
-    """Merge a freshly enriched row with the existing tracks.jsonl row.
+    """Merge a freshly enriched row into the existing tracks.jsonl row.
 
-    Rules in priority order:
-    1. Human-edited fields: existing always wins if set
-    2. Higher-confidence mood data: existing wins (claude_batch/manual)
-    3. Locked/approved playlist memberships: existing wins
-    4. Any other field: NEW value wins UNLESS new is None/empty,
-       in which case existing wins. This preserves enrichment from
-       earlier intermediate files when a later phase didn't carry
-       those fields forward (e.g. mood phase reading from a file
-       that lacked Apple Music availability).
+    Priority: (1) human-edited fields, (2) higher-confidence mood
+    (audit/claude_batch/manual), then (3) new wins unless it is None/empty — which
+    keeps enrichment a later phase simply didn't carry forward.
     """
     if existing is None:
         return new
@@ -220,16 +202,14 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     merged: dict = dict(existing)
     for key, new_value in new.items():
         if new_value is None:
-            # A null mood from Phase 6 is a verdict, not a gap: the classifier
-            # declines to guess moods the audio features cannot predict, and
-            # that blank has to survive the merge. Rule 4 exists for fields a
-            # later intermediate simply didn't carry, which shows up as the key
-            # being absent rather than explicitly null.
+            # A null mood from Phase 6 is a verdict, not a gap — the classifier
+            # declined to guess, and that blank must survive. Rule 3 is for fields
+            # an intermediate didn't carry, which arrive as an *absent* key.
             if key in _AUTHORITATIVE_NULL_FIELDS:
                 merged[key] = None
             continue
         if isinstance(new_value, (list, dict)) and len(new_value) == 0:
-            # Empty list/dict from new → keep existing if existing has content
+            # Empty container from new never clears a populated existing one.
             if merged.get(key):
                 continue
         if key in _FILL_ONLY_FIELDS and merged.get(key):
@@ -241,9 +221,8 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         if existing.get(field) is not None:
             merged[field] = existing[field]
 
-    # Preserve high-quality mood data. "audit" is included because those are
-    # the owner's own judgements — the training signal the whole classifier is
-    # built on. A fresher centroid pass must never overwrite one.
+    # "audit" counts as high-quality: it is the owner's own labelling and the
+    # classifier's training signal. A fresher centroid pass must never overwrite it.
     existing_source = existing.get("mood_source")
     new_source = new.get("mood_source")
     if existing_source in ("audit", "claude_batch", "manual") and new_source != existing_source:
@@ -251,10 +230,9 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         merged["mood_source"] = existing_source
         merged["mood_confidence"] = existing.get("mood_confidence")
 
-    # playlists comes from taste_profile.md via Phase 7, not from hand-editing, so
-    # always take the latest Phase 7 output — preserving it here would strand tracks
-    # in sections the markdown no longer has. curation_state is the human-edited half
-    # and is covered by HUMAN_EDITED_FIELDS.
+    # playlists is derived from taste_profile.md by Phase 7, not hand-edited, so the
+    # latest output always wins — preserving it strands tracks in sections the
+    # markdown no longer has. curation_state is the hand-edited half (HUMAN_EDITED_FIELDS).
     merged["playlists"] = list(new.get("playlists") or [])
 
     return merged

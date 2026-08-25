@@ -15,9 +15,8 @@ useful fields that aren't in the Last.fm scrobble export:
 - itunes_persistent_id ← Persistent ID (local library UUID, NOT Apple Music streaming ID)
 - itunes_kind        ← Kind ("Apple Music AAC audio file", "Purchased AAC audio file", etc.)
 
-Match strategy: normalize (artist, track) on both sides and look up.
-Multiple iTunes entries with the same join key are merged: take max(play_count),
-max(skip_count), most recent date_added/last_played.
+Joins on normalized (artist, track); entries sharing a key are merged by
+``_merge_apple_blocks``.
 
 Usage:
     python -m pipeline.enrich_apple_library
@@ -109,12 +108,8 @@ def _record_to_apple_block(record: dict) -> dict | None:
 
 
 def _merge_apple_blocks(blocks: list[dict]) -> dict:
-    """Merge multiple iTunes entries that share the same join key.
-
-    - Counters (play_count, skip_count): take MAX
-    - Dates (date_added): take EARLIEST (when track was first added)
-    - Dates (last_played): take LATEST
-    - Other scalar fields: prefer non-null, prefer most recent record otherwise
+    """Merge iTunes entries sharing a join key: MAX counters, EARLIEST date_added,
+    LATEST last_played, first non-null for other scalars.
     """
     if len(blocks) == 1:
         return blocks[0]
