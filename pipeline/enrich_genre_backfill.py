@@ -28,6 +28,7 @@ import json
 import os
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -171,6 +172,7 @@ def enrich(
         "still_empty": 0,
     }
     t0 = time.monotonic()
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
     # finally, not trailing calls: an interrupt mid-loop must still persist
     # every response already paid for — MusicBrainz is capped at 1 req/s.
@@ -199,8 +201,14 @@ def enrich(
                     break
             track["lastfm_artist_tags"] = la_tags
 
+            backfill_source: str | None = None
+            confidence: str | None = None
             if genres:
                 stats["recovered_lastfm_artist"] += 1
+                backfill_source = "lastfm_artist"
+                # The primary-artist retry drops the rest of a collab credit, so
+                # the genre is the lead artist's, not necessarily this track's.
+                confidence = "low" if via_first_artist else "medium"
                 if via_first_artist:
                     stats["recovered_via_first_artist"] += 1
             elif track.get("artist_mbid"):
@@ -210,6 +218,17 @@ def enrich(
                 genres = _genres_from_tags(mb_names)
                 if genres:
                     stats["recovered_musicbrainz"] += 1
+                    backfill_source = "musicbrainz_artist"
+                    confidence = "medium"
+
+            # Written for every gap row, recovered or not: a null source means
+            # 4d looked and found nothing, which an absent block cannot express.
+            track["genre_backfill"] = {
+                "source": backfill_source,
+                "retrieved_at": today,
+                "pipeline_phase": "4d",
+                "confidence": confidence,
+            }
 
             track["genres"] = genres
             if not genres:

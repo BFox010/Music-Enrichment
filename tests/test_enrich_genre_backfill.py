@@ -159,3 +159,82 @@ def test_still_empty_when_all_sources_miss(monkeypatch) -> None:
     rows, stats = _run([track], {}, monkeypatch)  # everything NOT_FOUND
     assert rows[0]["genres"] == []
     assert stats["still_empty"] == 1
+
+
+class TestBackfillProvenance:
+    """#73: Phase 4d recorded nothing about where an artist-level genre came
+    from, so "4d looked and found nothing" and "4d never saw this row" were
+    indistinguishable — the ambiguity that blocks diagnosing the genre gap.
+    """
+
+    def test_lastfm_route_records_its_provenance(self, monkeypatch) -> None:
+        track = _track("A$AP Rocky", "asap rocky")
+        responses = {"artisttags|asap rocky": {"toptags": {"tag": [{"name": "Hip-Hop"}]}}}
+        rows, _ = _run([track], responses, monkeypatch)
+        block = rows[0]["genre_backfill"]
+        assert block["source"] == "lastfm_artist"
+        assert block["pipeline_phase"] == "4d"
+        assert block["confidence"] == "medium"
+        assert block["retrieved_at"]
+
+    def test_musicbrainz_route_records_its_provenance(self, monkeypatch) -> None:
+        track = _track("Obscure", "obscure", artist_mbid="mbid-9")
+        responses = {
+            "artisttags|obscure": {"toptags": {"tag": []}},
+            "mbartist|mbid-9": {"genres": [{"name": "jazz"}]},
+        }
+        rows, _ = _run([track], responses, monkeypatch)
+        assert rows[0]["genre_backfill"]["source"] == "musicbrainz_artist"
+
+    def test_primary_artist_retry_is_marked_lower_confidence(self, monkeypatch) -> None:
+        """That retry drops the rest of a collab credit, so the genre is the
+        lead artist's and not necessarily this track's."""
+        track = _track("A$AP NAST & D33J", "asap nast & d33j")
+        responses = {
+            "artisttags|asap nast & d33j": {"toptags": {"tag": []}},
+            "artisttags|a ap nast": {"toptags": {"tag": [{"name": "Hip-Hop"}]}},
+        }
+        rows, _ = _run([track], responses, monkeypatch)
+        assert rows[0]["genre_backfill"]["confidence"] == "low"
+
+    def test_examined_but_empty_is_distinguishable_from_never_seen(self, monkeypatch) -> None:
+        """The acceptance criterion: a null source is a verdict, an absent
+        block means 4d never visited the row."""
+        examined = _track("Ghost", "ghost", artist_mbid="mbid-0")
+        never_seen = _track("Tagged", "tagged", genres=["Rock"])
+        rows, _ = _run([examined, never_seen], {}, monkeypatch)
+        by = {r["artist"]: r for r in rows}
+
+        assert by["Ghost"]["genre_backfill"]["source"] is None
+        assert by["Ghost"]["genre_backfill"]["pipeline_phase"] == "4d"
+        assert "genre_backfill" not in by["Tagged"]
+
+    def test_enrichment_sources_distinguishes_the_two_routes(self) -> None:
+        from pipeline.update_tracks import _enrichment_sources
+
+        lastfm_row = {"genre_backfill": {"source": "lastfm_artist"}}
+        mb_row = {"genre_backfill": {"source": "musicbrainz_artist"}}
+        examined = {"genre_backfill": {"source": None}}
+
+        assert "lastfm_artist_tags" in _enrichment_sources(lastfm_row)
+        assert "musicbrainz_artist" in _enrichment_sources(mb_row)
+        # Examined-and-empty contributed nothing, so it earns no marker.
+        assert _enrichment_sources(examined) == []
+
+    def test_backfill_fields_survive_the_schema_write_order(self) -> None:
+        from pipeline.schema import FIELD_DEFAULTS, _order_for_emit, fill_defaults
+
+        for name in ("lastfm_artist_tags", "musicbrainz_genres", "genre_backfill"):
+            assert name in FIELD_DEFAULTS, f"{name} missing from FIELD_DEFAULTS"
+
+        row = {
+            "artist": "X", "track": "Y",
+            "artist_normalized": "x", "track_normalized": "y",
+            "musicbrainz_genres": ["jazz"], "lastfm_artist_tags": ["rap"],
+            "genre_backfill": {"source": "musicbrainz_artist", "retrieved_at": "2026-08-25",
+                               "pipeline_phase": "4d", "confidence": "medium"},
+        }
+        out = _order_for_emit(fill_defaults(row))
+        assert out["musicbrainz_genres"] == ["jazz"]
+        assert out["lastfm_artist_tags"] == ["rap"]
+        assert out["genre_backfill"]["source"] == "musicbrainz_artist"
