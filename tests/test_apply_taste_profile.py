@@ -182,3 +182,150 @@ class TestApplyManifest:
         )]
         apply_manifest(tracks, manifest)
         assert tracks[0]["saturation_tier"] == 1
+
+
+class TestUnmatchedProfileEntries:
+    """#65: Phase 7 counted what it set, never what matched nothing, so a typo
+    in taste_profile.md was indistinguishable from a track never scrobbled and
+    the profile could rot indefinitely with no signal.
+    """
+
+    @staticmethod
+    def _manifest(**playlists) -> dict:
+        return {"tier_by_artist": {}, "playlists": dict(playlists)}
+
+    def test_feat_suffix_in_profile_is_recovered(self) -> None:
+        from pipeline.apply_taste_profile import resolve_playlist_entries
+
+        entry = {"playlists": ["uplifting"], "curation_state": "locked",
+                 "raw_artist": "Gorillaz", "raw_track": "Some Kind of Nature (feat. Lou Reed)"}
+        manifest = {"tier_by_artist": {},
+                    "playlists": {("gorillaz", "some kind of nature feat lou reed"): entry}}
+        known = {("gorillaz", "some kind of nature")}
+
+        resolved, unmatched = resolve_playlist_entries(manifest, known)
+        assert unmatched == []
+        assert resolved[("gorillaz", "some kind of nature")] == entry
+
+    def test_collab_credit_falls_back_to_the_primary_artist(self) -> None:
+        from pipeline.apply_taste_profile import resolve_playlist_entries
+
+        entry = {"playlists": ["moody"], "curation_state": None,
+                 "raw_artist": "La Roux & Gamper & Dadoni", "raw_track": "Bulletproof"}
+        manifest = {"tier_by_artist": {},
+                    "playlists": {("la roux and gamper and dadoni", "bulletproof"): entry}}
+        known = {("la roux", "bulletproof")}
+
+        resolved, unmatched = resolve_playlist_entries(manifest, known)
+        assert unmatched == []
+        assert ("la roux", "bulletproof") in resolved
+
+    def test_a_genuine_miss_is_reported_not_invented(self) -> None:
+        """A track the owner never scrobbled must stay unmatched, not be
+        force-fitted onto some other row."""
+        from pipeline.apply_taste_profile import resolve_playlist_entries
+
+        entry = {"playlists": ["uplifting"], "curation_state": "locked",
+                 "raw_artist": "AWOLNATION", "raw_track": "Miracle Man"}
+        manifest = {"tier_by_artist": {},
+                    "playlists": {("awolnation", "miracle man"): entry}}
+        known = {("oliver tree", "miracle man")}   # same title, different artist
+
+        resolved, unmatched = resolve_playlist_entries(manifest, known)
+        assert resolved == {}
+        assert len(unmatched) == 1
+        assert unmatched[0]["artist"] == "AWOLNATION"
+        assert unmatched[0]["playlists"] == ["uplifting"]
+        assert unmatched[0]["curation_state"] == "locked"
+
+    def test_a_direct_hit_is_never_rerouted(self) -> None:
+        from pipeline.apply_taste_profile import resolve_playlist_entries
+
+        entry = {"playlists": ["moody"], "curation_state": None,
+                 "raw_artist": "Gorillaz", "raw_track": "Feel Good Inc. (feat. De La Soul)"}
+        key = ("gorillaz", "feel good inc feat de la soul")
+        manifest = {"tier_by_artist": {}, "playlists": {key: entry}}
+        # Both the exact key and a variation exist; the exact key must win.
+        known = {key, ("gorillaz", "feel good inc")}
+
+        resolved, unmatched = resolve_playlist_entries(manifest, known)
+        assert list(resolved) == [key]
+        assert unmatched == []
+
+    def test_unmatched_review_file_is_written_and_cleared(self, tmp_path) -> None:
+        import json as _json
+        from pipeline.apply_taste_profile import _write_unmatched
+
+        path = tmp_path / "unmatched.jsonl"
+        _write_unmatched([{"artist": "A", "track": "B"}], path)
+        assert [_json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()] == [
+            {"artist": "A", "track": "B"}
+        ]
+        # A stale file must not outlive the problem it described.
+        _write_unmatched([], path)
+        assert not path.exists()
+
+
+class TestProfileBomHandling:
+    """#65 / audit §4.3: the file carries a UTF-8 BOM, which utf-8 hands to the
+    parser as part of line 1. Harmless while the H1 is not a section marker —
+    it would silently swallow a section if the document were reordered.
+    """
+
+    def test_bom_does_not_reach_the_parser(self, tmp_path) -> None:
+        path = tmp_path / "taste_profile.md"
+        path.write_bytes(
+            b"\xef\xbb\xbf"
+            b"## Saturation Tiers\n\n### Tier 1\n\n- Tame Impala\n"
+        )
+        manifest = parse_taste_profile(path.read_text(encoding="utf-8-sig"))
+        assert manifest["tier_by_artist"] == {"tame impala": 1}
+
+    def test_committed_profile_h1_parses_without_the_bom(self) -> None:
+        from pipeline.config import TASTE_PROFILE_PATH
+
+        if not TASTE_PROFILE_PATH.exists():
+            import pytest
+            pytest.skip("taste_profile.md not present")
+        first = TASTE_PROFILE_PATH.read_text(encoding="utf-8-sig").splitlines()[0]
+        assert not first.startswith("﻿")
+        assert first.startswith("# ")
+
+
+class TestCollapsingProfileEntries:
+    """Two profile entries can resolve onto one library row — a bare title and
+    its feat. variant. The later must not erase the earlier's playlists.
+    """
+
+    def test_entries_collapsing_onto_one_row_are_merged(self) -> None:
+        from pipeline.apply_taste_profile import resolve_playlist_entries
+
+        manifest = {"tier_by_artist": {}, "playlists": {
+            ("gorillaz", "dare feat shaun ryder"): {
+                "playlists": ["uplifting"], "curation_state": "approved",
+                "raw_artist": "Gorillaz", "raw_track": "DARE (feat. Shaun Ryder)"},
+            ("gorillaz", "dare remastered"): {
+                "playlists": ["moody"], "curation_state": "locked",
+                "raw_artist": "Gorillaz", "raw_track": "DARE (Remastered)"},
+        }}
+        resolved, unmatched = resolve_playlist_entries(manifest, {("gorillaz", "dare")})
+
+        assert unmatched == []
+        entry = resolved[("gorillaz", "dare")]
+        assert sorted(entry["playlists"]) == ["moody", "uplifting"]
+        # Strongest state wins, as the parser does for duplicate keys.
+        assert entry["curation_state"] == "locked"
+
+    def test_merging_does_not_mutate_the_parsed_manifest(self) -> None:
+        from pipeline.apply_taste_profile import resolve_playlist_entries
+
+        first = {"playlists": ["uplifting"], "curation_state": "approved",
+                 "raw_artist": "Gorillaz", "raw_track": "DARE (feat. Shaun Ryder)"}
+        manifest = {"tier_by_artist": {}, "playlists": {
+            ("gorillaz", "dare feat shaun ryder"): first,
+            ("gorillaz", "dare remastered"): {
+                "playlists": ["moody"], "curation_state": "locked",
+                "raw_artist": "Gorillaz", "raw_track": "DARE (Remastered)"},
+        }}
+        resolve_playlist_entries(manifest, {("gorillaz", "dare")})
+        assert first["playlists"] == ["uplifting"]

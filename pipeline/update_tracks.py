@@ -66,6 +66,14 @@ _SOURCE_TRIGGERS: dict[str, list[str]] = {
     "mood_source": ["mood_classifier"],
 }
 
+# Phase 4d's genre_backfill.source → its enrichment_sources marker. A row whose
+# source is None was examined and yielded nothing, so it earns no marker.
+_GENRE_BACKFILL_SOURCES: dict[str, str] = {
+    "lastfm_artist": "lastfm_artist_tags",
+    "musicbrainz_artist": "musicbrainz_artist",
+    "artist_propagation": "artist_propagation",
+}
+
 
 def _pick_input(explicit: Path | None) -> Path:
     if explicit is not None:
@@ -172,6 +180,16 @@ def _enrichment_sources(row: dict) -> list[str]:
     isrc_source = row.get("isrc_source")
     if isrc_source and isrc_source not in sources:
         sources.append(isrc_source)
+
+    # Phase 4d's two routes are distinct provenance: an artist-level genre from
+    # Last.fm's folksonomy is weaker evidence than one from MusicBrainz. Read the
+    # recorded source rather than inferring from the raw-tag fields, which are
+    # written even when the row recovered nothing.
+    backfill = row.get("genre_backfill")
+    if isinstance(backfill, dict):
+        marker = _GENRE_BACKFILL_SOURCES.get(backfill.get("source"))
+        if marker and marker not in sources:
+            sources.append(marker)
 
     return sources
 

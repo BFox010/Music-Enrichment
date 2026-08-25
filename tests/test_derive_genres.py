@@ -12,6 +12,7 @@ from pipeline.derive_genres import (
     ITUNES_GENRE_MAP,
     derive,
     derive_genres_for_track,
+    normalize_tag_key,
 )
 
 
@@ -82,6 +83,57 @@ class TestGenreTaxonomy:
         for label, genres in ITUNES_GENRE_MAP.items():
             for g in genres:
                 assert g in valid, f"iTunes '{label}' maps to unknown genre '{g}'"
+
+
+class TestSeparatorInsensitiveLookup:
+    """#71: Last.fm and Discogs spell the same genre with different punctuation,
+    so an exact lookup missed whichever spelling the map didn't list.
+    """
+
+    def test_trip_hop_resolves_identically_either_way(self) -> None:
+        hyphen = derive_genres_for_track({"lastfm_tags": ["trip-hop"]})
+        space = derive_genres_for_track({"lastfm_tags": ["trip hop"]})
+        assert hyphen == space == ["Electronic"]
+
+    def test_separator_variants_of_mapped_tags_all_resolve(self) -> None:
+        """The variants measured as unmapped on the committed data."""
+        for tag, expected in [
+            ("southern hip-hop", "Hip-Hop / Rap"),
+            ("post hardcore", "Rock"),
+            ("synth pop", "Electronic"),
+            ("dance pop", "Electronic"),
+            ("indie-pop", "Indie / Alternative"),
+            ("conscious hip-hop", "Hip-Hop / Rap"),
+            ("west coast hip-hop", "Hip-Hop / Rap"),
+            ("singer songwriter", "Country / Folk"),
+            ("Nu-metal", "Metal"),
+            ("avant garde", "Experimental"),
+        ]:
+            got = derive_genres_for_track({"lastfm_tags": [tag]})
+            assert expected in got, f"{tag!r} did not map to {expected!r} (got {got})"
+
+    def test_lookup_is_case_and_punctuation_insensitive(self) -> None:
+        assert derive_genres_for_track({"lastfm_tags": ["  TRIP...HOP  "]}) == ["Electronic"]
+
+    def test_no_normalized_key_collisions_lose_a_mapping(self) -> None:
+        """Folding is only safe while colliding keys agree on their value.
+
+        Guards the `setdefault` that builds the normalized map: if someone adds
+        "nu-metal": [METAL] beside a "nu metal": [ROCK], one silently wins.
+        """
+        by_normalized: dict[str, set[tuple[str, ...]]] = {}
+        for tag, genres in GENRE_TAG_MAP.items():
+            by_normalized.setdefault(normalize_tag_key(tag), set()).add(tuple(genres))
+        conflicts = {k: v for k, v in by_normalized.items() if len(v) > 1}
+        assert conflicts == {}, f"keys collide with different values: {conflicts}"
+
+    def test_regional_hip_hop_family_is_mapped(self) -> None:
+        """The densest genre in this library, absent from the map entirely."""
+        for tag in ("underground hip-hop", "east coast hip hop", "Dirty South",
+                    "memphis rap", "southern rap", "underground rap",
+                    "alternative hip-hop", "Horrorcore"):
+            got = derive_genres_for_track({"lastfm_tags": [tag]})
+            assert "Hip-Hop / Rap" in got, f"{tag!r} still unmapped (got {got})"
 
 
 class TestDerivePhase:

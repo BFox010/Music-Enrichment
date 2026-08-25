@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Iterable
 
 from pipeline.config import (
+    MOOD_SOURCE_RANK,
     REPO_ROOT,
     TRACKS_PATH,
     TRACKS_RESOLVED_PATH,
@@ -55,9 +56,6 @@ MIN_PREFIX_LEN: int = 3
 
 # Confidence ordering when two merged rows disagree about mood.
 _CONFIDENCE_RANK: dict[str | None, int] = {"high": 3, "medium": 2, "low": 1, None: 0}
-_SOURCE_RANK: dict[str | None, int] = {
-    "audit": 4, "claude_batch": 3, "centroid": 2, None: 0,
-}
 
 
 def _name_key(row: dict) -> tuple[str, str]:
@@ -354,7 +352,7 @@ def merge_cluster(rows: list[dict]) -> dict:
     best_mood = max(
         (r for r in rows if r.get("mood_tags")),
         key=lambda r: (
-            _SOURCE_RANK.get(r.get("mood_source"), 0),
+            MOOD_SOURCE_RANK.get(r.get("mood_source"), 0),
             _CONFIDENCE_RANK.get(r.get("mood_confidence"), 0),
             int(r.get("play_count") or 0),
         ),

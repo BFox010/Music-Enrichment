@@ -66,6 +66,12 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "lastfm_tags": [],
     "discogs_styles": [],
     "itunes_genre": None,
+    # Phase 4d artist-level backfill: the raw evidence, then its provenance.
+    # None (absent source) on a row 4d examined and found nothing for; the whole
+    # block absent on a row 4d never saw, since it only visits genre gaps.
+    "lastfm_artist_tags": [],
+    "musicbrainz_genres": [],
+    "genre_backfill": None,
     # Global popularity, free-riding on the track.getInfo call made for tags/MBIDs.
     "lastfm_listeners": None,
     "lastfm_playcount": None,

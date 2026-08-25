@@ -21,6 +21,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -79,6 +80,27 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "drill":                [HIP_HOP],
     "grime":                [HIP_HOP],
     "abstract":             [HIP_HOP],
+    # Regional and underground hip-hop, the densest family in this library and
+    # absent from the map entirely. Every key below was taken from a census of
+    # unmapped tag occurrences on the committed data, not from imagination —
+    # trailing counts are that census (#71).
+    "underground hip hop":  [HIP_HOP],                  # 170
+    "east coast hip hop":   [HIP_HOP],                  # 58
+    "east coast rap":       [HIP_HOP],                  # 46
+    "alternative hip hop":  [HIP_HOP],                  # 44
+    "dirty south":          [HIP_HOP],                  # 53
+    "southern rap":         [HIP_HOP],                  # 38
+    "experimental hip hop": [HIP_HOP, EXPERIMENTAL],    # 56
+    "memphis rap":          [HIP_HOP],                  # 32
+    "underground rap":      [HIP_HOP],                  # 27
+    "trap rap":             [HIP_HOP],                  # 23
+    "alternative rap":      [HIP_HOP],                  # 17
+    "west coast rap":       [HIP_HOP],                  # 11
+    "thug rap":             [HIP_HOP],                  # 11
+    "horrorcore":           [HIP_HOP],                  # 41
+    "phonk":                [HIP_HOP, ELECTRONIC],      # 34
+    "trillwave":            [HIP_HOP],                  # 14
+    "hiphop":               [HIP_HOP],                  # 11 — no separator to fold
 
     # R&B / Soul
     "rnb":                  [RNB_SOUL],
@@ -97,6 +119,7 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "funk":                 [RNB_SOUL],
     "gospel":               [RNB_SOUL],
     "motown":               [RNB_SOUL],
+    "rhythm & blues":       [RNB_SOUL],                 # 12
 
     # Electronic
     "electronic":           [ELECTRONIC],
@@ -126,6 +149,15 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "edm":                  [ELECTRONIC],
     "dance-pop":            [ELECTRONIC, POP],
     "disco":                [ELECTRONIC, RNB_SOUL],
+    "deep house":           [ELECTRONIC],               # 29
+    "uk garage":            [ELECTRONIC],               # 23
+    "industrial":           [ELECTRONIC, EXPERIMENTAL], # 22
+    "electro house":        [ELECTRONIC],               # 20
+    "chillwave":            [ELECTRONIC],               # 19
+    "progressive house":    [ELECTRONIC],               # 16
+    "drum n bass":          [ELECTRONIC],               # 15
+    "breakbeat":            [ELECTRONIC],               # 12
+    "alternative dance":    [ELECTRONIC],               # 11
 
     # Indie / Alternative
     "indie":                [INDIE_ALT],
@@ -140,6 +172,8 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "shoegaze":             [INDIE_ALT],
     "post-rock":            [INDIE_ALT, ROCK],
     "alt-pop":              [INDIE_ALT, POP],
+    "neo-psychedelia":      [INDIE_ALT, ROCK],          # 53
+    "indie folk":           [INDIE_ALT, COUNTRY_FOLK],  # 16
 
     # Rock
     "rock":                 [ROCK],
@@ -164,6 +198,11 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "country rock":         [ROCK, COUNTRY_FOLK],
     "art pop":              [POP, INDIE_ALT],
     "psychedelic pop":      [POP, ROCK],
+    "soft rock":            [ROCK],                     # 50
+    "math rock":            [ROCK, INDIE_ALT],          # 48
+    "punk rock":            [ROCK],                     # 22
+    "emocore":              [ROCK],                     # 17
+    "blues rock":           [ROCK],                     # 13
 
     # Pop
     "pop":                  [POP],
@@ -173,6 +212,9 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "j-pop":                [POP],
     "jpop":                 [POP],
     "city pop":             [POP],
+    "sophisti-pop":         [POP],                      # 12
+    "alternative pop":      [POP, INDIE_ALT],           # 11
+    "power pop":            [POP, ROCK],                # 10
 
     # Jazz
     "jazz":                 [JAZZ],
@@ -197,6 +239,9 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "nu metal":             [METAL],
     "thrash metal":         [METAL],
     "screamo":              [METAL],
+    "deathcore":            [METAL],                    # 29
+    "alternative metal":    [METAL],                    # 14
+    "progressive metal":    [METAL],                    # 12
 
     # Experimental
     "experimental":         [EXPERIMENTAL],
@@ -228,11 +273,29 @@ ITUNES_GENRE_MAP: dict[str, list[str]] = {
 }
 
 
+def normalize_tag_key(tag: str) -> str:
+    """Fold a tag to its separator-insensitive lookup key.
+
+    Last.fm and Discogs disagree about punctuation for the same genre —
+    "trip-hop" vs "trip hop", "southern hip-hop" vs "southern hip hop" — so an
+    exact dict lookup missed whichever spelling the map didn't happen to list.
+    """
+    return re.sub(r"[^a-z0-9]+", " ", tag.lower()).strip()
+
+
+# Built once at import. Every colliding pair in GENRE_TAG_MAP carries identical
+# values today, and test_no_normalized_key_collisions_lose_a_mapping keeps it
+# that way — otherwise folding would silently drop one side.
+_NORMALIZED_GENRE_TAG_MAP: dict[str, list[str]] = {}
+for _key, _genres in GENRE_TAG_MAP.items():
+    _NORMALIZED_GENRE_TAG_MAP.setdefault(normalize_tag_key(_key), _genres)
+
+
 def _genres_from_tags(tags: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for tag in tags:
-        for genre in GENRE_TAG_MAP.get(tag.lower(), []):
+        for genre in _NORMALIZED_GENRE_TAG_MAP.get(normalize_tag_key(tag), []):
             if genre not in seen:
                 seen.add(genre)
                 result.append(genre)

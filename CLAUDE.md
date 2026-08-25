@@ -180,7 +180,16 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   must let that blank survive the merge.
 - **`mood_source: "audit"` is the owner's own labelling** — the training signal
   the whole classifier is built on. A fresher centroid pass must never overwrite
-  one.
+  one. Trust order lives once, in `MOOD_SOURCE_RANK` (`pipeline/config.py`):
+  `manual` > `audit` > `claude_batch` > `centroid`. Don't re-encode it locally.
+- **`mood_audit.csv` at the repo root is the canonical label file** (#66). The
+  older `inputs/existing_audit.csv` is gitignored and not authoritative; where
+  the two disagree, the committed file wins. Phase 6 prefers `inputs/` when
+  present, so if you restore that file, reconcile it into `mood_audit.csv`
+  rather than letting a run train on a copy nobody can see.
+  `tests/test_data_integrity.py` asserts the committed audit still reaches the
+  committed library — the drift it caught went unnoticed because every other
+  test builds its own fixtures.
 - **Dashboard mutating endpoints require a token.** `POST /api/refresh`,
   `/api/lastfm/sync`, `/api/reload` need `X-Dashboard-Token`. The SPA fetches it
   from same-origin `GET /api/config`. Set `DASHBOARD_TOKEN` to keep it stable
