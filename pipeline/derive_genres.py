@@ -34,7 +34,7 @@ from pipeline.config import (
 
 log = get_logger(__name__)
 
-# ── Canonical genre labels ────────────────────────────────────────────────────
+# ── Canonical genre labels ──
 HIP_HOP      = "Hip-Hop / Rap"
 RNB_SOUL     = "R&B / Soul"
 ELECTRONIC   = "Electronic"
@@ -51,7 +51,7 @@ GENRE_CATEGORIES: tuple[str, ...] = (
     POP, JAZZ, COUNTRY_FOLK, METAL, EXPERIMENTAL,
 )
 
-# ── Tag → genre mapping ───────────────────────────────────────────────────────
+# ── Tag → genre mapping ──
 # Keys are lowercase. A tag can map to multiple genres (e.g. "jazz rap" → both).
 # More specific entries take precedence when ordering matters, but since we
 # collect all matches the only risk is over-tagging — kept conservative.

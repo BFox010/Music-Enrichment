@@ -89,7 +89,7 @@ class TestRateLimitedClientCache:
                 RateLimitedClient(Path(tmp) / "c.json", rate_per_second=1.0, force="yes")
 
 
-# ── Entry classification / expiry (pure) ──────────────────────────────────
+# ── Entry classification / expiry (pure) ──
 
 
 class TestErrorKind:
@@ -140,7 +140,7 @@ class TestIsExpired:
         assert self._expired({"_error": "not_found", "_cached_at": 9999.0})
 
 
-# ── get() against a faked session ─────────────────────────────────────────
+# ── get() against a faked session ──
 
 
 class _FakeResponse:

@@ -24,10 +24,10 @@ sources, recorded per track in `mood_source`:
 | `audit` | high | human (owner-labeled CSV) |
 | `centroid` | medium | **automated** — audio-feature Euclidean distance |
 
-Only the **centroid** source is unreliable, and only for some moods. This file is the
-durable, version-controlled record of which moods get which treatment and **why**. The
-machine-readable source of truth is `CENTROID_MOOD_TREATMENTS` in
-`pipeline/classify_moods.py`; this doc carries the evidence behind it.
+Only the **centroid** source is unreliable, and only for some moods. This file records
+which moods got which treatment and **why**. The machine-readable half was
+`CENTROID_MOOD_TREATMENTS` in `pipeline/classify_moods.py`, since removed — today's
+allowlist is derived by `pipeline.evaluate_moods` and lives in `mood_eval.json`.
 
 ## Treatments
 
@@ -87,11 +87,10 @@ Replaced the qualitative spot-check with `scripts/eval_mood_centroids.py`. Evide
 **Thresholds** (`SLOW_TEMPO_MAX=105`, `MOODY_TEMPO_MAX=125`) are tunable — re-check
 `pct>105` and the centroid/human tempo gap in the report after any change.
 
-**Applied:** `scripts/cleanup_centroid_moods.py --apply` scrubbed existing centroid tags in
-place (Heavy Bass −464, Moody −239, Slow −146; 4 rows fully cleared). Audit/Claude tags
-untouched. This shares `apply_centroid_policy()` with the live classifier, so a later
-authoritative Phase 6 re-run on the owner's machine converges to the same result and the
-cleanup becomes a no-op (idempotent).
+**Applied (historical):** a since-removed `scripts/cleanup_centroid_moods.py --apply`
+scrubbed existing centroid tags in place (Heavy Bass −464, Moody −239, Slow −146; 4 rows
+fully cleared), leaving audit/Claude tags untouched. It shared its policy function with
+the classifier of the day, so a Phase 6 re-run converged to the same result.
 
 ## Open follow-ups (not yet acted on)
 

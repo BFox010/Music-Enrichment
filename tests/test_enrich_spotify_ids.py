@@ -38,7 +38,7 @@ def _track(track_id: str, name: str, *artists: str, isrc: str | None = None) -> 
     return item
 
 
-# ── _best_match ────────────────────────────────────────────────────────────
+# ── _best_match ──
 
 
 class TestBestMatch:
@@ -88,7 +88,7 @@ class TestBestMatch:
         assert match is not None and match["id"] == "ok"
 
 
-# ── load_credentials ─────────────────────────────────────────────────────────
+# ── load_credentials ──
 
 
 class TestLoadCredentials:
@@ -123,7 +123,7 @@ class TestLoadCredentials:
             load_credentials()
 
 
-# ── SpotifyAuth ──────────────────────────────────────────────────────────────
+# ── SpotifyAuth ──
 
 
 class _FakeResp:
@@ -164,7 +164,7 @@ class TestSpotifyAuth:
         assert auth.token() == "second"
 
 
-# ── _resolve_one (cascade with a stubbed client) ─────────────────────────────
+# ── _resolve_one (cascade with a stubbed client) ──
 
 
 class _StubSession:
@@ -230,7 +230,7 @@ class TestResolveOne:
         assert client.session.headers.get("Authorization") == "Bearer tok"
 
 
-# ── ISRC capture ─────────────────────────────────────────────────────────────
+# ── ISRC capture ──
 #
 # The ISRC rides along free on a match Phase B already paid for. It is the
 # identifier that keeps the audio-feature source swappable (ReccoBeats,

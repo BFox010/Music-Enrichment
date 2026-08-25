@@ -1,9 +1,7 @@
 """Dashboard aggregations over the in-memory JSONL cache.
 
-All public functions read from ``app.data.get_tracks()`` /
-``get_scrobbles()`` so they automatically pick up test fixtures injected
-via ``data.use_paths()``. Logic is ported from ``scripts/library_stats.py``
-but returns dicts instead of printing.
+Public functions read through ``app.data.get_tracks()`` / ``get_scrobbles()``,
+so they pick up fixtures injected by ``data.use_paths()``.
 """
 
 from __future__ import annotations
@@ -25,10 +23,9 @@ _COVERAGE_FIELDS: list[tuple[str, str]] = [
     ("apple_music_checked", "apple_music_checked_at"),
     ("apple_music_available", "apple_music_available"),
     ("itunes_match", "itunes_persistent_id"),
-    # saturation_tier deliberately absent: it is a curation choice from the
-    # taste profile, not an enrichment. Counting it here reported a low
-    # "coverage" for what is really an untiered majority — those artists just
-    # aren't in the owner's rotation list. Nothing was missing.
+    # saturation_tier deliberately absent — a curation choice, not an enrichment.
+    # Counting it reported low "coverage" for an untiered majority that was never
+    # missing anything.
 ]
 
 _HISTOGRAM_FEATURES: list[str] = [
@@ -59,12 +56,11 @@ def _name_key(row: dict) -> tuple[str, str]:
 
 
 def _track_index() -> dict[tuple[str, str], dict]:
-    """Track lookup keyed by every identity a scrobble might arrive with.
+    """Track lookup keyed by every identity a scrobble might arrive under.
 
-    Registers each track under its name pair and, when present, its
-    ``canonical_track_id``. Both are indexed rather than picking one: today
+    Indexes both the name pair and ``canonical_track_id``, not one or the other:
     tracks.jsonl carries canonical IDs and scrobbles.jsonl does not, so keying
-    solely on the canonical ID would match nothing at all.
+    solely on the canonical ID would match nothing.
     """
     index: dict[tuple[str, str], dict] = {}
     for t in get_tracks():
@@ -72,9 +68,8 @@ def _track_index() -> dict[tuple[str, str], dict]:
         cid = t.get("canonical_track_id")
         if cid:
             index[("cid", cid)] = t
-        # Credit variants folded together by identity resolution. The scrobble
-        # log is never rewritten, so a play recorded under "Clipse" must still
-        # find the row that now displays the full credit.
+        # Credit variants folded by Phase 4e. The scrobble log is never rewritten,
+        # so a play logged under "Clipse" must still find the full-credit row.
         for alias in t.get("identity_aliases") or []:
             if isinstance(alias, (list, tuple)) and len(alias) == 2:
                 index.setdefault((alias[0], alias[1]), t)
@@ -93,10 +88,10 @@ def _lookup(index: dict[tuple[str, str], dict], scrobble: dict) -> Optional[dict
 def in_window(scrobble: dict, window: Optional[str]) -> bool:
     """Does a scrobble fall inside ``window``?
 
-    Accepted forms — ``None``/``"all"``, ``"2025"``, ``"2025-03"``,
-    ``"2025-summer"``, or an explicit ``"2025-03-01:2025-06-30"`` date range.
-    Anything unrecognized matches everything, so a bad query degrades to
-    "all time" rather than silently returning an empty dashboard.
+    Forms: ``None``/``"all"``, ``"2025"``, ``"2025-03"``, ``"2025-summer"``,
+    ``"2025-03-01:2025-06-30"``. Anything unrecognized matches everything, so a
+    bad query degrades to "all time" rather than to an empty dashboard the reader
+    would misread as "you listened to nothing".
     """
     if not window or window == "all":
         return True
@@ -117,10 +112,7 @@ def in_window(scrobble: dict, window: Optional[str]) -> bool:
         return stamp[:7] == window
     if _YEAR_RE.match(window):
         return str(scrobble.get("year")) == window
-    # Unrecognized: match everything. An unparseable window should read as
-    # "all time", never as an empty dashboard the reader might mistake for
-    # "you listened to nothing".
-    return True
+    return True   # unrecognized ⇒ all time; see docstring
 
 
 def tag_mass(
@@ -523,8 +515,7 @@ def forgotten_favorites(
             continue
         k = _key(s)
         yearly[k][int(yr)] += 1
-        # Keep a display label from the scrobble itself as a fallback for keys
-        # that have no matching row in tracks.jsonl (avoids blank artist/track).
+        # Fallback label for keys with no tracks.jsonl row, so nothing renders blank.
         scrobble_labels.setdefault(
             k, {"artist": s.get("artist") or "", "track": s.get("track") or ""}
         )
@@ -592,9 +583,8 @@ def tag_graph(
     if field not in _TAG_GRAPH_FIELDS:
         field = "discogs_styles"
 
-    # Weighted by plays: an edge between two tags should be thick because the
-    # pairing was listened to often, not because it appears on many tracks that
-    # were each heard once.
+    # Play-weighted: an edge is thick because the pairing was heard often, not
+    # because it spans many tracks each heard once.
     index = _track_index()
     tag_counts: Counter[str] = Counter()
     co_occur: Counter[tuple[str, str]] = Counter()

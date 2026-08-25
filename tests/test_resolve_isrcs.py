@@ -21,7 +21,7 @@ from pipeline.resolve_isrcs import (
 )
 
 
-# ── MusicBrainz response parsing ───────────────────────────────────────────
+# ── MusicBrainz response parsing ──
 
 
 class TestIsrcFromMusicbrainzResponse:
@@ -74,7 +74,7 @@ class TestResolveMusicbrainz:
         assert params["fmt"] == "json"
 
 
-# ── Deezer response parsing ────────────────────────────────────────────────
+# ── Deezer response parsing ──
 
 
 def _deezer_search(*items: dict) -> dict:
@@ -185,7 +185,7 @@ class TestResolveDeezer:
         assert _resolve_deezer(client, "A", "B (feat. C)") == "USXYZ0000001"
 
 
-# ── enrich() end-to-end ─────────────────────────────────────────────────────
+# ── enrich() end-to-end ──
 
 
 class TestEnrichPersistsIsrc:

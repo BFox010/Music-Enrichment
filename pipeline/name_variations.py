@@ -1,23 +1,20 @@
 """Artist/track name variations for Last.fm lookup retries.
 
-Last.fm indexes tracks under fairly literal artist/title strings. A library
-exported from Spotify/Apple carries long ``(feat. …)`` credits and multi-artist
-``A & B`` strings that Last.fm does not match, even though the underlying track
-is well-tagged under a simpler name. The match-variation diagnostic
-(scripts/test_match_variations.py) measured which normalisations actually
-recover usable data (an MBID or top tags) for the 308 unmatched tracks:
+Last.fm indexes literal artist/title strings, so long ``(feat. …)`` credits and
+``A & B`` multi-artist strings miss even when the track is well tagged under a
+simpler name. scripts/test_match_variations.py measured which normalisations
+actually recover an MBID or tags across the unmatched set:
 
-    strip_feat   45   first_artist 17   strip_parens 11   (clean_artist $→S: 0)
+    strip_feat 45   first_artist 17   strip_parens 11   (clean_artist $→S: 0)
 
-So the recovery cascade below is, in order of first-hit yield:
+Hence the cascade, ordered by first-hit yield:
 
     original → strip_feat → strip_parens → first_artist → first_artist+strip_feat
 
-``clean_artist`` ($→S) is deliberately omitted: Last.fm's ``autocorrect=1``
-already resolves it, and it recovered nothing in the measurement.
+``clean_artist`` ($→S) is deliberately omitted — ``autocorrect=1`` already
+resolves it, and it recovered nothing.
 
-These helpers are the single source of truth shared by the enrichment pipeline
-and the diagnostic, so the rules can't drift apart.
+Shared by the pipeline and the diagnostic so the rules can't drift apart.
 """
 
 from __future__ import annotations

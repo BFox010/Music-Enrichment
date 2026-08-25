@@ -1,28 +1,21 @@
-"""Phase 6 — mood classification.
+"""Phase 6 — mood classification. Two stages, both here:
 
-Two stages, both implemented here:
+1. **Centroid (automated).** Owner audit (artist + track + mood_tags) joined to
+   tracks with audio features → a centroid per mood; unlabeled tracks classified
+   by Euclidean distance in normalized feature space.
+   → ``mood_source: "centroid"``, ``mood_confidence: "medium"``.
 
-1. **Centroid (automated):** load owner-provided audit (artist + track +
-   mood_tags), join to tracks with audio features to build training data,
-   compute the centroid vector for each of the 14 moods, then classify all
-   unlabeled tracks by Euclidean distance in normalized feature space.
-   Sets ``mood_source: "centroid"``, ``mood_confidence: "medium"``.
+   Two guards: each mood has its own calibrated radius (judged in absolute terms,
+   not ranked against the others), and a mood is emitted only if cross-validation
+   says the features can predict it (``pipeline.evaluate_moods``). Most of the 14
+   cannot be — those stay blank rather than guessed.
 
-   Two guards keep this honest. Each mood has its own calibrated radius, so a
-   track is judged against that mood in absolute terms rather than ranked
-   against the others. And a mood is only emitted at all if cross-validation
-   shows the features can predict it (``pipeline.evaluate_moods``) — for most
-   of the 14 they cannot, and those are left blank rather than guessed.
+2. **Claude batch (manual).** Tracks beyond the confidence threshold go to
+   ``inputs/claude_mood_batch.jsonl``; owner runs them through Claude.ai and
+   pastes back ``inputs/claude_mood_results.jsonl``, which wins over centroid
+   output. → ``mood_source: "claude_batch"``, ``mood_confidence: "high"``.
 
-2. **Claude batch (manual):** any track whose nearest centroid is beyond a
-   confidence threshold is dumped to ``inputs/claude_mood_batch.jsonl`` for
-   the owner to run through Claude.ai. Owner pastes responses back as
-   ``inputs/claude_mood_results.jsonl`` and re-runs; that data wins over
-   centroid output. Sets ``mood_source: "claude_batch"``,
-   ``mood_confidence: "high"``.
-
-Without an audit CSV the script writes ``tracks_with_moods.jsonl`` with no
-mood data populated and instructs the owner what to provide.
+No audit CSV ⇒ writes ``tracks_with_moods.jsonl`` unpopulated, with instructions.
 
 Usage:
     python -m pipeline.classify_moods
@@ -54,9 +47,8 @@ from pipeline.normalize import normalize_artist, normalize_track
 
 log = get_logger(__name__)
 
-# Audio feature axes used for centroid / classification.
-# 0-1 features go through unchanged; SCALED axes are z-normalized using
-# global stats (tempo and loudness vary on different scales).
+# Centroid axes. LINEAR are already 0-1; SCALED are z-normalized against global
+# stats (tempo and loudness live on their own scales).
 LINEAR_KEYS: tuple[str, ...] = (
     "danceability",
     "energy",
@@ -69,34 +61,26 @@ LINEAR_KEYS: tuple[str, ...] = (
 SCALED_KEYS: tuple[str, ...] = ("tempo", "loudness")
 ALL_KEYS: tuple[str, ...] = LINEAR_KEYS + SCALED_KEYS
 
-# Fallback distance cutoff, used only when a mood has no calibrated threshold
-# (too few training rows). Note this value is deliberately *not* the main gate:
-# measured across the library, 11 of the 14 centroids sit within 1.6 of ~70% of
-# all tracks, so a single global cutoff admits nearly everything. Per-mood
-# calibration below is what actually discriminates.
+# Fallback only, for moods with too few training rows to calibrate. NOT the main
+# gate: 11 of 14 centroids sit within 1.6 of ~70% of the library, so a single
+# global cutoff admits nearly everything. Per-mood calibration is what discriminates.
 CENTROID_THRESHOLD: float = 1.6
 
-# Percentile of a mood's own training-distance distribution used as its cutoff.
-# 0.30 means "accept a track only if it sits closer to this mood's centroid than
-# 70% of the tracks the owner actually tagged with it", so each mood judges on
-# its own scale instead of competing for a fixed number of slots.
-#
-# Tuned for precision: measured across 0.20–0.75, tightening the radius raises
-# precision and lowers recall roughly monotonically (Fast 0.59 → 0.90). 0.30
-# keeps precision high without collapsing recall below ~0.30. A missing tag is
-# recoverable from the labeling queue; a wrong one is shown to the reader as
-# fact.
+# Cutoff percentile of a mood's own training-distance distribution: accept only
+# tracks closer to the centroid than 70% of the rows the owner tagged with it.
+# Each mood judges on its own scale rather than competing for fixed slots.
+# Tuned for precision — across 0.20–0.75 a tighter radius raises precision and
+# lowers recall near-monotonically. A missing tag is recoverable from the labeling
+# queue; a wrong one is shown to the reader as fact.
 CALIBRATION_PERCENTILE: float = 0.30
 
-# Minimum owner-labeled examples before a mood's threshold is calibrated rather
-# than falling back to CENTROID_THRESHOLD.
+# Below this many owner labels, a mood falls back to CENTROID_THRESHOLD.
 MIN_CALIBRATION_SUPPORT: int = 20
 
-# Output for tracks that need Claude classification
 CLAUDE_BATCH_PATH: Path = INPUTS_DIR / "claude_mood_batch.jsonl"
 
 
-# ── feature normalization ────────────────────────────────────────────────
+# ── feature normalization ──
 
 
 def compute_global_stats(features_list: Iterable[dict]) -> dict[str, dict[str, float]]:
@@ -122,10 +106,8 @@ def compute_global_stats(features_list: Iterable[dict]) -> dict[str, dict[str, f
 
 
 def to_vector(features: dict, stats: dict[str, dict[str, float]]) -> list[float]:
-    """Map an ``audio_features`` dict to a normalized fixed-order vector.
-
-    Missing values become 0 (linear keys) or the global mean (scaled keys),
-    so they contribute zero to the distance after centring.
+    """``audio_features`` → normalized fixed-order vector. Missing values become 0
+    (linear) or the global mean (scaled), contributing nothing to the distance.
     """
     vec: list[float] = []
     for k in LINEAR_KEYS:
@@ -142,17 +124,15 @@ def to_vector(features: dict, stats: dict[str, dict[str, float]]) -> list[float]
     return vec
 
 
-# ── centroids ────────────────────────────────────────────────────────────
+# ── centroids ──
 
 
 def compute_centroids(
     training: list[tuple[list[str], dict]],
     stats: dict[str, dict[str, float]],
 ) -> dict[str, list[float]]:
-    """``training``: list of ``(mood_tags, audio_features)``.
-
-    Each track contributes to every mood centroid it's tagged with.
-    Returns ``{mood: centroid_vector}``. Moods with no training rows are absent.
+    """``training`` is ``[(mood_tags, audio_features)]``; each track feeds every mood
+    it carries. Returns ``{mood: vector}`` — moods with no training rows are absent.
     """
     grouped: dict[str, list[list[float]]] = defaultdict(list)
     for mood_tags, features in training:
@@ -200,15 +180,11 @@ def calibrate_thresholds(
     percentile: float = CALIBRATION_PERCENTILE,
     min_support: int = MIN_CALIBRATION_SUPPORT,
 ) -> dict[str, float]:
-    """Per-mood distance cutoffs derived from the owner's own labels.
+    """Per-mood cutoffs from the owner's own labels: the ``percentile`` of how far
+    each mood's tagged tracks sit from its centroid. A tight mood gets a tight
+    cutoff, a diffuse one a loose cutoff — a global threshold can't express that.
 
-    For each mood, measures how far its genuinely-tagged tracks sit from its
-    centroid and takes the ``percentile`` of that spread. A tight mood gets a
-    tight cutoff and a diffuse one gets a loose cutoff, which a single global
-    threshold cannot express.
-
-    Moods with fewer than ``min_support`` examples are omitted; callers fall
-    back to ``CENTROID_THRESHOLD`` for those.
+    Moods under ``min_support`` are omitted; callers fall back to CENTROID_THRESHOLD.
     """
     per_mood: dict[str, list[float]] = defaultdict(list)
     for mood_tags, features in training:
@@ -239,15 +215,12 @@ def classify_track(
 ) -> tuple[list[str], float | None]:
     """Return (assigned_moods, distance_of_nearest).
 
-    A mood is assigned when the track falls inside that mood's own calibrated
-    radius — an absolute judgement per mood, not a ranking contest. This
-    replaces an earlier "nearest three centroids" rule, which forced three tags
-    onto essentially every track regardless of fit.
+    A mood is assigned when the track falls inside that mood's calibrated radius —
+    an absolute per-mood judgement, not a ranking contest, so a track may get zero.
 
-    ``allowed_moods`` restricts output to moods the features can actually infer
-    (see ``pipeline.evaluate_moods``); ``None`` disables gating entirely, which
-    is what the evaluation harness wants. ``max_assignments`` is an optional
-    safety cap, off by default.
+    ``allowed_moods=None`` disables gating (what the eval harness wants);
+    otherwise it restricts to moods the features can infer (evaluate_moods).
+    ``max_assignments`` is an optional safety cap, off by default.
     """
     if not features or not centroids:
         return [], None
@@ -268,14 +241,12 @@ def classify_track(
     return chosen, nearest
 
 
-# ── audit CSV loading ────────────────────────────────────────────────────
+# ── audit CSV loading ──
 
 
 def _split_moods(value: str) -> list[str]:
-    """Tolerant splitter for mood-list cells in the audit CSV.
-
-    Accepts comma, semicolon, or pipe-separated values. Drops anything that
-    isn't in the canonical 14-category set; logs unknown values for debug.
+    """Split an audit-CSV mood cell on , ; or |. Drops values outside the canonical
+    14; logs the unknowns at debug.
     """
     if not value:
         return []
@@ -293,12 +264,9 @@ def _split_moods(value: str) -> list[str]:
 
 
 def load_audit(path: Path) -> list[dict]:
-    """Load the audit CSV. Detects column names case-insensitively.
-
-    Expected columns (case-insensitive, any of):
-      - artist (or 'Artist Name(s)' or 'Artist Name')
-      - track  (or 'Track Name', 'Title', 'Name')
-      - mood_tags (or 'moods', 'mood', 'mood_classifiers')
+    """Load the audit CSV. Column names matched case-insensitively, any of:
+    artist | artist name(s) | artist name; track | track name | title | name;
+    mood_tags | moods | mood | mood_classifiers.
     """
     if not path.exists():
         return []
@@ -338,16 +306,13 @@ def load_audit(path: Path) -> list[dict]:
     return out
 
 
-# ── claude batch I/O ─────────────────────────────────────────────────────
+# ── claude batch I/O ──
 
 
 def write_claude_batch(tracks: list[dict], path: Path = CLAUDE_BATCH_PATH) -> int:
-    """Write ambiguous tracks to a JSONL batch for Claude review.
-
-    Each line has only the fields Claude needs to classify: identity, audio
-    features, lastfm_tags, discogs_styles, itunes_genre. Owner pastes Claude's
-    responses back as ``inputs/claude_mood_results.jsonl`` (same join key +
-    mood_tags).
+    """Write ambiguous tracks to a JSONL batch for Claude review — identity plus
+    only the fields needed to classify. Owner pastes verdicts back as
+    ``inputs/claude_mood_results.jsonl`` (same join key + mood_tags).
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8", newline="\n") as fh:
@@ -393,7 +358,7 @@ def load_claude_results(path: Path = INPUT_CLAUDE_MOOD_RESULTS) -> dict[tuple[st
     return out
 
 
-# ── owner-label recovery ─────────────────────────────────────────────────
+# ── owner-label recovery ──
 
 # Sources that represent a human judgement (directly, or a review the owner
 # accepted). Centroid output must never overwrite these.
@@ -401,10 +366,8 @@ OWNER_LABEL_SOURCES: frozenset[str] = frozenset({"audit", "claude_batch"})
 
 
 def _recover_owner_labels(tracks: list[dict]) -> dict[tuple[str, str], dict]:
-    """Owner labels already carried on the tracks file, keyed by identity.
-
-    Returns ``{(artist_norm, track_norm): {"mood_tags", "mood_source",
-    "mood_confidence"}}`` for every row whose ``mood_source`` is owner-derived.
+    """``{(artist_norm, track_norm): {mood_tags, mood_source, mood_confidence}}``
+    for every row already carrying an owner-derived ``mood_source``.
     """
     out: dict[tuple[str, str], dict] = {}
     for t in tracks:
@@ -421,7 +384,7 @@ def _recover_owner_labels(tracks: list[dict]) -> dict[tuple[str, str], dict]:
     return out
 
 
-# ── main classifier ──────────────────────────────────────────────────────
+# ── main classifier ──
 
 
 def classify(
@@ -439,14 +402,9 @@ def classify(
     configure_logging(run_log_path)
     log.info("=== Phase 6: mood classification ===")
 
-    # Resolve input — pick the DEEPEST intermediate so we carry every upstream
-    # field forward (Phase 5b ReccoBeats features, Phase 5 availability, Phase
-    # 4b discogs_styles, ...). tracks_with_features (5b) and tracks_with_isrcs
-    # (5a) come first since #37 — a track resolved through that chain needs
-    # its audio_features to reach the centroid classifier.
-    # tracks.jsonl is the last resort: the intermediates are gitignored, so a
-    # fresh clone has only the canonical file. Re-running the phase against it
-    # must still work rather than dead-ending.
+    # DEEPEST intermediate wins, so every upstream field survives (5b features,
+    # 5 availability, 4b discogs_styles, ...). tracks.jsonl is the last resort:
+    # intermediates are gitignored, so a fresh clone has only the canonical file.
     chosen_input = None
     for candidate in (
         REPO_ROOT / "tracks_with_features.jsonl",
@@ -464,9 +422,8 @@ def classify(
         log.error("No tracks file found — run earlier phases first.")
         raise FileNotFoundError("tracks_with_audio.jsonl or tracks_with_metadata.jsonl")
 
-    # inputs/ is gitignored, so a fresh clone has no audit CSV and Phase 6 would
-    # train on nothing. Fall back to the committed root copy — same recovery the
-    # deepest-intermediate lookup above does for tracks.
+    # inputs/ is gitignored, so a fresh clone has no audit CSV and would train on
+    # nothing. Fall back to the committed root copy.
     if not audit_path.exists():
         root_audit = REPO_ROOT / "mood_audit.csv"
         if root_audit.exists():
@@ -491,11 +448,9 @@ def classify(
     audit_rows = load_audit(audit_path) if audit_path.exists() else []
     log.info("Audit rows loaded: %d", len(audit_rows))
 
-    # Owner labels already persisted on the tracks file. ``inputs/`` is not
-    # committed, so without this a re-run on a fresh clone would find no audit
-    # CSV, fall through to the centroid for every row, and silently destroy
-    # every hand-made judgement in the library. Labels the owner made are the
-    # spine of the classifier — they must survive the loss of their source file.
+    # Owner labels already on the tracks file. Without this, a fresh clone (no
+    # audit CSV) falls through to the centroid on every row and silently destroys
+    # every hand-made judgement in the library.
     recovered = _recover_owner_labels(tracks)
     if recovered and not audit_rows:
         log.info(
@@ -509,10 +464,8 @@ def classify(
              stats["tempo"]["mean"], stats["tempo"]["std"],
              stats["loudness"]["mean"], stats["loudness"]["std"])
 
-    # Build training data: audit rows joined to tracks-with-features. Only
-    # ``audit`` counts as ground truth — claude_batch rows are themselves model
-    # output, so training on them would teach the centroid to imitate another
-    # classifier rather than the owner.
+    # Only ``audit`` is ground truth. claude_batch rows are model output; training
+    # on them teaches the centroid to imitate another classifier, not the owner.
     track_index = {(t["artist_normalized"], t["track_normalized"]): t for t in tracks}
     training: list[tuple[list[str], dict]] = []
     for audit in audit_rows:
@@ -538,8 +491,6 @@ def classify(
         log.warning("No centroids computed — audit data missing or empty. "
                     "All tracks will be queued for Claude or left unclassified.")
 
-    # Per-mood cutoffs from the owner's own label spread, replacing the old
-    # fixed top-3 quota.
     thresholds = calibrate_thresholds(training, stats, centroids) if centroids else {}
     if thresholds:
         log.info(
@@ -547,10 +498,9 @@ def classify(
             ", ".join(f"{m}={d:.2f}" for m, d in sorted(thresholds.items())),
         )
 
-    # Which moods the centroid may emit at all. Derived from cross-validated
-    # F1 (see pipeline.evaluate_moods) so the gate reflects measurement rather
-    # than a hand-maintained list. Falls back to "no gating" when no report
-    # exists yet, so a fresh clone still classifies.
+    # Which moods the centroid may emit. Gated on cross-validated *precision*
+    # (pipeline.evaluate_moods), so it is measured, not a hand-maintained list.
+    # No report yet ⇒ no gating, so a fresh clone still classifies.
     from pipeline.evaluate_moods import cross_validate, derive_allowlist, load_report
 
     report = load_report()
@@ -565,11 +515,9 @@ def classify(
     else:
         log.warning("No evaluation report — centroid gating disabled")
 
-    # Optional Claude verdicts (high-quality)
     claude_index = load_claude_results(claude_results_path)
     log.info("Claude mood overrides loaded: %d", len(claude_index))
 
-    # Audit-direct map (medium confidence — direct from audit, no centroid math needed)
     audit_index = {(a["artist_normalized"], a["track_normalized"]): a["mood_tags"]
                    for a in audit_rows}
 
@@ -587,7 +535,7 @@ def classify(
     for track in tracks:
         key = (track["artist_normalized"], track["track_normalized"])
 
-        # Priority 1: Claude review (highest confidence)
+        # 1. Claude review
         if key in claude_index:
             track["mood_tags"] = claude_index[key]
             track["mood_source"] = "claude_batch"
@@ -595,7 +543,7 @@ def classify(
             stats_out["claude_overrides"] += 1
             continue
 
-        # Priority 2: direct audit hit (also high confidence — owner-labeled)
+        # 2. direct audit hit
         if key in audit_index:
             track["mood_tags"] = audit_index[key]
             track["mood_source"] = "audit"
@@ -603,9 +551,8 @@ def classify(
             stats_out["audit_direct"] += 1
             continue
 
-        # Priority 3: an owner label already on the row, whose source file is
-        # no longer present. Falling through to the centroid here would replace
-        # a human judgement with a guess.
+        # 3. owner label on the row whose source file is gone. Falling through to
+        # the centroid here would replace a human judgement with a guess.
         if key in recovered:
             label = recovered[key]
             track["mood_tags"] = label["mood_tags"]
@@ -614,7 +561,7 @@ def classify(
             stats_out["owner_preserved"] += 1
             continue
 
-        # Priority 4: centroid classification
+        # 4. centroid
         af = track.get("audio_features")
         if not af or not centroids:
             track["mood_tags"] = None
@@ -633,8 +580,7 @@ def classify(
             track["mood_tags"] = moods
             track["mood_source"] = "centroid"
             track["mood_confidence"] = "medium"
-            # Distance to the nearest centroid, so the dashboard can show fit
-            # rather than mere presence.
+            # Nearest-centroid distance, so the dashboard can show fit, not just presence.
             track["mood_distance"] = round(nearest, 4) if nearest is not None else None
             stats_out["classified_centroid"] += 1
         else:
@@ -642,7 +588,7 @@ def classify(
             track["mood_source"] = None
             track["mood_confidence"] = None
             stats_out["no_match"] += 1
-            if af:  # only batch tracks that COULD be classified by Claude
+            if af:  # no features ⇒ Claude can't classify it either
                 batch_for_claude.append(track)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)

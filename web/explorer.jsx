@@ -1,9 +1,7 @@
-/* ============================================================
-   explorer.jsx — FilterBar + TrackTable (React)
-   ============================================================ */
+/* FilterBar + TrackTable */
 const { useState: useStateX, useMemo: useMemoX } = React;
 
-/* ---- Active filter bar + slicers ---- */
+/* ── Active filter bar + slicers ── */
 const FB_KIND_LABEL = { genre: "genre", mood: "mood", tag: "tag", decade: "decade", artist: "artist", firstFrom: "heard ≥", firstTo: "heard ≤" };
 function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange, decades, years, curYear }) {
   const entries = Object.entries(filters).filter(([, v]) => v);
@@ -85,7 +83,7 @@ const SRC_LABELS = [
   ["lastfm_tags", "L"], ["musicbrainz", "M"], ["discogs", "D"], ["exportify", "A"], ["itunes_search", "i"], ["mood_classifier", "♪"]
 ];
 
-/* ---- Track explorer table ---- */
+/* ── Track explorer table ── */
 function TrackTable({ rows, sort, onSort, onPickArtist, playOf, timeframe }) {
   const [limit, setLimit] = useStateX(60);
   const shown = rows.slice(0, limit);

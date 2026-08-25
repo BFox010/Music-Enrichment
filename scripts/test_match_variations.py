@@ -1,11 +1,10 @@
-"""Diagnostic: test artist/track name variations against Last.fm for the 308 tracks
-the pipeline couldn't match at all (no MusicBrainz ID, no tags).
+"""Diagnostic: try artist/track name variations against Last.fm for the tracks the
+pipeline couldn't match at all (no MusicBrainz ID, no tags).
 
-For each track, generates up to 5 name variations and queries Last.fm track.getInfo.
-Records which variation (if any) gets a hit, so we know what normalisation rule
-to add permanently to the pipeline.
+Generates up to 5 variations per track and records which one hits, so the winning
+normalisation rule can be added to the pipeline permanently.
 
-Results are written to inputs/match_variation_results.csv (gitignored).
+Results -> inputs/match_variation_results.csv (gitignored).
 
 Usage:
     python scripts/test_match_variations.py [--limit N]
@@ -39,7 +38,7 @@ TRACKS_JSONL     = REPO_ROOT / "tracks.jsonl"
 RATE_LIMIT       = 4.0   # req/sec — stay under Last.fm's 5/sec hard limit
 
 
-# ── Name variation generators ─────────────────────────────────────────────────
+# ── Name variation generators ──
 
 def _strip_feat_from_track(track: str) -> str:
     """'1 Train (feat. Kendrick Lamar, ...)' → '1 Train'"""
@@ -120,7 +119,7 @@ def generate_variations(artist: str, track: str) -> list[dict]:
     return unique
 
 
-# ── Last.fm query ─────────────────────────────────────────────────────────────
+# ── Last.fm query ──
 
 def _query_lastfm(client: RateLimitedClient, api_key: str, artist: str, track: str) -> dict:
     cache_key = f"var|{artist.lower()}|{track.lower()}"
@@ -152,7 +151,7 @@ def _is_hit(response: dict) -> bool:
     return any(isinstance(tag, dict) and tag.get("name") for tag in toptags)
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Main ──
 
 def main(limit: int | None = None) -> None:
     load_dotenv(REPO_ROOT / ".env")

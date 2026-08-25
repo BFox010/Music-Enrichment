@@ -1,14 +1,12 @@
 """Full-chain refresh: sync scrobbles → run pipeline → export pending → reload cache.
 
-The refresh sequence is:
-  1. Fetch new Last.fm scrobbles and append them (lastfm_sync.sync)
-  2. Re-run the pipeline from Phase 2 onward (skip tests + manual pauses)
-  3. Export tracks missing audio features to inputs/pending_exportify.csv
-  4. Reload the in-memory data cache (data.reload)
+  1. lastfm_sync.sync — fetch and append new scrobbles
+  2. run the pipeline from Phase 2 (tests + manual pauses skipped)
+  3. export feature-less tracks to inputs/pending_exportify.csv
+  4. data.reload — refresh the in-memory cache
 
-Skipped phases are fine — the pipeline's FileNotFoundError guard handles
-missing intermediates gracefully. Phase 3c (Exportify import) auto-runs
-when the user drops inputs/exportify.csv into place.
+SKIPPED phases are fine; only FAILED aborts. Phase 3c auto-runs once
+inputs/exportify.csv is present.
 """
 
 from __future__ import annotations
@@ -26,20 +24,18 @@ class RefreshInProgress(RuntimeError):
     """Raised when a refresh is requested while another is still running."""
 
 
-# Process-level single-flight guard. A refresh appends scrobbles, rewrites
-# intermediate JSONL files, tracks.jsonl and pending_exportify.csv, then reloads
-# the cache — overlapping runs (duplicate clicks, multiple tabs) would interleave
-# those writes, so a concurrent caller fails fast instead of racing.
+# Single-flight guard. A refresh rewrites scrobbles, every intermediate,
+# tracks.jsonl and pending_exportify.csv — overlapping runs (duplicate clicks,
+# multiple tabs) would interleave those writes, so a second caller fails fast.
 _refresh_lock = asyncio.Lock()
 
 
 async def refresh() -> dict:
-    """Run the full refresh chain and return combined stats.
+    """Run the full refresh chain; returns combined stats.
 
-    Raises ``RefreshInProgress`` if another refresh is already running, and
-    ``RuntimeError`` if any pipeline phase genuinely fails — in which case the
-    cache is left untouched and nothing is exported, so a broken run can never
-    masquerade as success.
+    ``RefreshInProgress`` if one is already running. ``RuntimeError`` if a phase
+    genuinely fails — the cache is left untouched and nothing is exported, so a
+    broken run can never masquerade as success.
     """
     if _refresh_lock.locked():
         raise RefreshInProgress("a refresh is already running")
@@ -56,7 +52,7 @@ async def refresh() -> dict:
 
         failed = failed_phases(pipeline_results)
         if failed:
-            # Abort before exporting/reloading off a broken pipeline run.
+            # Never export or reload off a broken run.
             raise RuntimeError("pipeline phases failed: " + ", ".join(failed))
 
         pending_count = export_tunemymusic.export_pending()

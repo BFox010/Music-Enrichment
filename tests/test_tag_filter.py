@@ -11,7 +11,7 @@ from pipeline.tag_filter import (
 )
 
 
-# ── radio stations ─────────────────────────────────────────────────────────
+# ── radio stations ──
 
 
 @pytest.mark.parametrize(
@@ -33,7 +33,7 @@ def test_non_station_with_am_not_blocked():
     assert is_noise_tag("miami") is False
 
 
-# ── specific years vs decades ────────────────────────────────────────────────
+# ── specific years vs decades ──
 
 
 @pytest.mark.parametrize("tag", ["2016", "2022", "1999", "1975", "2025"])
@@ -46,7 +46,7 @@ def test_decades_kept(tag):
     assert is_noise_tag(tag) is False
 
 
-# ── "my …" personal-collection tags ──────────────────────────────────────────
+# ── "my …" personal-collection tags ──
 
 
 @pytest.mark.parametrize(
@@ -63,7 +63,7 @@ def test_non_my_subjective_tags_kept():
         assert is_noise_tag(tag) is False
 
 
-# ── artist-name-as-tag ───────────────────────────────────────────────────────
+# ── artist-name-as-tag ──
 
 
 def test_artist_tags_blocked_against_block_set():
@@ -85,7 +85,7 @@ def test_genre_collision_with_artist_is_protected():
         assert is_noise_tag(tag, block) is False
 
 
-# ── empties / junk ────────────────────────────────────────────────────────────
+# ── empties / junk ──
 
 
 @pytest.mark.parametrize("tag", ["", "   ", None, 123, []])
@@ -93,7 +93,7 @@ def test_empty_or_nonstring_dropped(tag):
     assert is_noise_tag(tag) is True
 
 
-# ── filter_tags integration ──────────────────────────────────────────────────
+# ── filter_tags integration ──
 
 
 def test_filter_tags_preserves_order_and_originals():
@@ -121,7 +121,7 @@ def test_filter_tags_empty_input():
     assert filter_tags([]) == []
 
 
-# ── build_artist_block ────────────────────────────────────────────────────────
+# ── build_artist_block ──
 
 
 def test_build_artist_block_uses_normalized_field():

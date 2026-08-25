@@ -1,16 +1,12 @@
 """Phase 4b — Discogs styles enrichment.
 
-For each track, queries the Discogs ``database/search`` endpoint and pulls the
-``style`` list off the best-matching release. Discogs is release/album-oriented,
-so we search by ``artist`` + ``release_title`` (the track's album), which
-almost every track carries, and fall back to an ``artist`` + ``track`` search
-for the handful with no album. Sets:
-  - discogs_styles: list[str]   (e.g. ["Conscious", "Boom Bap"]; [] if no match)
+Queries ``database/search`` and takes ``style`` off the best-matching release →
+``discogs_styles`` (e.g. ``["Conscious", "Boom Bap"]``, ``[]`` on no match).
+Discogs is release-oriented, so the search is ``artist`` + ``release_title``
+(the album), falling back to ``artist`` + ``track`` for rows with no album.
 
-Caching: ``.cache/discogs.json``. Because many tracks share an album, the cache
-is keyed by (artist, album) — so a 20-track album costs ONE API call, not 20.
-Negative results are cached too (via RateLimitedClient), so re-runs are cheap.
-Authenticated Discogs allows 60 req/min (1 req/s); see DISCOGS_RATE_LIMIT.
+Cache ``.cache/discogs.json`` is keyed by (artist, album), so a 20-track album
+costs ONE call rather than 20.
 
 Requires ``DISCOGS_TOKEN`` in ``.env``.
 

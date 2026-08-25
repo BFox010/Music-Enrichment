@@ -1,7 +1,4 @@
-/* ============================================================
-   charts.jsx — presentational chart components (React)
-   All styling via themes.css classNames + CSS vars.
-   ============================================================ */
+/* Presentational chart components. All styling via themes.css classNames + CSS vars. */
 const { useMemo, useState, useRef, useLayoutEffect } = React;
 
 /* genre color ramp — derived from --accent at runtime via CSS color-mix-ish.
@@ -15,17 +12,15 @@ function useGenreColors(genres) {
   }, [genres.join("|")]);
 }
 
-/* ---- FLIP: ranked lists travel to their new order ----
-   When a filter re-ranks a list, the rows animate from where they were to
-   where they now are instead of blinking into place. That is what lets you
-   see what the filter did — which rows survived, which collapsed — rather
-   than diffing two static frames from memory.
+/* ── FLIP: ranked lists travel to their new order ──
+   Rows animate to their new positions instead of blinking into place, which is
+   what shows you what the filter did — which rows survived, which collapsed.
 
-   The "First" of FLIP is read during render, while the DOM still holds the
-   previous list; the "Last/Invert/Play" happens in the layout effect. The
-   signature guard keeps that DOM read off the renders where the order cannot
-   have changed (a search keystroke re-renders these components without
-   touching their contents), so we never force layout for nothing. */
+   "First" is read during render, while the DOM still holds the previous list;
+   "Last/Invert/Play" runs in the layout effect. The signature guard keeps that
+   DOM read off renders where the order cannot have changed (a search keystroke
+   re-renders these without touching their contents), so layout is never forced
+   for nothing. */
 function useFlipRows(sig) {
   const ref = useRef(null);
   const prev = useRef(null);
@@ -40,7 +35,7 @@ function useFlipRows(sig) {
   return ref;
 }
 
-/* ---- Ranked horizontal bars (Top Artists) ---- */
+/* ── Ranked horizontal bars (Top Artists) ── */
 function HBars({ items, max, activeKey, onPick, unit }) {
   const ref = useFlipRows(items.map((it) => it.key).join("|"));
   return (
@@ -65,7 +60,7 @@ function HBars({ items, max, activeKey, onPick, unit }) {
   );
 }
 
-/* ---- Top tracks list ---- */
+/* ── Top tracks list ── */
 function TrackList({ items, max }) {
   const ref = useFlipRows(items.map((t) => t.i).join("|"));
   return (
@@ -87,7 +82,7 @@ function TrackList({ items, max }) {
   );
 }
 
-/* ---- Hour-of-day chart (24 bars), 12-hour am/pm labels ---- */
+/* ── Hour-of-day chart (24 bars), 12-hour am/pm labels ── */
 function fmt12(h) {
   const ap = h < 12 ? "am" : "pm";
   let hr = h % 12; if (hr === 0) hr = 12;
@@ -122,7 +117,7 @@ function HourChart({ data, onPick, activeKey }) {
   );
 }
 
-/* ---- Day of week ---- */
+/* ── Day of week ── */
 function DowChart({ data, onPick, activeKey }) {
   const labels = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
   const max = Math.max(...data, 1);
@@ -143,7 +138,7 @@ function DowChart({ data, onPick, activeKey }) {
   );
 }
 
-/* ---- Seasons ---- */
+/* ── Seasons ── */
 function Seasons({ data, total, onPick, activeKey }) {
   const order = [["winter", "❄"], ["spring", "✿"], ["summer", "☀"], ["fall", "🍂"]];
   const max = Math.max(...Object.values(data), 1);
@@ -175,7 +170,7 @@ function Seasons({ data, total, onPick, activeKey }) {
   );
 }
 
-/* ---- Drill-down: top genres/moods for a time slice (overview cards) ---- */
+/* ── Drill-down: top genres/moods for a time slice (overview cards) ── */
 function _topN(obj, n) {
   return Object.entries(obj || {}).sort((a, b) => b[1] - a[1]).slice(0, n);
 }
@@ -300,10 +295,9 @@ function DrillPanel({ label, slice, onClose, views }) {
   );
 }
 
-/* ---- Audio-feature extremes: top/bottom tracks per feature ----
-   Front-end only: reads per-track audio features off the normalized `tracks`
-   array (t.af), so no extra fetch/endpoint is needed. Colors mirror the
-   histogram colors used by the Audio Features charts. */
+/* ── Audio-feature extremes: top/bottom tracks per feature ──
+   Front-end only: reads t.af off the normalized `tracks` array, so no extra
+   endpoint. Colors mirror the Audio Features histograms. */
 const AUDIO_FEATURES = [
   ["energy",       "Energy",       "#e040fb", "How intense and active a track feels — loud, fast, and noisy scores high; calm and mellow scores low."],
   ["valence",      "Valence",      "#40c4ff", "The musical positivity a track conveys — cheerful and upbeat scores high; sad or moody scores low."],
@@ -373,7 +367,7 @@ function AudioFeatureExtremes({ tracks, n = 100 }) {
   );
 }
 
-/* ---- Seasonal favorites: 4-up genres/moods/tracks per season ---- */
+/* ── Seasonal favorites: 4-up genres/moods/tracks per season ── */
 function SeasonalFavorites({ drill }) {
   const order = [["winter", "❄", "Winter"], ["spring", "✿", "Spring"], ["summer", "☀", "Summer"], ["fall", "🍂", "Fall"]];
   if (!drill || !drill.season) {
@@ -426,7 +420,7 @@ function SeasonalFavorites({ drill }) {
   );
 }
 
-/* ---- Mood distribution ---- */
+/* ── Mood distribution ── */
 function MoodBars({ items, max, activeKey, onPick }) {
   /* Each bar is split into the share you labelled by hand and the share a
      classifier inferred. Worth showing plainly: the classifier is only allowed
@@ -470,7 +464,7 @@ function MoodBars({ items, max, activeKey, onPick }) {
   );
 }
 
-/* ---- Genre donut (SVG) + legend ---- */
+/* ── Genre donut (SVG) + legend ── */
 function GenreDonut({ items, total, colors, activeKey, onPick, size = 132 }) {
   const legendRef = useFlipRows(items.map((it) => it.key).join("|"));
   const r = size / 2;
@@ -520,7 +514,7 @@ function GenreDonut({ items, total, colors, activeKey, onPick, size = 132 }) {
   );
 }
 
-/* ---- Tag cloud (ranked chips) ---- */
+/* ── Tag cloud (ranked chips) ── */
 function TagCloud({ items, activeKey, onPick }) {
   const ref = useFlipRows(items.map((t) => t.key).join("|"));
   return (
@@ -534,7 +528,7 @@ function TagCloud({ items, activeKey, onPick }) {
   );
 }
 
-/* ---- Coverage bars ---- */
+/* ── Coverage bars ── */
 function CoverageBars({ rows, total }) {
   return (
     <div className="coverage">

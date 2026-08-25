@@ -12,8 +12,8 @@ A field counts as populated when it is not None/""/[]/{}. audio_features is
 additionally broken down by its `source`, which is what separates a gain made
 by the 5a/5b chain from one made by the legacy Exportify route.
 
-Snapshots are plain JSON and safe to keep around; the diff only needs the
-baseline file, not the tracks.jsonl it came from.
+Snapshots are plain JSON; the diff needs only the baseline file, not the
+tracks.jsonl it came from.
 """
 
 from __future__ import annotations

@@ -1,44 +1,29 @@
 """Phase 5a — resolve ISRCs via MusicBrainz (ID join), then Deezer (name search).
 
-Part of the Spotify-free audio-feature chain (#37). ``audio_features`` and
-``spotify_id`` correlated perfectly on this library because Exportify was the
-only source of both — closing that gap first needs an ISRC, since that is the
-identifier Phase 5b's ReccoBeats lookup and every named fallback (AcousticBrainz,
-frozen Kaggle corpora) key on. ``spotify_id`` is not resolved here at all.
+First half of the Spotify-free audio-feature chain (#37). The ISRC is the key
+Phase 5b's ReccoBeats lookup and every fallback corpus join on.
+``spotify_id`` is not resolved here at all.
 
-Resolver order, cheapest and most durable first (see issue #37's second
-comment for the measurement this follows):
+Resolver order, cheapest and most durable first:
 
-1. **MusicBrainz** — a track that already carries ``musicbrainz_id`` gets its
-   ISRC via ``recording/<mbid>?inc=isrcs``. An exact ID join, no auth, and
-   Phase 4 already talks to MusicBrainz through the same rate-limited client.
-2. **Deezer** — for everything MusicBrainz doesn't cover: search by
-   artist/track (retried through the shared ``name_variations`` cascade),
-   then read the ISRC off the matched track. No auth, no key.
+1. **MusicBrainz** — where the track already carries ``musicbrainz_id``,
+   ``recording/<mbid>?inc=isrcs``. Exact ID join, no auth, same rate-limited
+   client Phase 4 already uses.
+2. **Deezer** — everything else: artist/track search (retried through the shared
+   ``name_variations`` cascade), then read the ISRC off the match. No auth.
 
-A track that already holds an ``isrc`` is skipped outright — it came from
-Exportify (or Phase B) by a different route and is not this phase's to
-second-guess; ``pipeline.update_tracks._FILL_ONLY_FIELDS`` enforces the same
-rule again at the final merge.
+A track that already holds an ``isrc`` is skipped — it came by another route and
+is not this phase's to second-guess. ``update_tracks._FILL_ONLY_FIELDS`` enforces
+the same rule again at the final merge.
 
-Both API shapes below are unverified against a live response — the environment
-this was built in has no outbound access to musicbrainz.org or
-api.deezer.com — so each is isolated in one small parsing function
-(``_isrc_from_musicbrainz_response`` / ``_best_deezer_match`` /
-``_isrc_from_deezer_track``) for a one-line fix if the real response disagrees.
-Confirm on the first real run, the same posture PR #24 (Phase B) took for
-Spotify's ``external_ids.isrc``.
+**Runs before Phase 4e** despite the "5" in its id (order is the manifest's list
+order; ids are stable labels). 4e clusters on ``isrc``, so resolving downstream of
+it left that evidence unavailable and identity fell back to normalized
+artist+track — where a change to ``normalize_artist`` re-keys rows and orphans
+their human-edited fields at the Phase 8 merge.
 
-Runs **before** Phase 4e despite the "5" in its id (execution order is the
-manifest's list order; the id is a stable label). 4e clusters on ``isrc`` as a
-strong identifier, so resolving ISRCs downstream of it meant that evidence was
-never available: identity fell back to normalized artist+track, and a change to
-``normalize_artist`` re-keyed tracks and orphaned their human-edited fields at
-the Phase 8 merge. Resolving first makes ``canonical_track_id`` durable for the
-~95% of rows that get an ISRC.
-
-Does **not** touch ``canonical_track_id`` — 4e owns that, and now computes it
-with this phase's ISRCs in hand.
+Does **not** set ``canonical_track_id``; 4e owns that, and now computes it with
+these ISRCs in hand.
 
 Usage:
     python -m pipeline.resolve_isrcs
@@ -85,7 +70,7 @@ _INPUT_PRIORITY = [
 DEFAULT_INPUT = TRACKS_WITH_GENRE_BACKFILL_PATH
 
 
-# ── MusicBrainz: recording ID → ISRC ──────────────────────────────────────
+# ── MusicBrainz: recording ID → ISRC ──
 
 
 def _isrc_from_musicbrainz_response(response: Any) -> str | None:
@@ -115,7 +100,7 @@ def _resolve_musicbrainz(client: RateLimitedClient, mbid: str) -> str | None:
     return _isrc_from_musicbrainz_response(response)
 
 
-# ── Deezer: name search → track → ISRC ────────────────────────────────────
+# ── Deezer: name search → track → ISRC ──
 
 
 def _best_deezer_match(

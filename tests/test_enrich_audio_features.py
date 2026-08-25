@@ -1,11 +1,7 @@
 """Tests for Phase 5b — ReccoBeats audio features, keyed by ISRC.
 
-The ReccoBeats API shape is unverified against a live response (see the
-module docstring and the note next to RECCOBEATS_API_ROOT in
-pipeline/config.py), so these tests pin the *assumed* two-step shape
-(batch ISRC->track-id resolve, then per-track audio-features fetch) against a
-stubbed client — the same posture test_enrich_spotify_ids.py takes for
-Spotify's external_ids.isrc.
+Pins the two-step shape (batch ISRC->track-id resolve, then per-track
+audio-features fetch) against a stubbed client — no network.
 """
 
 from __future__ import annotations
@@ -21,7 +17,7 @@ from pipeline.enrich_audio_features import (
 )
 
 
-# ── _parse_features ─────────────────────────────────────────────────────────
+# ── _parse_features ──
 
 
 class TestParseFeatures:
@@ -50,7 +46,7 @@ class TestParseFeatures:
         assert _parse_features({"unrelated": "x"}) is None
 
 
-# ── _resolve_track_ids ──────────────────────────────────────────────────────
+# ── _resolve_track_ids ──
 
 
 class _StubResolveClient:
@@ -92,7 +88,7 @@ class TestResolveTrackIds:
         assert len(client.requests) == 3  # 40 + 40 + 5
 
 
-# ── _fetch_audio_features ───────────────────────────────────────────────────
+# ── _fetch_audio_features ──
 
 
 class _StubFeaturesClient:
@@ -114,7 +110,7 @@ class TestFetchAudioFeatures:
         assert _fetch_audio_features(client, "unknown") is None
 
 
-# ── enrich() end-to-end ─────────────────────────────────────────────────────
+# ── enrich() end-to-end ──
 
 
 class TestEnrichPersistsFeatures:

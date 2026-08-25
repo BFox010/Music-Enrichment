@@ -1,15 +1,10 @@
-/* ============================================================
-   dashboard.jsx — main app: state, aggregation, layout
-   ============================================================ */
+/* Main app: state, aggregation, layout. */
 const { useState, useMemo, useEffect, useRef, useCallback } = React;
 
-/* ---------- helpers ---------- */
-/* The pure data transforms (SEASON_BY_MONTH, normalizeTrack, aggregateScrobbles,
-   parseJSONL, trackKey, buildPlayWindows, attachWindows, buildDrill,
-   processLibrary) and the timeframe anchor (ANCHOR, computeAnchor, isoWeekKey)
-   now live in web/data-processing.js so the off-main-thread parser
-   (web/data-worker.js) can share them via importScripts. That file loads as a
-   global <script> before this bundle, so the names used below resolve to it. */
+/* ── helpers ── */
+/* The pure transforms and the timeframe anchor live in web/data-processing.js so
+   data-worker.js can importScripts the same code. It loads as a global <script>
+   before this bundle, so unqualified names below resolve to it. */
 
 function countMap(arr) { const m = {}; for (const k of arr) m[k] = (m[k] || 0) + 1; return m; }
 function topEntries(map, n) { return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, n).map(([key, value]) => ({ key, value })); }
@@ -45,9 +40,8 @@ function playInWindow(t, tf) {
   return t.play || 0;
 }
 
-/* One sidebar entry. The active highlight is rendered as its own element so it
-   can carry a view-transition-name: when the page changes, the browser tweens
-   that one box from the old item to the new one and the marker slides down the
+/* The active highlight is its own element so it can carry a view-transition-name:
+   the browser then tweens that box between items and the marker slides down the
    nav instead of blinking off one row and on to another. */
 function NavItem({ id, page, onGo, children }) {
   const active = page === id;
@@ -59,7 +53,7 @@ function NavItem({ id, page, onGo, children }) {
   );
 }
 
-/* ---------- App ---------- */
+/* ── App ── */
 function App() {
   const [data, setData] = useState(() => window.MUSIC_DATA);
   const tracks = useMemo(() => data.tracks.map((t, i) => (t.i != null ? t : normalizeTrack(t, i))), [data]);
@@ -107,10 +101,8 @@ function App() {
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
-  /* Lazy-load ECharts (~1 MB): prefetch during idle after first paint so it is
-     usually ready before a chart is opened, and load it immediately if a chart
-     view is opened first. The charts (useEChart) pick it up via window.echarts
-     once present. ensureECharts() is a singleton, so this loads it at most once. */
+  /* ECharts (~1 MB) is off the first-paint path: prefetch on idle, and load
+     immediately if a chart page opens first. ensureECharts() is a singleton. */
   useEffect(() => {
     const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
     const id = idle(() => { window.ensureECharts && window.ensureECharts(); });
@@ -169,7 +161,6 @@ function App() {
         ? `+${newCount} new scrobble${newCount !== 1 ? "s" : ""} · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`
         : `Up to date · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`;
       showToast(msg);
-      // Re-fetch live data so the UI reflects the updated tracks/scrobbles
       try {
         const [tr, sc] = await Promise.allSettled([
           fetch("tracks.min.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
@@ -187,7 +178,6 @@ function App() {
           if (nc) setCube(nc);
         }
       } catch (e) { /* live fetch optional */ }
-      // Invalidate cached API-backed pages so they reflect the refreshed data.
       setRefreshVersion((v) => v + 1);
     } catch (e) {
       showToast("Refresh error: " + e.message);
@@ -196,7 +186,7 @@ function App() {
     }
   }, [showToast]);
 
-  /* ---------- file loading ---------- */
+  /* ── file loading ── */
   const handleFiles = useCallback(async (fileList) => {
     const files = Array.from(fileList);
     let rawTracks = null, rawScrob = null, names = [];
@@ -208,8 +198,8 @@ function App() {
       else if (lname.includes("track") || rows[0]?.canonical_track_id || rows[0]?.track) { rawTracks = rows; names.push(f.name); }
       else if (rows[0]?.hour != null || rows[0]?.scrobbled_at) { rawScrob = rows; names.push(f.name); }
     }
-    // Defer processing until all files are read so windowed plays + drill can
-    // be joined from scrobbles regardless of the order the files arrive in.
+    // Process only after every file is read, so the scrobble cross-join works
+    // regardless of arrival order.
     const { nt: newTracks, ns: newScrob, drill: nd, cube: nc } = processLibrary(rawTracks, rawScrob);
     if (!newTracks && !newScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     setData((d) => ({
@@ -222,12 +212,11 @@ function App() {
     showToast(`Loaded your data — ${names.join(", ")}`);
   }, [showToast]);
 
-  /* try fetching real files if served alongside (e.g. in the repo) */
+  /* Live library, when served alongside (i.e. from the repo). */
   useEffect(() => {
     let cancelled = false;
     let worker = null;
 
-    // Apply a processed library to state (shared by the worker + sync paths).
     const apply = (nt, ns, nd, nc) => {
       if (cancelled || !(nt || ns)) return;
       setData((d) => ({
@@ -241,9 +230,8 @@ function App() {
 
     (async () => {
       try {
-        // Fetch the slim tracks projection (only the fields the UI renders) plus
-        // scrobbles. The download is async; the heavy parse + cross-join is handed
-        // to a Web Worker so the app shell stays responsive on a fresh mobile load.
+        // Slim projection + scrobbles. Parse and cross-join go to a Web Worker so
+        // the shell stays responsive on a fresh mobile load.
         const [tr, sc] = await Promise.allSettled([
           fetch("tracks.min.jsonl").then((r) => r.ok ? r.text() : Promise.reject()),
           fetch("scrobbles.jsonl").then((r) => r.ok ? r.text() : Promise.reject())
@@ -253,7 +241,7 @@ function App() {
         const scrobblesText = sc.status === "fulfilled" ? sc.value : null;
         if (!tracksText && !scrobblesText) { if (!cancelled) setIsLoadingLive(false); return; }
 
-        // Synchronous fallback: parse + process on the main thread.
+        // Fallback when Worker is unavailable or fails.
         const runSync = () => {
           const trRows = tracksText ? parseJSONL(tracksText) : null;
           const scRows = scrobblesText ? parseJSONL(scrobblesText) : null;
@@ -293,7 +281,7 @@ function App() {
     return () => { window.removeEventListener("dragover", onOver); window.removeEventListener("dragenter", onEnter); window.removeEventListener("dragleave", onLeave); window.removeEventListener("drop", onDrop); };
   }, [handleFiles]);
 
-  /* ---------- filtering ---------- */
+  /* ── filtering ── */
   const setFilter = (kind, val) => setFilters((f) => ({ ...f, [kind]: f[kind] === val ? "" : val }));
   const setFilterValue = (kind, val) => setFilters((f) => ({ ...f, [kind]: val }));
   const removeFilter = (kind) => setFilters((f) => ({ ...f, [kind]: "" }));
@@ -302,7 +290,7 @@ function App() {
   /* windowed play count for the active timeframe */
   const playOf = useCallback((t) => playInWindow(t, timeframe), [timeframe]);
 
-  /* stable genre→color map computed once from the WHOLE library (survives filtering/selection) */
+  /* Computed from the WHOLE library, so colors survive filtering and selection. */
   const genreColorMap = useMemo(() => {
     const count = {};
     for (const t of tracks) for (const g of t.genres) count[g] = (count[g] || 0) + 1;
@@ -356,7 +344,7 @@ function App() {
     else if (key === "track") setSort((s) => s === "track" ? "track_desc" : "track");
   };
 
-  /* ---------- aggregations (from filtered set) ---------- */
+  /* ── aggregations (from filtered set) ── */
   const agg = useMemo(() => {
     const artistPlays = {}, moodCount = {}, moodOwned = {}, genreCount = {}, tagCount = {};
     let withMood = 0, cov = { tags: 0, mbid: 0, styles: 0, af: 0, apple: 0, mood: 0, spotify: 0 };
@@ -432,17 +420,14 @@ function App() {
   const nf = (x) => x.toLocaleString();
   const tfLabel = timeframe === "all" ? "by scrobbles" : TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase();
 
-  /* ---------- overview cross-filter ----------
+  /* ── overview cross-filter ──
+     Every overview chart reads one re-aggregation of the scrobble cube, so the
+     timeframe and chart selections compose: the hour chart shows the selected
+     days, the day chart the selected hours, the drill-down their intersection.
+     One linear pass over typed arrays, memoized on its inputs.
 
-     Every overview chart reads from one re-aggregation of the scrobble cube,
-     so the timeframe and the chart selections compose: the hour chart shows
-     the selected days, the day chart shows the selected hours, and the
-     drill-down describes the intersection of everything picked. One linear
-     pass over typed arrays, memoized on the inputs, so this is imperceptible.
-
-     Falls back to the pre-baked aggregates when the cube is unavailable (the
-     bundled sample payload, or a load path that failed) — those ignore the
-     timeframe, which is the old behaviour rather than an empty dashboard. */
+     No cube (bundled sample, or a failed load) falls back to the pre-baked
+     aggregates, which ignore the timeframe — stale, but not an empty dashboard. */
   const DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   const view = useMemo(() => {
     if (!cube) return { byHour: scrobbles.byHour, byDow: scrobbles.byDow, bySeason: scrobbles.bySeason, total: scrobbles.total, slice: null };

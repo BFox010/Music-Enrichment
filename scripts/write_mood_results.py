@@ -1,15 +1,12 @@
-"""One-off: write Claude mood verdicts for the 565-track batch.
+"""One-off: write Claude mood verdicts back for one batch.
 
-Reads inputs/claude_mood_batch.jsonl in order; for each batch index present in
+Reads inputs/claude_mood_batch.jsonl in order and, for each index present in
 CLASSIFICATIONS below, emits a line to inputs/claude_mood_results.jsonl keyed by
-(artist_normalized, track_normalized) so Phase 6 (classify_moods) applies it at
-highest confidence. Indices omitted from CLASSIFICATIONS are left unclassified
-(pure unknowns / spoken skits / brief intros) and remain in the batch.
+(artist_normalized, track_normalized), which Phase 6 applies at highest
+confidence. Omitted indices stay unclassified (spoken skits, brief intros).
 
 Multi-label, in the owner's calibrated style (median ~3 moods; Fast used broadly
-for energetic rap; Fast/Slow may coexist). Valid moods only:
-Fast, Moody, Slow, Heavy Bass, Dance, Sad, Groove, Heartbreak, Dark, Love,
-Hype, Uplifting, Happy, Sunny.
+for energetic rap; Fast/Slow may coexist). MOOD_CATEGORIES values only.
 """
 
 from __future__ import annotations

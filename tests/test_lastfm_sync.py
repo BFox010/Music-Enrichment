@@ -13,7 +13,7 @@ import pytest
 from app.lastfm_sync import fetch_recent_scrobbles, get_last_scrobble_ts
 
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# ── helpers ──
 
 def _raw_track(artist="Portishead", name="Roads", uts="1730606040"):
     return {
@@ -57,7 +57,7 @@ def _mock_client(pages: list[dict]):
     return mock_client
 
 
-# ── TestGetLastScrobbleTs ─────────────────────────────────────────────────────
+# ── TestGetLastScrobbleTs ──
 
 class TestGetLastScrobbleTs:
     def test_empty_returns_zero(self):
@@ -81,7 +81,7 @@ class TestGetLastScrobbleTs:
         assert get_last_scrobble_ts([{"artist": "x"}]) == 0
 
 
-# ── TestFetchRecentScrobbles ──────────────────────────────────────────────────
+# ── TestFetchRecentScrobbles ──
 
 class TestFetchRecentScrobbles:
     def test_single_page(self):

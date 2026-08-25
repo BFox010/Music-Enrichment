@@ -1,36 +1,22 @@
 """Phase 5b — batch audio-feature lookup via ReccoBeats, keyed by ISRC.
 
-The second half of the Spotify-free chain (#37): Phase 5a resolves an ISRC,
-this phase spends it. ReccoBeats mirrors the pre-deprecation Spotify
-audio-features corpus (validated bit-identical on 11 shared fields across 33
-Exportify rows — see issue #37) and takes ISRCs directly, so no Spotify
-account or credentials are needed anywhere in this path.
+Second half of the Spotify-free chain (#37): 5a resolves an ISRC, this phase
+spends it. ReccoBeats mirrors the pre-deprecation Spotify audio-features corpus
+(bit-identical on 11 shared fields across 33 Exportify rows) and takes ISRCs
+directly — no Spotify account anywhere in this path.
 
-Two-step lookup, both isolated below for a one-line fix if the real API shape
-disagrees with what's assumed here (unverified — see the module-level note in
-``pipeline/config.py`` next to ``RECCOBEATS_API_ROOT``; this environment has no
-outbound access to reccobeats.com):
+Two-step lookup:
+1. ``_resolve_track_ids`` — ``GET track?ids=<isrc,...>``, a page at a time.
+2. ``_fetch_audio_features`` — ``GET track/<id>/audio-features`` per resolved ID.
 
-1. ``_resolve_track_ids`` — batch-resolve a page of ISRCs to ReccoBeats track
-   IDs via ``GET track?ids=<isrc,isrc,...>``.
-2. ``_fetch_audio_features`` — per resolved ID, ``GET track/<id>/audio-features``
-   for the feature vector.
+Emits the same block shape Exportify does (``{"source", "danceability", ...}``),
+so every reader is unchanged; only ``source`` differs.
 
-Written in the same shape Exportify already produces
-(``{"source": ..., "danceability": ..., ...}``), so ``classify_moods`` and
-every other reader of ``audio_features`` needs no changes — only the
-``source`` value differs (``"reccobeats"`` vs ``"exportify"``, both listed in
-``pipeline.config.AUDIO_FEATURE_SOURCES``).
+``time_signature`` is the one Exportify field ReccoBeats lacks. Left unset rather
+than guessed — nothing downstream reads it.
 
-``time_signature`` is the one Exportify field ReccoBeats' audio-features
-endpoint doesn't carry (per issue #37's survey). Left unset on these rows
-rather than guessed — nothing downstream reads it (only ``merge_exportify``
-writes it, and ``classify_moods.ALL_KEYS`` never includes it), so an absent
-value costs nothing.
-
-Never overwrites an existing ``audio_features`` block unless ``--force`` —
-that block is Exportify data acquired at real cost and is not this phase's to
-second-guess.
+Never overwrites an existing ``audio_features`` block without ``--force``: that
+block is Exportify data acquired at real cost.
 
 Usage:
     python -m pipeline.enrich_audio_features
@@ -75,10 +61,8 @@ DEFAULT_INPUT = TRACKS_WITH_AVAILABILITY_PATH
 # How many ISRCs go in one resolve request. Conservative — no published cap.
 _BATCH_SIZE = 40
 
-# ReccoBeats field name -> our audio_features key. Assumed identical to the
-# Spotify/Exportify vocabulary per issue #37's "bit-identical on 11 shared
-# fields" measurement; time_signature is the one field ReccoBeats doesn't
-# carry, so it's simply absent from this map.
+# ReccoBeats field names, identical to the Spotify/Exportify vocabulary.
+# time_signature is absent because ReccoBeats doesn't carry it.
 _FEATURE_KEYS: tuple[str, ...] = (
     "danceability", "energy", "valence", "tempo", "loudness",
     "speechiness", "acousticness", "instrumentalness", "liveness",

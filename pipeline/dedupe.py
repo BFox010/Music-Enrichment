@@ -24,13 +24,11 @@ log = get_logger(__name__)
 
 
 def _most_common_value(values: list[str]) -> str:
-    """Most frequently occurring non-empty string, or '' if all empty.
+    """Most frequent non-empty string, '' if all empty.
 
-    Ties break on the value itself, not on scrobble arrival order.
-    ``Counter.most_common`` breaks ties by insertion order, so the same input
-    set could pick a different winner depending on the order rows happened to
-    arrive — and for ``musicbrainz_id`` a tie can flip ``canonical_track_id``
-    between runs, which cascades into every cross-phase join.
+    Ties break on the value, NOT arrival order: ``Counter.most_common`` breaks
+    ties by insertion order, so a tie on ``musicbrainz_id`` would flip
+    ``canonical_track_id`` between runs and cascade into every cross-phase join.
     """
     non_empty = [v for v in values if v]
     if not non_empty:
@@ -44,17 +42,14 @@ def _peak_year(years: list[int]) -> int:
 
 
 def _merge_skeleton_group(rows: list[dict]) -> dict:
-    """Fold skeleton rows that share an export-supplied musicbrainz_id.
+    """Fold skeleton rows sharing an export-supplied musicbrainz_id.
 
-    Mirrors the strong-identifier merge Phase 4e already performs unconditionally
-    on a shared musicbrainz_id — no review needed, an exact match is decisive.
-    Doing it here too means Phases 3a/4 never see the redundant half at all.
+    Mirrors Phase 4e's strong-identifier merge — an exact MBID match is decisive,
+    and merging here means Phases 3a/4 never enrich the redundant half.
 
-    Records every source row's own (artist_normalized, track_normalized) as an
-    ``identity_aliases`` entry. ``scrobbles.jsonl`` is never rewritten, so
-    without this a play logged under the merged-away key would have nothing
-    left to match — the app's scrobble→track index (app/metrics.py) resolves
-    exactly through this field, same as it does for Phase 4e's later merges.
+    Records each source row's (artist_normalized, track_normalized) as an
+    ``identity_aliases`` entry. scrobbles.jsonl is never rewritten, so without
+    this a play logged under the merged-away key has nothing left to match.
     """
     ordered = sorted(
         rows,
@@ -77,11 +72,9 @@ def _merge_skeleton_group(rows: list[dict]) -> dict:
 def _merge_by_export_mbid(skeletons: list[dict]) -> list[dict]:
     """Merge skeleton rows sharing a non-null export-supplied musicbrainz_id.
 
-    The decisive evidence Phase 4e normally waits for (name-shape *and*
-    fetched MBID) already exists here for free where the Last.fm export
-    itself carried a recording MBID — no lookup required. Conservative by
-    construction: only rows the export itself already tagged with the exact
-    same recording ID ever merge; everything else is left for Phase 4e.
+    Where the export carried a recording MBID, the evidence 4e waits for is
+    already here for free. Conservative: only exact same-ID rows merge, everything
+    else is left to Phase 4e.
     """
     buckets: dict[str, list[int]] = defaultdict(list)
     for i, row in enumerate(skeletons):

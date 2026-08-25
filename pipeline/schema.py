@@ -1,23 +1,15 @@
 """Canonical schema + registry for tracks.jsonl.
 
-Defines:
-- Versioned dataclasses (TrackV5 legacy, TrackV6 current) describing the
-  canonical Track shape
-- A schema registry: version → dataclass
-- FIELD_DEFAULTS with stable emit order (_schema_version FIRST, then
-  canonical_track_id, then identity, then enrichment groups)
-- compute_canonical_track_id() — MBID → ISRC → normalized artist+track → hash
-- write_jsonl / read_jsonl — enforce field order on write; ignore (but
-  preserve) unknown fields on read
-- validators (validate_row, validate_dataset)
-- fill_defaults — also populates _schema_version and canonical_track_id
+- ``TrackV5`` (legacy) / ``TrackV6`` (current) dataclasses, indexed by SCHEMA_REGISTRY
+- ``FIELD_DEFAULTS`` — the full field set, in stable emit order
+- ``compute_canonical_track_id`` — MBID → ISRC → normalized artist+track → hash
+- ``read_jsonl`` / ``write_jsonl`` — unknown fields preserved losslessly on read,
+  field order enforced on write
+- ``fill_defaults``, ``validate_row``, ``validate_dataset``
 
-Schema policy (mirrored from README):
-- _schema_version is the FIRST field on every JSONL record
-- Writers emit fields in stable, documented order
-- Readers silently ignore unknown fields (here: preserve, lossless)
-- Minor additive fields do NOT bump SCHEMA_VERSION
-- Breaking renames/removals DO bump SCHEMA_VERSION + require migration tests
+Policy: ``_schema_version`` is first on every record; readers ignore unknown
+fields; additive fields do NOT bump SCHEMA_VERSION, breaking renames/removals do
+and require migration tests.
 """
 
 from __future__ import annotations
@@ -30,7 +22,7 @@ from typing import Any, Iterable
 
 from pipeline.config import SCHEMA_VERSION
 
-# Required identity fields — every track row must have these
+# Every track row must have these.
 REQUIRED_FIELDS: tuple[str, ...] = (
     "artist",
     "track",
@@ -38,9 +30,8 @@ REQUIRED_FIELDS: tuple[str, ...] = (
     "track_normalized",
 )
 
-# Full field set with default values used by Phase 8 to fill missing fields.
-# Order is preserved when writing JSONL for stable git diffs.
-# _schema_version MUST stay first; canonical_track_id second.
+# Defaults Phase 8 fills gaps from. Write order is this order, for stable git
+# diffs — _schema_version MUST stay first, canonical_track_id second.
 FIELD_DEFAULTS: dict[str, Any] = {
     # Schema
     "_schema_version": SCHEMA_VERSION,
@@ -61,8 +52,8 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "musicbrainz_id": None,
     "artist_mbid": None,
     "isrc": None,
-    # Provenance for isrc — which resolver found it (Phase 5a) and when.
-    # Absent (None) for an Exportify-sourced ISRC, which predates this field.
+    # Which resolver found the isrc (Phase 5a). None for an Exportify-sourced
+    # ISRC, which predates the field.
     "isrc_source": None,
     "isrc_retrieved_at": None,
     "apple_music_available": None,
@@ -75,20 +66,17 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "lastfm_tags": [],
     "discogs_styles": [],
     "itunes_genre": None,
-    # Global-popularity signal from Last.fm track.getInfo — already fetched
-    # for tags/MBIDs, so capturing these costs no extra API calls (#41).
+    # Global popularity, free-riding on the track.getInfo call made for tags/MBIDs.
     "lastfm_listeners": None,
     "lastfm_playcount": None,
     # Mood (Phase 6)
     "mood_tags": None,
     "mood_source": None,
     "mood_confidence": None,
-    # Distance to the nearest mood centroid, so the UI can show fit rather
-    # than mere presence. Only set on centroid-classified rows.
+    # Nearest-centroid distance, so the UI can show fit. Centroid rows only.
     "mood_distance": None,
-    # Every (artist_normalized, track_normalized) pair folded into this row by
-    # Phase 4e. scrobbles.jsonl is never rewritten, so the aggregation layer
-    # resolves an old credit to its canonical row through this list.
+    # Every (artist_normalized, track_normalized) Phase 4e folded into this row.
+    # scrobbles.jsonl is never rewritten; aggregation resolves old credits here.
     "identity_aliases": [],
     # Listening / counts
     "play_count": 0,
@@ -111,14 +99,13 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "enrichment_sources": [],
 }
 
-# Fields that are human-edited and MUST be preserved across re-runs of Phase 8
+# Human-edited: MUST survive every Phase 8 re-run.
 HUMAN_EDITED_FIELDS: tuple[str, ...] = (
     "curation_state",
 )
 
-# Fields whose existing values should win over a fresh enrichment pass —
-# typically because Phase 6 Claude review marks `mood_source: claude_batch`
-# and that should not be overwritten by a centroid pass.
+# Existing value wins over a fresh pass when its source field names a
+# higher-quality producer — e.g. a claude_batch mood must survive a centroid re-run.
 PROTECTED_WHEN_HIGHER_QUALITY: dict[str, dict[str, str]] = {
     "mood_tags": {
         "source_field": "mood_source",
@@ -127,22 +114,14 @@ PROTECTED_WHEN_HIGHER_QUALITY: dict[str, dict[str, str]] = {
 }
 
 
-# ── Versioned dataclasses ────────────────────────────────────────────────
+# ── Versioned dataclasses ──
 
 
 @dataclass
 class TrackV5:
-    """Canonical Track schema, version 5 — SUPERSEDED, kept for legacy reads.
+    """SUPERSEDED — parses pre-migration v5 rows only. New code uses TrackV6.
 
-    v6 (issue #63) dropped ``blacklisted`` and ``rejected_reason``, both
-    playlist-generator leftovers with no consumer. This dataclass exists only
-    so a pre-migration v5 row can still be parsed; new code should use
-    ``TrackV6``. ``_schema_version`` is hardcoded to 5 rather than tracking
-    ``pipeline.config.SCHEMA_VERSION`` — that constant now means 6.
-
-    Field order mirrors the v5 shape. Use to_dict() to emit a JSONL-ready
-    dict with stable key order; use from_dict() to parse one (extra fields
-    are preserved on the dataclass as `_extras`).
+    ``_schema_version`` is hardcoded to 5, not SCHEMA_VERSION, which now means 6.
     """
 
     _schema_version: int = 5
@@ -189,8 +168,7 @@ class TrackV5:
     rejected_reason: str | None = None
     enriched_at: str | None = None
     enrichment_sources: list[str] = field(default_factory=list)
-    # Unknown-but-preserved fields (forward compat). Not emitted as a single
-    # blob — to_dict() spreads them at the end of the record.
+    # Forward-compat. to_dict() spreads these at the end, not as a nested blob.
     _extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -206,7 +184,6 @@ class TrackV5:
             if f.name == "_extras":
                 continue
             out[f.name] = getattr(self, f.name)
-        # Spread unknown-but-preserved fields at the end
         for k, v in self._extras.items():
             if k not in out:
                 out[k] = v
@@ -215,12 +192,10 @@ class TrackV5:
 
 @dataclass
 class TrackV6:
-    """Canonical Track schema, version 6 — current.
+    """Current canonical Track schema. Field order mirrors FIELD_DEFAULTS.
 
-    v5 minus ``blacklisted``/``rejected_reason`` (issue #63: playlist-generator
-    leftovers, computed and validated but rendered nowhere), plus
-    ``isrc_source``/``isrc_retrieved_at`` (issue #37: provenance for Phase 5a's
-    MusicBrainz/Deezer ISRC resolution). Field order mirrors FIELD_DEFAULTS.
+    v5 minus ``blacklisted``/``rejected_reason`` (#63), plus
+    ``isrc_source``/``isrc_retrieved_at`` (#37).
     """
 
     _schema_version: int = SCHEMA_VERSION
@@ -269,8 +244,7 @@ class TrackV6:
     curation_state: str | None = None
     enriched_at: str | None = None
     enrichment_sources: list[str] = field(default_factory=list)
-    # Unknown-but-preserved fields (forward compat). Not emitted as a single
-    # blob — to_dict() spreads them at the end of the record.
+    # Forward-compat. to_dict() spreads these at the end, not as a nested blob.
     _extras: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -286,7 +260,6 @@ class TrackV6:
             if f.name == "_extras":
                 continue
             out[f.name] = getattr(self, f.name)
-        # Spread unknown-but-preserved fields at the end
         for k, v in self._extras.items():
             if k not in out:
                 out[k] = v
@@ -305,7 +278,7 @@ def get_schema(version: int = SCHEMA_VERSION) -> type:
     return SCHEMA_REGISTRY[version]
 
 
-# ── Canonical track identity ─────────────────────────────────────────────
+# ── Canonical track identity ──
 
 
 def compute_canonical_track_id(row: dict[str, Any]) -> str:
@@ -331,7 +304,6 @@ def compute_canonical_track_id(row: dict[str, Any]) -> str:
     if artist_n and track_n:
         return f"norm:{artist_n}|{track_n}"
 
-    # Fallback: hash whatever identity-shaped fields exist
     raw = "|".join(
         str(row.get(k) or "")
         for k in ("artist", "track", "album", "spotify_id", "apple_music_id")
@@ -342,19 +314,14 @@ def compute_canonical_track_id(row: dict[str, Any]) -> str:
     return ""
 
 
-# ── Defaults + validation ────────────────────────────────────────────────
+# ── Defaults + validation ──
 
 
 def fill_defaults(row: dict[str, Any]) -> dict[str, Any]:
-    """Return a new dict with all schema fields populated.
+    """New dict with every schema field populated. Existing non-None values win;
+    mutable defaults are fresh per call; unknown fields survive at the end.
 
-    Existing non-None values win. Mutable defaults (lists, dicts) are
-    independent per call. Extra (unknown) fields are preserved at the end
-    of the output for forward compatibility.
-
-    Also:
-    - _schema_version defaults to current SCHEMA_VERSION
-    - canonical_track_id is computed if missing or empty
+    Also stamps _schema_version and computes canonical_track_id when empty.
     """
     out: dict[str, Any] = {}
     for key, default in FIELD_DEFAULTS.items():
@@ -372,11 +339,9 @@ def fill_defaults(row: dict[str, Any]) -> dict[str, Any]:
             else:
                 out[key] = default
 
-    # Compute canonical_track_id if missing/empty
     if not out.get("canonical_track_id"):
         out["canonical_track_id"] = compute_canonical_track_id(out)
 
-    # Preserve any extra fields that aren't in the canonical schema
     for key, value in row.items():
         if key not in FIELD_DEFAULTS:
             out[key] = value
@@ -418,17 +383,12 @@ def validate_dataset(rows: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-# ── JSONL IO with version + order discipline ─────────────────────────────
+# ── JSONL IO with version + order discipline ──
 
 
 def write_jsonl(rows: Iterable[dict[str, Any]], path: Path) -> int:
-    """Write rows to JSONL with stable field order.
-
-    Every emitted record has _schema_version as its FIRST key. Other known
-    fields follow in FIELD_DEFAULTS order. Unknown fields are appended at
-    the end (preserving forward-compat data).
-
-    Returns row count written.
+    """Write JSONL in stable field order: _schema_version first, then FIELD_DEFAULTS
+    order, then unknown fields. Returns rows written.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
     n = 0
@@ -461,15 +421,12 @@ def read_jsonl(path: Path) -> list[dict[str, Any]]:
 def _order_for_emit(row: dict[str, Any]) -> dict[str, Any]:
     """Reorder a row so _schema_version is first, known fields follow defaults order, extras last."""
     out: dict[str, Any] = {}
-    # _schema_version stamped first; default to current if absent
     out["_schema_version"] = row.get("_schema_version", SCHEMA_VERSION)
-    # Other known fields in FIELD_DEFAULTS order
     for key in FIELD_DEFAULTS:
         if key == "_schema_version":
             continue
         if key in row:
             out[key] = row[key]
-    # Extras at the end (forward-compat)
     for key, value in row.items():
         if key not in out:
             out[key] = value

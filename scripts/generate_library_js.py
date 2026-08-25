@@ -1,14 +1,10 @@
 """Generate web/data/library.js from tracks.jsonl + scrobbles.jsonl.
 
-This creates the static fallback that the dashboard loads before the
-FastAPI server responds — useful for the file:// workflow (double-click
-index.html) and as an offline snapshot.
-
-Re-run this any time tracks.jsonl changes to keep the snapshot current:
+The static fallback the dashboard loads before FastAPI responds — for the
+file:// workflow (double-click index.html) and as an offline snapshot.
+Re-run whenever tracks.jsonl changes. Output is gitignored (personal data).
 
     python scripts/generate_library_js.py
-
-The output is gitignored (personal listening data); keep it local.
 """
 
 from __future__ import annotations

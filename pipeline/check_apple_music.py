@@ -1,15 +1,14 @@
 """Phase 5 — Apple Music availability check via iTunes Search API.
 
-For each track, queries https://itunes.apple.com/search?term=<artist track>&entity=song&country=us
-and matches the response back to the track. Sets:
-  - apple_music_available: bool   (probable, NOT confirmed — iTunes Search has known false positives)
-  - apple_music_id: str | None    (Apple's trackId — distinct from iTunes Persistent ID)
-  - apple_music_checked_at: str   (ISO date)
+Queries ``itunes.apple.com/search?entity=song&country=us`` and matches back. Sets:
+  - apple_music_available: bool   — *probable*, not confirmed; iTunes Search has
+                                    known false positives
+  - apple_music_id: str | None    — Apple's trackId, NOT iTunes Persistent ID
+  - apple_music_checked_at: str   — ISO date
 
-Caching: ``.cache/apple_music.json``, keyed by ``artist_norm|track_norm``.
-Re-checks only when ``apple_music_checked_at`` is older than
-``APPLE_MUSIC_CACHE_DAYS`` (90 by default). Both that gate and the HTTP cache are
-bypassed under ``force`` — see ``pipeline._http``.
+Cache ``.cache/apple_music.json``, keyed ``artist_norm|track_norm``. Re-checks
+only past ``APPLE_MUSIC_CACHE_DAYS``; ``force`` bypasses both that gate and the
+HTTP cache.
 
 Usage:
     python -m pipeline.check_apple_music

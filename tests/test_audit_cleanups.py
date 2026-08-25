@@ -21,7 +21,7 @@ def _write_jsonl(path: Path, rows) -> None:
             fh.write((r if isinstance(r, str) else json.dumps(r)) + "\n")
 
 
-# ── #5 — Forgotten Favorites label fallback ──────────────────────────────────
+# ── #5 — Forgotten Favorites label fallback ──
 
 class TestForgottenFavoritesLabels:
     def _data(self):
@@ -73,7 +73,7 @@ class TestForgottenFavoritesLabels:
         assert all(r["artist"] or r["track"] for r in rows)
 
 
-# ── #6 — Loader surfaces skipped-row counts ──────────────────────────────────
+# ── #6 — Loader surfaces skipped-row counts ──
 
 class TestLoaderSkippedCounts:
     def test_reload_reports_skipped_rows(self):
