@@ -86,6 +86,25 @@ class TestCommittedAudit:
         unknown = {m for a in audit_rows for m in a["mood_tags"] if m not in MOOD_CATEGORIES}
         assert unknown == set(), f"audit uses moods outside MOOD_CATEGORIES: {unknown}"
 
+    def test_no_unfiltered_noise_tags_on_disk(self) -> None:
+        """#69: the filter ran only in Phase 4, so Phase 4d stored artist tags raw.
+
+        Both fields are checked — the point is that every tag field the pipeline
+        writes goes through the same filter, not just the one that happened to.
+        """
+        from pipeline.tag_filter import build_artist_block, is_noise_tag
+
+        _, tracks = _load()
+        block = build_artist_block(tracks)
+        offenders = [
+            (t.get("artist"), field, tag)
+            for t in tracks
+            for field in ("lastfm_tags", "lastfm_artist_tags")
+            for tag in (t.get(field) or [])
+            if is_noise_tag(tag, block)
+        ]
+        assert offenders == [], f"{len(offenders)} unfiltered noise tags: {offenders[:5]}"
+
     def test_each_audit_row_resolves_to_at_most_one_track(self) -> None:
         """Two tracks answering to one audit key means an identity merge is wrong."""
         seen: dict[tuple[str, str], int] = {}

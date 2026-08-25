@@ -51,6 +51,7 @@ from pipeline.config import (
 from pipeline.derive_genres import _genres_from_tags
 from pipeline.name_variations import first_artist
 from pipeline.normalize import normalize_artist
+from pipeline.tag_filter import build_artist_block, filter_tags
 
 log = get_logger(__name__)
 
@@ -195,6 +196,11 @@ def enrich(
     log.info("Tracks: %d total, %d with no genre (backfill candidates)",
              len(tracks), len(gap))
 
+    # Built once over the whole library, as Phase 4 does — an artist-as-tag is
+    # only recognisable against the full roster, not the gap subset.
+    artist_block = build_artist_block(tracks)
+    log.info("Artist-name block set: %d names", len(artist_block))
+
     lastfm = RateLimitedClient(
         LASTFM_CACHE, rate_per_second=LASTFM_RATE_LIMIT,
         user_agent="MusicEnrichment/1.0", flush_every=100, force=force,
@@ -234,6 +240,10 @@ def enrich(
             via_first_artist = False
             for idx, (cand_artist, cand_norm) in enumerate(candidates):
                 tags = _fetch_lastfm_artist_tags(lastfm, api_key, cand_artist, cand_norm)
+                # Before the mapping, not just before the write: artist.getTopTags
+                # is dense with collaborator names ("jay-z", "Kanye West"), and one
+                # colliding with a GENRE_TAG_MAP key would propagate into genres.
+                tags = filter_tags(tags, artist_block)
                 if idx == 0:
                     la_tags = tags  # keep the full-credit tags for transparency
                 mapped = _genres_from_tags(tags)

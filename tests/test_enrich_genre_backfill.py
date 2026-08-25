@@ -307,3 +307,49 @@ class TestArtistPropagation:
         _run(tracks, {}, monkeypatch)
         # One gap row, one artist candidate — the tagged sibling is never fetched.
         assert FakeClient.all_calls == ["artisttags|drake"]
+
+
+class TestArtistTagsAreFiltered:
+    """#69: filter_tags ran only in Phase 4, so Phase 4d stored artist.getTopTags
+    raw — 184 noise occurrences reached the committed library.
+    """
+
+    def test_artist_name_tag_is_dropped(self, monkeypatch) -> None:
+        # "Kanye West" is a collaborator name, not a genre. It is in the block
+        # set because another row in this library is credited to him.
+        tracks = [
+            _track("Kanye West", "kanye west", genres=["Hip-Hop / Rap"]),
+            _track("Big Sean", "big sean"),
+        ]
+        responses = {"artisttags|big sean": {"toptags": {"tag": [
+            {"name": "Hip-Hop"}, {"name": "Kanye West"},
+        ]}}}
+        rows, _ = _run(tracks, responses, monkeypatch)
+        assert rows[1]["lastfm_artist_tags"] == ["Hip-Hop"]
+
+    def test_noise_tag_cannot_reach_the_genre_mapping(self, monkeypatch) -> None:
+        """The real risk: an artist-as-tag colliding with a GENRE_TAG_MAP key.
+
+        "Jungle" is a real band in this library and also a real genre word, so
+        the block set suppresses it — the tag must not survive to be mapped.
+        """
+        tracks = [
+            _track("Jungle", "jungle", genres=["Electronic"]),
+            _track("Some Artist", "some artist"),
+        ]
+        responses = {"artisttags|some artist": {"toptags": {"tag": [
+            {"name": "jungle"}, {"name": "Rock"},
+        ]}}}
+        rows, _ = _run(tracks, responses, monkeypatch)
+        assert "jungle" not in rows[1]["lastfm_artist_tags"]
+        assert rows[1]["genres"] == ["Rock"]
+
+    def test_genuine_genre_tags_survive_the_filter(self, monkeypatch) -> None:
+        """Guards the tests above: filtering must not eat real genres."""
+        track = _track("Solo", "solo")
+        responses = {"artisttags|solo": {"toptags": {"tag": [
+            {"name": "Hip-Hop"}, {"name": "soul"},
+        ]}}}
+        rows, _ = _run([track], responses, monkeypatch)
+        assert rows[0]["lastfm_artist_tags"] == ["Hip-Hop", "soul"]
+        assert "Hip-Hop / Rap" in rows[0]["genres"]
