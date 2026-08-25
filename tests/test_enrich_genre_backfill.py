@@ -238,3 +238,72 @@ class TestBackfillProvenance:
         assert out["musicbrainz_genres"] == ["jazz"]
         assert out["lastfm_artist_tags"] == ["rap"]
         assert out["genre_backfill"]["source"] == "musicbrainz_artist"
+
+
+class TestArtistPropagation:
+    """#72: a row left empty by an interrupted run, a cached negative, or an
+    autocorrect miss often has its answer already in the file, on a sibling
+    track by the same artist. No network — it only reads what is already there.
+    """
+
+    def test_empty_row_inherits_from_a_sibling(self, monkeypatch) -> None:
+        tracks = [
+            _track("Drake", "drake", genres=["Hip-Hop / Rap"]),
+            _track("Drake", "drake"),  # gap row, every fetch misses
+        ]
+        rows, stats = _run(tracks, {}, monkeypatch)
+        assert rows[1]["genres"] == ["Hip-Hop / Rap"]
+        assert stats["recovered_artist_propagation"] == 1
+        assert stats["still_empty"] == 0
+
+    def test_propagation_never_overwrites_a_fetched_genre(self, monkeypatch) -> None:
+        """The safety property: it fills blanks only."""
+        tracks = [
+            _track("Drake", "drake", genres=["Hip-Hop / Rap", "Pop", "R&B / Soul"]),
+            _track("Drake", "drake"),
+        ]
+        responses = {"artisttags|drake": {"toptags": {"tag": [{"name": "rock"}]}}}
+        rows, _ = _run(tracks, responses, monkeypatch)
+        # The gap row fetched its own answer; the richer sibling must not replace it.
+        assert rows[1]["genres"] == ["Rock"]
+        assert rows[0]["genres"] == ["Hip-Hop / Rap", "Pop", "R&B / Soul"]
+
+    def test_richest_sibling_wins(self, monkeypatch) -> None:
+        tracks = [
+            _track("X", "x", genres=["Rock"]),
+            _track("X", "x", genres=["Rock", "Pop", "Electronic"]),
+            _track("X", "x"),
+        ]
+        rows, _ = _run(tracks, {}, monkeypatch)
+        assert rows[2]["genres"] == ["Rock", "Pop", "Electronic"]
+
+    def test_a_different_artist_never_donates(self, monkeypatch) -> None:
+        tracks = [
+            _track("Drake", "drake", genres=["Hip-Hop / Rap"]),
+            _track("Nobody", "nobody"),
+        ]
+        rows, stats = _run(tracks, {}, monkeypatch)
+        assert rows[1]["genres"] == []
+        assert stats["recovered_artist_propagation"] == 0
+
+    def test_propagated_rows_are_marked_in_enrichment_sources(self, monkeypatch) -> None:
+        from pipeline.update_tracks import _enrichment_sources
+
+        tracks = [
+            _track("Drake", "drake", genres=["Hip-Hop / Rap"]),
+            _track("Drake", "drake"),
+        ]
+        rows, _ = _run(tracks, {}, monkeypatch)
+        assert rows[1]["genre_backfill"]["source"] == "artist_propagation"
+        assert rows[1]["genre_backfill"]["confidence"] == "low"
+        assert "artist_propagation" in _enrichment_sources(rows[1])
+
+    def test_propagation_makes_no_api_calls(self, monkeypatch) -> None:
+        """Only the gap row's own fetches; propagation itself must add none."""
+        tracks = [
+            _track("Drake", "drake", genres=["Hip-Hop / Rap"]),
+            _track("Drake", "drake"),
+        ]
+        _run(tracks, {}, monkeypatch)
+        # One gap row, one artist candidate — the tagged sibling is never fetched.
+        assert FakeClient.all_calls == ["artisttags|drake"]

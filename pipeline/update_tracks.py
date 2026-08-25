@@ -71,6 +71,7 @@ _SOURCE_TRIGGERS: dict[str, list[str]] = {
 _GENRE_BACKFILL_SOURCES: dict[str, str] = {
     "lastfm_artist": "lastfm_artist_tags",
     "musicbrainz_artist": "musicbrainz_artist",
+    "artist_propagation": "artist_propagation",
 }
 
 

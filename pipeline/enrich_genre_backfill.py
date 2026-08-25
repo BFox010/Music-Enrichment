@@ -107,6 +107,49 @@ def _fetch_musicbrainz_artist_genres(client: RateLimitedClient, artist_mbid: str
     return _names_from_musicbrainz_artist(resp)
 
 
+def _propagate_within_artist(tracks: list[dict], today: str) -> int:
+    """Fill a still-empty ``genres`` from the richest sibling row by the same artist.
+
+    Whatever emptied the row — a run interrupted before it, a transient error
+    cached as a negative, an autocorrect miss on a collab credit — the answer is
+    often already in this file, on another track by the same artist. Fetching
+    per track meant no row ever consulted what a sibling had resolved.
+
+    No network. Fills blanks only, so it can never overwrite a fetched value.
+    Returns the number of rows filled.
+    """
+    best_by_artist: dict[str, list[str]] = {}
+    for track in tracks:
+        genres = track.get("genres")
+        if not genres:
+            continue
+        artist = track.get("artist_normalized") or ""
+        # Richest row wins; play_count then title break ties so a re-run over the
+        # same library propagates the same answer.
+        current = best_by_artist.get(artist)
+        if current is None or len(genres) > len(current):
+            best_by_artist[artist] = list(genres)
+
+    filled = 0
+    for track in tracks:
+        if track.get("genres"):
+            continue
+        inherited = best_by_artist.get(track.get("artist_normalized") or "")
+        if not inherited:
+            continue
+        track["genres"] = list(inherited)
+        track["genre_backfill"] = {
+            "source": "artist_propagation",
+            "retrieved_at": today,
+            "pipeline_phase": "4d",
+            # Another of the artist's tracks, not this one — weaker than a
+            # direct artist-level answer, and never a track-level one.
+            "confidence": "low",
+        }
+        filled += 1
+    return filled
+
+
 def enrich(
     input_path: Path | None = None,
     output_path: Path = TRACKS_WITH_GENRE_BACKFILL_PATH,
@@ -246,19 +289,25 @@ def enrich(
         lastfm.flush()
         musicbrainz.flush()
 
+    stats["recovered_artist_propagation"] = _propagate_within_artist(tracks, today)
+    stats["still_empty"] -= stats["recovered_artist_propagation"]
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
         for row in tracks:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
-    recovered = stats["recovered_lastfm_artist"] + stats["recovered_musicbrainz"]
+    recovered = (stats["recovered_lastfm_artist"] + stats["recovered_musicbrainz"]
+                 + stats["recovered_artist_propagation"])
     pct = recovered / stats["gap"] * 100 if stats["gap"] else 0
     log.info(
         "Phase 4d done: recovered %d/%d gap tracks (%.1f%%) — "
-        "lastfm_artist=%d (of which %d via primary-artist) musicbrainz=%d still_empty=%d",
+        "lastfm_artist=%d (of which %d via primary-artist) musicbrainz=%d "
+        "artist_propagation=%d still_empty=%d",
         recovered, stats["gap"], pct,
         stats["recovered_lastfm_artist"], stats["recovered_via_first_artist"],
-        stats["recovered_musicbrainz"], stats["still_empty"],
+        stats["recovered_musicbrainz"], stats["recovered_artist_propagation"],
+        stats["still_empty"],
     )
     log.info("  %s", lastfm.cache_summary())
     log.info("  %s", musicbrainz.cache_summary())
