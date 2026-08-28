@@ -101,6 +101,54 @@ function App() {
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
+  // Monotonic generation token shared by every data-load path (initial live
+  // load, refresh, drag/drop). Each call to runProcessLibrary() claims the
+  // next one before starting; a result that comes back after a newer call
+  // has already claimed the token is stale and gets dropped instead of
+  // clobbering fresher state — e.g. a slow refresh finishing after a second,
+  // faster one must not un-apply it.
+  const loadGenRef = useRef(0);
+
+  /* Runs processLibrary() off the main thread via data-worker.js, falling
+     back to the synchronous path when Worker is unavailable or errors —
+     the one worker-request helper for initial load, refresh, and drag/drop
+     (F-08b), replacing three separate copies of this dance.
+
+     `input` is either {tracksText, scrobblesText} (raw JSONL text — the
+     live-load/refresh path, parsed inside the worker) or {trRows, scRows}
+     (already-parsed rows — the drag/drop path, since a dropped file can be
+     a plain JSON array rather than JSONL). Resolves to {nt, ns, drill, cube}
+     normally, or null if Worker support is present but nothing to process
+     was given, or if the result arrived after a newer load claimed the
+     generation. */
+  const runProcessLibrary = useCallback((input) => {
+    const myGen = ++loadGenRef.current;
+    return new Promise((resolve) => {
+      const runSync = () => {
+        if (loadGenRef.current !== myGen) { resolve(null); return; }
+        const trRows = input.trRows !== undefined ? input.trRows
+          : (input.tracksText ? parseJSONL(input.tracksText) : null);
+        const scRows = input.scRows !== undefined ? input.scRows
+          : (input.scrobblesText ? parseJSONL(input.scrobblesText) : null);
+        resolve(processLibrary(trRows, scRows));
+      };
+      if (typeof Worker === "undefined") { runSync(); return; }
+      let worker;
+      try {
+        worker = new Worker("data-worker.js");
+      } catch (e) { runSync(); return; }
+      worker.onmessage = (e) => {
+        worker.terminate();
+        if (loadGenRef.current !== myGen) { resolve(null); return; }
+        const m = e.data || {};
+        if (m.ok) resolve({ nt: m.nt, ns: m.ns, drill: m.drill, cube: m.cube });
+        else runSync();
+      };
+      worker.onerror = () => { worker.terminate(); runSync(); };
+      worker.postMessage(input);
+    });
+  }, []);
+
   /* ECharts (~1 MB) is off the first-paint path: prefetch on idle, and load
      immediately if a chart page opens first. ensureECharts() is a singleton. */
   useEffect(() => {
@@ -166,16 +214,22 @@ function App() {
           fetch("tracks.min.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
           fetch("scrobbles.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
         ]);
-        const trRows = tr.status === "fulfilled" ? parseJSONL(tr.value) : null;
-        const scRows = sc.status === "fulfilled" ? parseJSONL(sc.value) : null;
-        const { nt, ns, drill: nd, cube: nc } = processLibrary(trRows, scRows);
-        if (nt || ns) {
-          setData((d) => ({
-            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
-            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
-          }));
-          if (nd) setDrill(nd);
-          if (nc) setCube(nc);
+        const tracksText = tr.status === "fulfilled" ? tr.value : null;
+        const scrobblesText = sc.status === "fulfilled" ? sc.value : null;
+        // Off the main thread via the shared worker helper (F-08b) — a
+        // refresh used to re-parse and re-cross-join synchronously here,
+        // ~0.5s of main-thread work on the current library size.
+        const result = await runProcessLibrary({ tracksText, scrobblesText });
+        if (result) {
+          const { nt, ns, drill: nd, cube: nc } = result;
+          if (nt || ns) {
+            setData((d) => ({
+              meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
+              tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
+            }));
+            if (nd) setDrill(nd);
+            if (nc) setCube(nc);
+          }
         }
       } catch (e) { /* live fetch optional */ }
       setRefreshVersion((v) => v + 1);
@@ -184,7 +238,7 @@ function App() {
     } finally {
       setRefreshing(false);
     }
-  }, [showToast]);
+  }, [showToast, runProcessLibrary]);
 
   /* ── file loading ── */
   const handleFiles = useCallback(async (fileList) => {
@@ -199,8 +253,12 @@ function App() {
       else if (rows[0]?.hour != null || rows[0]?.scrobbled_at) { rawScrob = rows; names.push(f.name); }
     }
     // Process only after every file is read, so the scrobble cross-join works
-    // regardless of arrival order.
-    const { nt: newTracks, ns: newScrob, drill: nd, cube: nc } = processLibrary(rawTracks, rawScrob);
+    // regardless of arrival order. Off the main thread via the shared worker
+    // helper (F-08b) — a large dropped library used to cross-join
+    // synchronously here and could visibly jank the drop.
+    const result = await runProcessLibrary({ trRows: rawTracks, scRows: rawScrob });
+    if (!result) return; // superseded by a newer load
+    const { nt: newTracks, ns: newScrob, drill: nd, cube: nc } = result;
     if (!newTracks && !newScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     setData((d) => ({
       meta: { ...d.meta, isSample: false, trackCount: newTracks ? newTracks.length : d.meta.trackCount, scrobbleCount: newScrob ? newScrob.total : d.meta.scrobbleCount },
@@ -210,28 +268,17 @@ function App() {
     if (nd) setDrill(nd);
     if (nc) setCube(nc);
     showToast(`Loaded your data — ${names.join(", ")}`);
-  }, [showToast]);
+  }, [showToast, runProcessLibrary]);
 
   /* Live library, when served alongside (i.e. from the repo). */
   useEffect(() => {
     let cancelled = false;
-    let worker = null;
-
-    const apply = (nt, ns, nd, nc) => {
-      if (cancelled || !(nt || ns)) return;
-      setData((d) => ({
-        meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
-        tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
-      }));
-      if (nd) setDrill(nd);
-      if (nc) setCube(nc);
-      showToast("Loaded your live library from the repo");
-    };
 
     (async () => {
       try {
-        // Slim projection + scrobbles. Parse and cross-join go to a Web Worker so
-        // the shell stays responsive on a fresh mobile load.
+        // Slim projection + scrobbles. Parsing and the cross-join happen off
+        // the main thread via the shared worker helper (runProcessLibrary),
+        // so the shell stays responsive on a fresh mobile load.
         const [tr, sc] = await Promise.allSettled([
           fetch("tracks.min.jsonl").then((r) => r.ok ? r.text() : Promise.reject()),
           fetch("scrobbles.jsonl").then((r) => r.ok ? r.text() : Promise.reject())
@@ -239,34 +286,25 @@ function App() {
         if (cancelled) return;
         const tracksText = tr.status === "fulfilled" ? tr.value : null;
         const scrobblesText = sc.status === "fulfilled" ? sc.value : null;
-        if (!tracksText && !scrobblesText) { if (!cancelled) setIsLoadingLive(false); return; }
+        if (!tracksText && !scrobblesText) { setIsLoadingLive(false); return; }
 
-        // Fallback when Worker is unavailable or fails.
-        const runSync = () => {
-          const trRows = tracksText ? parseJSONL(tracksText) : null;
-          const scRows = scrobblesText ? parseJSONL(scrobblesText) : null;
-          const { nt, ns, drill: nd, cube: nc } = processLibrary(trRows, scRows);
-          apply(nt, ns, nd, nc);
-          if (!cancelled) setIsLoadingLive(false);
-        };
-
-        if (typeof Worker === "undefined") { runSync(); return; }
-        try {
-          worker = new Worker("data-worker.js");
-          worker.onmessage = (e) => {
-            const m = e.data || {};
-            if (m.ok) { apply(m.nt, m.ns, m.drill, m.cube); }
-            else { runSync(); return; }
-            if (!cancelled) setIsLoadingLive(false);
-            worker.terminate(); worker = null;
-          };
-          worker.onerror = () => { if (worker) { worker.terminate(); worker = null; } runSync(); };
-          worker.postMessage({ tracksText, scrobblesText });
-        } catch (e) { runSync(); }
+        const result = await runProcessLibrary({ tracksText, scrobblesText });
+        if (cancelled) return;
+        if (result && (result.nt || result.ns)) {
+          const { nt, ns, drill: nd, cube: nc } = result;
+          setData((d) => ({
+            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
+            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
+          }));
+          if (nd) setDrill(nd);
+          if (nc) setCube(nc);
+          showToast("Loaded your live library from the repo");
+        }
+        setIsLoadingLive(false);
       } catch (e) { if (!cancelled) setIsLoadingLive(false); /* sample stays */ }
     })();
-    return () => { cancelled = true; if (worker) { worker.terminate(); worker = null; } };
-  }, [showToast]);
+    return () => { cancelled = true; };
+  }, [showToast, runProcessLibrary]);
 
   /* drag + drop */
   useEffect(() => {
