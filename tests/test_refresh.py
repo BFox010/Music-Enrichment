@@ -164,6 +164,128 @@ class TestRefresh:
         self._run(scenario())
 
 
+# ── F-05: refresh, direct sync, and reload share one lock ──
+
+class TestMutationLockSharedAcrossOperations:
+    """refresh, a direct Last.fm sync, and a manual cache reload must all go
+    through the same lock — not each have their own — so any two of them
+    racing (a sync fired mid-refresh, a reload racing a sync) fails fast
+    instead of interleaving writes or reads."""
+
+    def _run(self, coro):
+        return asyncio.run(coro)
+
+    def test_direct_sync_cannot_run_while_refresh_holds_the_lock(self):
+        from app.refresh import _exclusive, _refresh_lock, RefreshInProgress
+
+        async def scenario():
+            async with _refresh_lock:  # simulate an in-flight refresh
+                with pytest.raises(RefreshInProgress):
+                    async with _exclusive("sync"):
+                        pytest.fail("must not enter the sync section")
+
+        self._run(scenario())
+
+    def test_reload_cannot_run_while_refresh_holds_the_lock(self):
+        from app.refresh import _exclusive, _refresh_lock, RefreshInProgress
+
+        async def scenario():
+            async with _refresh_lock:  # simulate an in-flight refresh
+                with pytest.raises(RefreshInProgress):
+                    async with _exclusive("reload"):
+                        pytest.fail("must not enter the reload section")
+
+        self._run(scenario())
+
+    def test_refresh_cannot_run_while_a_direct_sync_holds_the_lock(self):
+        from app.refresh import refresh, _refresh_lock, RefreshInProgress
+
+        async def scenario():
+            async with _refresh_lock:  # simulate an in-flight direct sync
+                with pytest.raises(RefreshInProgress):
+                    await refresh()
+
+        self._run(scenario())
+
+    def test_reload_cannot_run_while_a_direct_sync_holds_the_lock(self):
+        from app.refresh import _exclusive, _refresh_lock, RefreshInProgress
+
+        async def scenario():
+            async with _refresh_lock:  # simulate an in-flight direct sync
+                with pytest.raises(RefreshInProgress):
+                    async with _exclusive("reload"):
+                        pytest.fail("must not enter the reload section")
+
+        self._run(scenario())
+
+    def test_lock_releases_after_use_so_a_later_operation_can_proceed(self):
+        """Guards the other half: contention only blocks while an operation
+        is actually in flight, not forever once one has run."""
+        from app.refresh import _exclusive
+
+        async def scenario():
+            async with _exclusive("sync"):
+                pass
+            # Would raise RefreshInProgress here if the first guard leaked.
+            async with _exclusive("reload"):
+                pass
+
+        self._run(scenario())
+
+
+class TestApiReloadAndSyncReturn409WhenBusy:
+    """API-level: /api/reload and /api/lastfm/sync must surface the same 409
+    RefreshInProgress does for POST /api/refresh, not a 500 or a silent
+    interleaved run."""
+
+    @pytest.fixture
+    def client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracks = Path(tmp) / "tracks.jsonl"
+            scrobbles = Path(tmp) / "scrobbles.jsonl"
+            tracks.write_text("")
+            scrobbles.write_text("")
+            import app.data as data_mod
+            with data_mod.use_paths(tracks, scrobbles):
+                from app.main import app
+                yield TestClient(app)
+
+    @staticmethod
+    def _auth():
+        from app.main import DASHBOARD_TOKEN
+        return {"X-Dashboard-Token": DASHBOARD_TOKEN}
+
+    @staticmethod
+    def _busy_guard():
+        """Stand-in for app.refresh._exclusive that always reports another
+        operation is already running, without touching the real lock."""
+        from app.refresh import RefreshInProgress
+
+        class _Busy:
+            def __init__(self, op_name):
+                self.op_name = op_name
+
+            async def __aenter__(self):
+                raise RefreshInProgress(f"a {self.op_name} is already running")
+
+            async def __aexit__(self, *exc_info):
+                return False
+
+        return _Busy
+
+    def test_reload_returns_409_when_another_operation_is_running(self, client):
+        with patch("app.refresh._exclusive", new=self._busy_guard()):
+            r = client.post("/api/reload", headers=self._auth())
+        assert r.status_code == 409
+        assert "already running" in r.json()["detail"]
+
+    def test_sync_returns_409_when_another_operation_is_running(self, client):
+        with patch("app.refresh._exclusive", new=self._busy_guard()):
+            r = client.post("/api/lastfm/sync", headers=self._auth())
+        assert r.status_code == 409
+        assert "already running" in r.json()["detail"]
+
+
 # ── API: POST /api/refresh ──
 
 class TestApiRefresh:

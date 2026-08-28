@@ -12,6 +12,8 @@ inputs/exportify.csv is present.
 from __future__ import annotations
 
 import asyncio
+import contextlib
+from typing import AsyncIterator
 
 import app.data as data
 from app import lastfm_sync
@@ -21,26 +23,41 @@ from pipeline.run_full_pipeline import failed_phases, run as _pipeline_run
 
 
 class RefreshInProgress(RuntimeError):
-    """Raised when a refresh is requested while another is still running."""
+    """Raised when a mutating operation (refresh, direct Last.fm sync, or a
+    manual cache reload) is requested while another one of these three is
+    already running."""
 
 
-# Single-flight guard. A refresh rewrites scrobbles, every intermediate,
-# tracks.jsonl and pending_exportify.csv — overlapping runs (duplicate clicks,
-# multiple tabs) would interleave those writes, so a second caller fails fast.
+# Single-flight guard shared by refresh, direct sync, and reload — not just
+# refresh. A full refresh rewrites scrobbles, every intermediate, tracks.jsonl
+# and pending_exportify.csv; a direct sync appends to scrobbles.jsonl and
+# reloads the cache; a reload re-reads both canonical files. Any two of these
+# racing (duplicate clicks, multiple tabs, a sync firing mid-refresh) can
+# interleave writes or hand a reader a mix of old and new state, so they all
+# go through the one lock below rather than each having their own.
 _refresh_lock = asyncio.Lock()
+
+
+@contextlib.asynccontextmanager
+async def _exclusive(op_name: str) -> AsyncIterator[None]:
+    """Fail fast with ``RefreshInProgress`` if another guarded operation holds
+    the lock, instead of queuing behind it — a queued sync silently running
+    minutes after the click that requested it would be more confusing than an
+    immediate "try again" response."""
+    if _refresh_lock.locked():
+        raise RefreshInProgress(f"a {op_name} is already running")
+    async with _refresh_lock:
+        yield
 
 
 async def refresh() -> dict:
     """Run the full refresh chain; returns combined stats.
 
-    ``RefreshInProgress`` if one is already running. ``RuntimeError`` if a phase
-    genuinely fails — the cache is left untouched and nothing is exported, so a
-    broken run can never masquerade as success.
+    ``RefreshInProgress`` if a refresh, sync, or reload is already running.
+    ``RuntimeError`` if a phase genuinely fails — the cache is left untouched
+    and nothing is exported, so a broken run can never masquerade as success.
     """
-    if _refresh_lock.locked():
-        raise RefreshInProgress("a refresh is already running")
-
-    async with _refresh_lock:
+    async with _exclusive("refresh"):
         sync_stats = await lastfm_sync.sync(SCROBBLES_PATH)
 
         pipeline_results = await asyncio.to_thread(

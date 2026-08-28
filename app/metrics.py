@@ -1,7 +1,9 @@
 """Dashboard aggregations over the in-memory JSONL cache.
 
-Public functions read through ``app.data.get_tracks()`` / ``get_scrobbles()``,
-so they pick up fixtures injected by ``data.use_paths()``.
+Public functions read through ``app.data.get_tracks()`` / ``get_scrobbles()``
+(or ``get_snapshot()`` when a computation needs both together — see
+``app.data.Snapshot``), so they pick up fixtures injected by
+``data.use_paths()``.
 """
 
 from __future__ import annotations
@@ -11,7 +13,7 @@ import re
 from collections import Counter, defaultdict
 from typing import Any, Optional
 
-from app.data import get_scrobbles, get_tracks
+from app.data import Snapshot, get_scrobbles, get_snapshot, get_tracks
 
 _COVERAGE_FIELDS: list[tuple[str, str]] = [
     ("genres", "genres"),
@@ -55,15 +57,30 @@ def _name_key(row: dict) -> tuple[str, str]:
     )
 
 
-def _track_index() -> dict[tuple[str, str], dict]:
+_index_cache: tuple[int, dict[tuple[str, str], dict]] | None = None
+
+
+def _track_index(snapshot: Snapshot) -> dict[tuple[str, str], dict]:
     """Track lookup keyed by every identity a scrobble might arrive under.
 
     Indexes both the name pair and ``canonical_track_id``, not one or the other:
     tracks.jsonl carries canonical IDs and scrobbles.jsonl does not, so keying
     solely on the canonical ID would match nothing.
+
+    ``snapshot`` must come from ``get_snapshot()`` — passing it explicitly
+    (rather than calling ``get_tracks()`` internally) is what lets callers that
+    also read ``snapshot.scrobbles`` be sure both collections are the same
+    generation (F-05). The built index is cached by ``snapshot.generation``:
+    every request within one generation reuses it instead of rebuilding it per
+    call (F-08a), and a ``reload()`` invalidates it automatically by advancing
+    the generation rather than needing an explicit cache-clear.
     """
+    global _index_cache
+    if _index_cache is not None and _index_cache[0] == snapshot.generation:
+        return _index_cache[1]
+
     index: dict[tuple[str, str], dict] = {}
-    for t in get_tracks():
+    for t in snapshot.tracks:
         index[_name_key(t)] = t
         cid = t.get("canonical_track_id")
         if cid:
@@ -76,6 +93,8 @@ def _track_index() -> dict[tuple[str, str], dict]:
             if isinstance(alias, (list, tuple)) and len(alias) == 2:
                 key = (str(alias[0] or "").lower().strip(), str(alias[1] or "").lower().strip())
                 index.setdefault(key, t)
+
+    _index_cache = (snapshot.generation, index)
     return index
 
 
@@ -136,11 +155,12 @@ def tag_mass(
     is uneven — moods the audio features cannot predict are left blank, so the
     denominator differs between windows and must be shown alongside the shares.
     """
-    index = _track_index()
+    snap = get_snapshot()
+    index = _track_index(snap)
     mass: Counter = Counter()
     plays = 0
     tagged = 0
-    for s in get_scrobbles():
+    for s in snap.scrobbles:
         if not in_window(s, window):
             continue
         plays += 1
@@ -167,10 +187,11 @@ def play_count_integrity() -> dict[str, Any]:
     Returns the totals plus the worst offenders. ``in_sync`` is the one-line
     answer: True when every track's count matches and no scrobble is orphaned.
     """
-    index = _track_index()
+    snap = get_snapshot()
+    index = _track_index(snap)
     actual: Counter = Counter()
     unmatched = 0
-    for s in get_scrobbles():
+    for s in snap.scrobbles:
         track = _lookup(index, s)
         if track is None:
             unmatched += 1
@@ -179,7 +200,7 @@ def play_count_integrity() -> dict[str, Any]:
 
     mismatches: list[dict] = []
     declared_total = 0
-    for t in get_tracks():
+    for t in snap.tracks:
         declared = int(t.get("play_count") or 0)
         declared_total += declared
         counted = actual.get(_name_key(t), 0)
@@ -194,8 +215,8 @@ def play_count_integrity() -> dict[str, Any]:
 
     mismatches.sort(key=lambda m: -abs(m["delta"]))
     return {
-        "tracks_checked": len(get_tracks()),
-        "scrobbles": len(get_scrobbles()),
+        "tracks_checked": len(snap.tracks),
+        "scrobbles": len(snap.scrobbles),
         "declared_total": declared_total,
         "actual_total": sum(actual.values()),
         "unmatched_scrobbles": unmatched,
@@ -227,8 +248,9 @@ def _histogram(values: list[float], n_bins: int = 10) -> list[dict]:
 
 
 def overview() -> dict[str, Any]:
-    tracks = get_tracks()
-    scrobbles = get_scrobbles()
+    snap = get_snapshot()
+    tracks = snap.tracks
+    scrobbles = snap.scrobbles
     n = len(tracks)
 
     cov: dict[str, dict] = {}
@@ -385,8 +407,9 @@ def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
 
 
 def artist_trajectory(top: int = 15) -> dict[str, Any]:
-    tracks = get_tracks()
-    scrobbles = get_scrobbles()
+    snap = get_snapshot()
+    tracks = snap.tracks
+    scrobbles = snap.scrobbles
 
     artist_plays: Counter[str] = Counter()
     artist_display: dict[str, str] = {}
@@ -404,7 +427,7 @@ def artist_trajectory(top: int = 15) -> dict[str, Any]:
     # matching its raw artist string — a play logged under a historical credit
     # (Phase 4e's identity_aliases) must still count toward the track's
     # current display artist, the same way play_count_integrity() already does.
-    index = _track_index()
+    index = _track_index(snap)
     traj: Counter[tuple[str, str]] = Counter()
     for s in scrobbles:
         year, month = s.get("year"), s.get("month")
@@ -508,7 +531,8 @@ def forgotten_favorites(
     sorted descending by that ratio.  Only tracks whose peak pre-dates the
     recent window are included.
     """
-    scrobbles = get_scrobbles()
+    snap = get_snapshot()
+    scrobbles = snap.scrobbles
     if not scrobbles:
         return []
 
@@ -522,7 +546,7 @@ def forgotten_favorites(
     # logged under a historical credit must fold into the same track's yearly
     # counts as everything logged under the current one, not fork into a
     # separate "forgotten" entry that never accumulates enough plays to show.
-    index = _track_index()
+    index = _track_index(snap)
     yearly: dict[str, Counter] = defaultdict(Counter)
     scrobble_labels: dict[str, dict] = {}
     track_info: dict[str, dict] = {}
@@ -603,11 +627,12 @@ def tag_graph(
 
     # Play-weighted: an edge is thick because the pairing was heard often, not
     # because it spans many tracks each heard once.
-    index = _track_index()
+    snap = get_snapshot()
+    index = _track_index(snap)
     tag_counts: Counter[str] = Counter()
     co_occur: Counter[tuple[str, str]] = Counter()
 
-    for s in get_scrobbles():
+    for s in snap.scrobbles:
         if not in_window(s, window):
             continue
         track = _lookup(index, s)

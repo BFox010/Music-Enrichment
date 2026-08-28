@@ -280,6 +280,45 @@ class TestAliasResolution:
             assert forgotten[0]["peak_year"] == 2020
 
 
+class TestTrackIndexCaching:
+    """F-08a: _track_index() must be built once per snapshot generation, not
+    once per call, and must invalidate automatically when reload() publishes
+    a new generation — never off a fragile explicit cache-clear."""
+
+    def test_same_generation_reuses_the_cached_index(self):
+        track = _track("A", "song", ["Fast"])
+        with _library([track], []):
+            snap = data.get_snapshot()
+            idx1 = metrics._track_index(snap)
+            idx2 = metrics._track_index(snap)
+            assert idx1 is idx2
+            assert idx1[("a", "song")]["artist"] == "A"
+
+    def test_new_generation_after_reload_rebuilds_the_index(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tp, sp = Path(tmp) / "t.jsonl", Path(tmp) / "s.jsonl"
+            tp.write_text(json.dumps(_track("A", "song", ["Fast"])) + "\n", encoding="utf-8")
+            sp.write_text("", encoding="utf-8")
+            with data.use_paths(tp, sp):
+                snap1 = data.get_snapshot()
+                idx1 = metrics._track_index(snap1)
+                assert ("a", "song") in idx1
+
+                tp.write_text(json.dumps(_track("B", "other", ["Slow"])) + "\n", encoding="utf-8")
+                data.load()
+                snap2 = data.get_snapshot()
+
+                assert snap2.generation != snap1.generation
+                idx2 = metrics._track_index(snap2)
+                assert idx2 is not idx1
+                assert ("b", "other") in idx2
+                assert ("a", "song") not in idx2
+                # The stale reference is untouched — it still answers for the
+                # generation it was built from, the same guarantee Snapshot
+                # gives get_snapshot() callers.
+                assert ("a", "song") in idx1
+
+
 class TestCurationNeverFilters:
     def test_rejected_plays_are_still_counted(self):
         """A dashboard must report music that was demonstrably played.
