@@ -79,9 +79,41 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
   );
 }
 
-const SRC_LABELS = [
-  ["lastfm_tags", "L"], ["musicbrainz", "M"], ["discogs", "D"], ["exportify", "A"], ["itunes_search", "i"], ["mood_classifier", "♪"]
+/* ── Data-coverage dots ──
+   One definition, two consumers: the "Data" cell on every row and the legend
+   in dashboard.jsx. They used to be written out twice, which is why the legend
+   listed five squares that were all the same accent colour — nothing in it
+   could tell you which position was which, so a row could only be read by
+   counting.
+
+   Hue answers "which source"; fill answers "how confident". A hollow dot is a
+   source that is present but lower-confidence, which today only the mood
+   classifier can be. */
+const COV_SOURCES = [
+  { key: "tags",   color: "oklch(0.70 0.17 25)",  label: "Last.fm tags",  note: "community genre/style tags.",
+    state: (t) => (t.tags && t.tags.length ? "on" : "") },
+  { key: "mbid",   color: "oklch(0.76 0.14 60)",  label: "MusicBrainz ID", note: "canonical recording identifier.",
+    state: (t) => (t.mbid ? "on" : "") },
+  { key: "styles", color: "oklch(0.78 0.14 130)", label: "Discogs styles", note: "release styles from Discogs.",
+    state: (t) => (t.styles && t.styles.length ? "on" : "") },
+  { key: "af",     color: "oklch(0.75 0.13 200)", label: "Audio features", note: "danceability, energy, valence, tempo…",
+    state: (t) => (t.af ? "on" : "") },
+  { key: "apple",  color: "oklch(0.70 0.14 285)", label: "Apple Music",    note: "confirmed available on Apple Music.",
+    state: (t) => (t.apple ? "on" : "") },
+  { key: "moods",  color: "oklch(0.72 0.17 340)", label: "Mood tags",      note: "hand-labelled or classified moods.",
+    state: (t) => (t.moods ? (t.mood_source === "centroid" ? "warn" : "on") : "") },
 ];
+
+function CovDots({ track }) {
+  return (
+    <span className="covdots">
+      {COV_SOURCES.map((c) => {
+        const st = c.state(track);
+        return <span key={c.key} className={"covdot" + (st ? " " + st : "")} style={{ "--cov": c.color }} title={c.label}></span>;
+      })}
+    </span>
+  );
+}
 
 /* ── Track explorer table ── */
 function TrackTable({ rows, sort, onSort, onPickArtist, playOf, timeframe }) {
@@ -124,22 +156,13 @@ function TrackTable({ rows, sort, onSort, onPickArtist, playOf, timeframe }) {
                 <td className="td-artist" style={{ cursor: "pointer" }} onClick={() => onPickArtist(t.artist)}>{t.artist}</td>
                 <td>
                   <div className="cellmoods">
-                    {(t.moods || []).slice(0, 3).map((m) => <span className="minimood" key={m}>{m}</span>)}
+                    {(t.moods || []).slice(0, 3).map((m) => <span className="minimood" key={m} style={{ "--mood": moodColor(m) }}>{m}</span>)}
                     {(!t.moods || t.moods.length === 0) && <span style={{ color: "var(--faint)", fontSize: 11 }}>—</span>}
                   </div>
                 </td>
                 <td className="td-artist" style={{ fontSize: 12 }}>{(t.genres || []).slice(0, 2).join(", ")}</td>
                 <td className="td-year r">{t.release_year || "—"}</td>
-                <td className="r">
-                  <span className="covdots">
-                    <span className={"covdot" + (t.tags && t.tags.length ? " on" : "")} title="Last.fm tags"></span>
-                    <span className={"covdot" + (t.mbid ? " on" : "")} title="MusicBrainz ID"></span>
-                    <span className={"covdot" + (t.styles && t.styles.length ? " on" : "")} title="Discogs styles"></span>
-                    <span className={"covdot" + (t.af ? " on" : "")} title="Audio features"></span>
-                    <span className={"covdot" + (t.apple ? " on" : "")} title="Apple Music"></span>
-                    <span className={"covdot" + (t.moods ? (t.mood_source === "centroid" ? " warn" : " on") : "")} title="Mood tags"></span>
-                  </span>
-                </td>
+                <td className="r"><CovDots track={t} /></td>
                 <td className="td-plays">{pf(t)}</td>
               </tr>
             ))}
@@ -162,4 +185,4 @@ function TrackTable({ rows, sort, onSort, onPickArtist, playOf, timeframe }) {
   );
 }
 
-Object.assign(window, { FilterBar, TrackTable });
+Object.assign(window, { COV_SOURCES, CovDots, FilterBar, TrackTable });

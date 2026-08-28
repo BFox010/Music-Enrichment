@@ -12,6 +12,57 @@ function useGenreColors(genres) {
   }, [genres.join("|")]);
 }
 
+/* ── mood colour identity ──
+   Genres get their hues from position in a ranked list; moods cannot, because
+   the same mood has to be the same colour on every surface — a bar, a chip, a
+   table cell — and those surfaces rank differently or not at all. So moods are
+   pinned by name.
+
+   Fourteen categories is well past the ~8 a flat categorical palette can keep
+   apart, so they are grouped into six families that share a hue and separate
+   on lightness. The family is the thing you read at a glance ("warm = energy,
+   blue = low"); the shade only has to distinguish members once you are looking
+   at one family. Lightness also carries meaning inside a family — Heavy Bass
+   is the dark end of the warm ramp, Dark the dark end of the blue one.
+
+   Same oklch() authoring as useGenreColors, so ambient.js can parse these too
+   if the backdrop is ever pointed at moods. */
+const MOOD_COLORS = {
+  // tender — rose
+  "Love":       "oklch(0.74 0.16 12)",
+  "Heartbreak": "oklch(0.55 0.15 358)",
+  // energy — warm
+  "Hype":       "oklch(0.74 0.17 55)",
+  "Fast":       "oklch(0.80 0.14 78)",
+  "Heavy Bass": "oklch(0.55 0.13 45)",
+  // bright — yellow through green
+  "Sunny":      "oklch(0.86 0.15 95)",
+  "Happy":      "oklch(0.80 0.16 122)",
+  "Uplifting":  "oklch(0.76 0.15 150)",
+  // calm — low-chroma cyan, deliberately the quietest swatch
+  "Slow":       "oklch(0.74 0.09 198)",
+  // low — blue through violet
+  "Sad":        "oklch(0.68 0.12 248)",
+  "Moody":      "oklch(0.62 0.13 278)",
+  "Dark":       "oklch(0.53 0.13 292)",
+  // movement — magenta
+  "Groove":     "oklch(0.66 0.14 318)",
+  "Dance":      "oklch(0.72 0.19 340)",
+};
+
+/* A mood the classifier or the audit file grows later still gets a stable
+   colour rather than falling back to the accent, which would make it look like
+   every other unstyled thing. Hash the name to a hue so it is at least
+   consistent across surfaces and across reloads. */
+function moodColor(name) {
+  if (!name) return "var(--accent)";
+  const known = MOOD_COLORS[name];
+  if (known) return known;
+  let h = 0;
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) % 360;
+  return `oklch(0.70 0.12 ${h})`;
+}
+
 /* ── FLIP: ranked lists travel to their new order ──
    Rows animate to their new positions instead of blinking into place, which is
    what shows you what the filter did — which rows survived, which collapsed.
@@ -152,7 +203,7 @@ function Seasons({ data, total, onPick, activeKey }) {
         const empty = v === 0;
         return (
           <div
-            className={"season" + (onPick && !empty ? " clickable" : "") + (empty ? " s-empty" : "") + (activeKey === s ? " sel" : "")}
+            className={"season season-" + s + (onPick && !empty ? " clickable" : "") + (empty ? " s-empty" : "") + (activeKey === s ? " sel" : "")}
             key={s}
             onClick={() => { if (onPick && !empty) onPick(s); }}
           >
@@ -198,7 +249,7 @@ function DrillRows({ items, accent, plain, wide }) {
         return (
           <div className="drill-row" key={k}>
             <span className={"dr-name" + (plain ? " plain" : "") + (wide ? " wide" : "")} title={k}>{nameNode}</span>
-            <div className="dr-track"><div className="dr-fill" style={{ width: (v / max) * 100 + "%", background: accent || "var(--accent)" }}></div></div>
+            <div className="dr-track"><div className="dr-fill" style={{ width: (v / max) * 100 + "%", background: (typeof accent === "function" ? accent(k) : accent) || "var(--accent)" }}></div></div>
             <span className="dr-val num">{v.toLocaleString()}</span>
           </div>
         );
@@ -287,7 +338,7 @@ function DrillPanel({ label, slice, onClose, views }) {
         </div>
         <div className="drill-col">
           <div className="drill-coltitle">Top moods</div>
-          <DrillRows items={moods} accent="var(--good)" />
+          <DrillRows items={moods} accent={moodColor} />
         </div>
       </div>
       )}
@@ -391,7 +442,7 @@ function SeasonalFavorites({ drill }) {
             </div>
             <div className="season-sub">Top moods</div>
             <div className="season-chips">
-              {moods.length ? moods.map(([m, n]) => <span className="tagchip mood-chip" key={m}>{m}<span className="tc-n num">{n}</span></span>) : <span className="dr-empty">—</span>}
+              {moods.length ? moods.map(([m, n]) => <span className="tagchip mood-chip" key={m} style={{ "--mood": moodColor(m) }}>{m}<span className="tc-n num">{n}</span></span>) : <span className="dr-empty">—</span>}
             </div>
             <div className="season-sub">Most played</div>
             <div className="tracklist mini-tl">
@@ -440,18 +491,19 @@ function MoodBars({ items, max, activeKey, onPick }) {
             key={m.key}
             data-flip-key={m.key}
             className={"moodrow" + (activeKey === m.key ? " active" : "")}
+            style={{ "--mood": moodColor(m.key) }}
             onClick={() => onPick && onPick(m.key)}
             title={`${m.key} — ${Math.round(m.value).toLocaleString()} plays`
               + (inferred > 0 ? ` · ${inferredPct}% inferred by classifier` : " · all hand-labelled")}
           >
             <span className="m-name">{m.key}</span>
             <div className="m-track">
-              <div className="m-fill" style={{ width: pct(owned) + "%", background: m.color || "var(--accent)" }}></div>
+              <div className="m-fill" style={{ width: pct(owned) + "%", background: m.color || moodColor(m.key) }}></div>
               <div
                 className="m-fill m-fill-inferred"
                 style={{
                   width: pct(inferred) + "%",
-                  background: m.color || "var(--accent)",
+                  background: m.color || moodColor(m.key),
                   opacity: 0.38,
                 }}
               ></div>
@@ -549,4 +601,4 @@ function CoverageBars({ rows, total }) {
   );
 }
 
-Object.assign(window, { HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, useGenreColors, DrillPanel, SeasonalFavorites });
+Object.assign(window, { MOOD_COLORS, moodColor, HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, useGenreColors, DrillPanel, SeasonalFavorites });

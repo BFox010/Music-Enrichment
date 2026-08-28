@@ -783,14 +783,33 @@ function App() {
                   <div className="legend-item"><span className="msrc centroid">centroid</span><span>Inferred from audio-feature similarity to labelled tracks — medium confidence.</span></div>
                 </div>
                 <div className="legend-group">
-                  <div className="legend-gtitle">Data coverage <span className="lg-note">each square = one enrichment source present</span></div>
-                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Last.fm tags</b> — community genre/style tags.</span></div>
-                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>MusicBrainz ID</b> — canonical recording identifier.</span></div>
-                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Discogs styles</b> — release styles from Discogs.</span></div>
-                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Audio features</b> — danceability, energy, valence, tempo…</span></div>
-                  <div className="legend-item"><span className="covdots"><span className="covdot on"></span></span><span><b>Apple Music</b> — confirmed available on Apple Music.</span></div>
-                  <div className="legend-item"><span className="covdots"><span className="covdot warn"></span></span><span>An <b>amber</b> square marks a mood that's present but lower-confidence (centroid-inferred).</span></div>
-                  <div className="legend-item"><span className="covdots"><span className="covdot"></span></span><span>A <b>dim</b> square means that source is missing for the track.</span></div>
+                  <div className="legend-gtitle">Data coverage <span className="lg-note">the squares keep their order on every row — colour tells you which is which</span></div>
+                  {COV_SOURCES.map((c, i) => (
+                    <div className="legend-item" key={c.key}>
+                      <span className="covdots">
+                        {COV_SOURCES.map((o, j) => (
+                          <span key={o.key} className={"covdot" + (i === j ? " on" : "")} style={{ "--cov": o.color }}></span>
+                        ))}
+                      </span>
+                      <span><b>{c.label}</b> — {c.note}</span>
+                    </div>
+                  ))}
+                  <div className="legend-item">
+                    <span className="covdots"><span className="covdot warn" style={{ "--cov": COV_SOURCES[COV_SOURCES.length - 1].color }}></span></span>
+                    <span>A <b>hollow</b> square is a source that is present but lower-confidence — today only a centroid-inferred mood.</span>
+                  </div>
+                  <div className="legend-item">
+                    <span className="covdots"><span className="covdot"></span></span>
+                    <span>A <b>dim</b> square means that source is missing for the track.</span>
+                  </div>
+                </div>
+                <div className="legend-group">
+                  <div className="legend-gtitle">Moods <span className="lg-note">grouped into families — warm is energy, blue is low, green is bright</span></div>
+                  <div className="mood-key">
+                    {Object.keys(MOOD_COLORS).map((m) => (
+                      <span className="minimood" key={m} style={{ "--mood": MOOD_COLORS[m] }}>{m}</span>
+                    ))}
+                  </div>
                 </div>
               </div>
             </div>
