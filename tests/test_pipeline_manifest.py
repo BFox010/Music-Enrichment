@@ -23,6 +23,27 @@ from pipeline.manifest import (
 )
 
 
+# ── Fake phase callables for TestPhaseFailFast — referenced by dotted path
+# ("tests.test_pipeline_manifest", "<name>") from synthetic manifest entries,
+# so they must stay real, importable module-level functions.
+
+
+def _ok(**kwargs):
+    return "ok"
+
+
+def _raise_file_not_found(**kwargs):
+    raise FileNotFoundError("missing.jsonl")
+
+
+def _raise_value_error(**kwargs):
+    raise ValueError("boom")
+
+
+def _fail_if_called(**kwargs):
+    raise AssertionError("this phase must not run")
+
+
 @pytest.fixture(scope="module")
 def manifest():
     return load_manifest()
@@ -311,9 +332,9 @@ class TestAcceptsForceAntiDrift:
         flagged = {str(p["id"]) for p in rfp._PHASES if p.get("accepts_force")}
         for phase_id, kwargs in seen.items():
             if phase_id in flagged:
-                assert kwargs == {"force": "errors"}, phase_id
+                assert kwargs.get("force") == "errors", phase_id
             else:
-                assert kwargs == {}, phase_id
+                assert "force" not in kwargs, phase_id
 
     def test_default_run_passes_no_force(self, monkeypatch):
         from pipeline import run_full_pipeline as rfp
@@ -324,7 +345,7 @@ class TestAcceptsForceAntiDrift:
             lambda pid, name, fn, *a, **kw: (seen.__setitem__(pid, kw), rfp.OK)[1],
         )
         rfp.run(skip_tests=True, skip_pause=True)
-        assert all(kwargs == {} for kwargs in seen.values())
+        assert all("force" not in kwargs for kwargs in seen.values())
 
 
 class TestDefaultInputMatchesManifest:
@@ -440,6 +461,211 @@ class TestManualOptionalPhaseDoesNotBlock:
 
         assert "2" not in results  # broke before recording an outcome for it
         assert "3" not in results  # and never reached the next phase
+
+
+class TestPhaseFailFast:
+    """F-01: a required phase's failure must not be downgraded to SKIPPED, and
+    must stop the run before any downstream phase runs against a stale or
+    missing intermediate — possibly all the way through to Phase 8 rewriting
+    tracks.jsonl off bad input."""
+
+    # ── _phase() itself ──
+
+    def test_required_file_not_found_is_failed_not_skipped(self):
+        from pipeline import run_full_pipeline as rfp
+
+        status = rfp._phase("x", "test", _raise_file_not_found, optional=False)
+        assert status == rfp.FAILED
+
+    def test_optional_file_not_found_is_skipped(self):
+        from pipeline import run_full_pipeline as rfp
+
+        status = rfp._phase("x", "test", _raise_file_not_found, optional=True)
+        assert status == rfp.SKIPPED
+
+    def test_required_exception_other_than_missing_file_is_failed(self):
+        from pipeline import run_full_pipeline as rfp
+
+        status = rfp._phase("x", "test", _raise_value_error, optional=False)
+        assert status == rfp.FAILED
+
+    def test_phase_producing_its_declared_output_is_ok(self, tmp_path):
+        from pipeline import run_full_pipeline as rfp
+
+        out = tmp_path / "out.jsonl"
+        out.write_text("{}\n", encoding="utf-8")
+        status = rfp._phase("x", "test", _ok, optional=False, outputs=[str(out)])
+        assert status == rfp.OK
+
+    def test_phase_missing_its_declared_output_is_failed(self, tmp_path):
+        """A phase that returns normally without producing what the manifest
+        says it outputs must not be trusted as OK."""
+        from pipeline import run_full_pipeline as rfp
+
+        status = rfp._phase(
+            "x", "test", _ok, optional=False,
+            outputs=[str(tmp_path / "never_written.jsonl")],
+        )
+        assert status == rfp.FAILED
+
+    # ── rfp.run() — required failures stop the whole run ──
+
+    def test_required_generic_exception_stops_the_run(self, monkeypatch):
+        from pipeline import run_full_pipeline as rfp
+
+        fake_phases = [
+            {"id": "1", "name": "boom", "module": "tests.test_pipeline_manifest",
+             "callable": "_raise_value_error", "outputs": [], "depends_on": []},
+            {"id": "2", "name": "must not run", "module": "tests.test_pipeline_manifest",
+             "callable": "_fail_if_called", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.FAILED
+        assert "2" not in results
+
+    def test_required_missing_file_stops_the_run(self, monkeypatch):
+        from pipeline import run_full_pipeline as rfp
+
+        fake_phases = [
+            {"id": "1", "name": "boom", "module": "tests.test_pipeline_manifest",
+             "callable": "_raise_file_not_found", "outputs": [], "depends_on": []},
+            {"id": "2", "name": "must not run", "module": "tests.test_pipeline_manifest",
+             "callable": "_fail_if_called", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.FAILED
+        assert "2" not in results
+
+    def test_optional_missing_file_does_not_stop_the_run(self, monkeypatch):
+        from pipeline import run_full_pipeline as rfp
+
+        fake_phases = [
+            {"id": "1", "name": "skip", "module": "tests.test_pipeline_manifest",
+             "callable": "_raise_file_not_found", "outputs": [], "depends_on": [],
+             "optional": True},
+            {"id": "2", "name": "still runs", "module": "tests.test_pipeline_manifest",
+             "callable": "_ok", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.SKIPPED
+        assert results["2"] == rfp.OK
+
+    def test_required_import_failure_stops_the_run(self, monkeypatch):
+        from pipeline import run_full_pipeline as rfp
+
+        fake_phases = [
+            {"id": "1", "name": "bad import", "module": "pipeline.does_not_exist_xyz",
+             "callable": "whatever", "outputs": [], "depends_on": []},
+            {"id": "2", "name": "must not run", "module": "tests.test_pipeline_manifest",
+             "callable": "_fail_if_called", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.FAILED
+        assert "2" not in results
+
+    def test_optional_import_failure_does_not_stop_the_run(self, monkeypatch):
+        from pipeline import run_full_pipeline as rfp
+
+        fake_phases = [
+            {"id": "1", "name": "bad import", "module": "pipeline.does_not_exist_xyz",
+             "callable": "whatever", "outputs": [], "depends_on": [], "optional": True},
+            {"id": "2", "name": "still runs", "module": "tests.test_pipeline_manifest",
+             "callable": "_ok", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.SKIPPED
+        assert results["2"] == rfp.OK
+
+    def test_required_requires_file_gate_missing_fails_and_stops(self, monkeypatch, tmp_path):
+        from pipeline import run_full_pipeline as rfp
+
+        monkeypatch.setattr(rfp, "REPO_ROOT", tmp_path)
+        fake_phases = [
+            {"id": "1", "name": "gated", "module": "tests.test_pipeline_manifest",
+             "callable": "_ok", "outputs": [], "depends_on": [],
+             "requires_file": "no/such/file.csv"},
+            {"id": "2", "name": "must not run", "module": "tests.test_pipeline_manifest",
+             "callable": "_fail_if_called", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.FAILED
+        assert "2" not in results
+
+    def test_optional_requires_file_gate_missing_is_an_allowed_skip(self, monkeypatch, tmp_path):
+        """Mirrors the real Phase 3c: an optional phase's requires_file gate is
+        a deliberate, benign no-op, not a failure."""
+        from pipeline import run_full_pipeline as rfp
+
+        monkeypatch.setattr(rfp, "REPO_ROOT", tmp_path)
+        fake_phases = [
+            {"id": "1", "name": "gated", "module": "tests.test_pipeline_manifest",
+             "callable": "_ok", "outputs": [], "depends_on": [],
+             "requires_file": "no/such/file.csv", "optional": True},
+            {"id": "2", "name": "still runs", "module": "tests.test_pipeline_manifest",
+             "callable": "_ok", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.SKIPPED
+        assert results["2"] == rfp.OK
+
+    def test_required_phase_missing_declared_output_stops_the_run(self, monkeypatch, tmp_path):
+        from pipeline import run_full_pipeline as rfp
+
+        monkeypatch.setattr(rfp, "REPO_ROOT", tmp_path)
+        fake_phases = [
+            {"id": "1", "name": "silent no-op", "module": "tests.test_pipeline_manifest",
+             "callable": "_ok", "outputs": ["never_written.jsonl"], "depends_on": []},
+            {"id": "2", "name": "must not run", "module": "tests.test_pipeline_manifest",
+             "callable": "_fail_if_called", "outputs": [], "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.FAILED
+        assert "2" not in results
+
+    def test_pre_existing_tracks_jsonl_survives_a_failure_before_phase_8(
+        self, monkeypatch, tmp_path
+    ):
+        """End-to-end version of the F-01/F-04 story: a required phase fails
+        partway through a run, and the canonical tracks.jsonl already on disk
+        from a prior run is left byte-for-byte untouched — Phase 8 never runs
+        to overwrite it."""
+        from pipeline import run_full_pipeline as rfp
+        from pipeline.schema import write_jsonl
+
+        monkeypatch.setattr(rfp, "REPO_ROOT", tmp_path)
+        tracks_path = tmp_path / "tracks.jsonl"
+        write_jsonl([{"artist": "Existing", "track": "Track"}], tracks_path)
+        original = tracks_path.read_bytes()
+
+        fake_phases = [
+            {"id": "1", "name": "boom", "module": "tests.test_pipeline_manifest",
+             "callable": "_raise_value_error", "outputs": [], "depends_on": []},
+            {"id": "8", "name": "final merge", "module": "tests.test_pipeline_manifest",
+             "callable": "_fail_if_called", "outputs": ["tracks.jsonl"],
+             "depends_on": ["1"]},
+        ]
+        monkeypatch.setattr(rfp, "_PHASES", fake_phases)
+        results = rfp.run(skip_tests=True, skip_pause=True)
+
+        assert results["1"] == rfp.FAILED
+        assert "8" not in results
+        assert tracks_path.read_bytes() == original
 
 
 class TestForceCliParsing:

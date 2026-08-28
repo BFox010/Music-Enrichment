@@ -44,6 +44,7 @@ from pipeline.config import (
     get_logger,
 )
 from pipeline.normalize import normalize_artist, normalize_track
+from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
@@ -314,8 +315,7 @@ def write_claude_batch(tracks: list[dict], path: Path = CLAUDE_BATCH_PATH) -> in
     only the fields needed to classify. Owner pastes verdicts back as
     ``inputs/claude_mood_results.jsonl`` (same join key + mood_tags).
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(path) as fh:
         for t in tracks:
             payload = {
                 "artist": t.get("artist"),
@@ -638,8 +638,7 @@ def classify(
             "; ".join(f"{a} — {t}" for a, t in sorted(unmatched_audit)[:20]),
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(output_path) as fh:
         for row in tracks:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 

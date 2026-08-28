@@ -14,11 +14,14 @@ and require migration tests.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
+import os
+import tempfile
 from dataclasses import dataclass, field, fields
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Iterable, Iterator, TextIO
 
 from pipeline.config import SCHEMA_VERSION
 
@@ -392,13 +395,36 @@ def validate_dataset(rows: list[dict[str, Any]]) -> dict[str, Any]:
 # ── JSONL IO with version + order discipline ──
 
 
-def write_jsonl(rows: Iterable[dict[str, Any]], path: Path) -> int:
-    """Write JSONL in stable field order: _schema_version first, then FIELD_DEFAULTS
-    order, then unknown fields. Returns rows written.
+@contextlib.contextmanager
+def atomic_open(path: Path, encoding: str = "utf-8", newline: str = "\n") -> Iterator[TextIO]:
+    """Open a unique temp file in ``path``'s directory for writing; on clean exit,
+    fsync it and ``os.replace()`` it onto ``path`` so a crash, disk-full condition,
+    or exception mid-write can never leave ``path`` truncated or partially written.
+    The temp file is removed if the block raises before the replace.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding=encoding, newline=newline) as fh:
+            yield fh
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp_path, path)
+    except BaseException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+
+def write_jsonl(rows: Iterable[dict[str, Any]], path: Path) -> int:
+    """Write JSONL in stable field order: _schema_version first, then FIELD_DEFAULTS
+    order, then unknown fields. Returns rows written. Writes atomically — see
+    ``atomic_open`` — so an interrupted or failed write never corrupts ``path``.
+    """
     n = 0
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(path) as fh:
         for row in rows:
             ordered = _order_for_emit(row)
             fh.write(json.dumps(ordered, ensure_ascii=False) + "\n")

@@ -32,6 +32,7 @@ from pipeline.config import (
     configure_logging,
     get_logger,
 )
+from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
@@ -361,8 +362,7 @@ def derive(
         else:
             stats["no_sources"] += 1
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(output_path) as fh:
         for row in tracks:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 

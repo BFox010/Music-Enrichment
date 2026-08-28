@@ -31,6 +31,7 @@ from pipeline.config import (
     get_logger,
 )
 from pipeline.normalize import normalize_artist, normalize_track
+from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
@@ -205,12 +206,9 @@ def ingest_from_records(
 
     # Atomic: a crash mid-write would half-truncate the file — the same history
     # loss the shrink guard above exists to prevent.
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = output_path.with_suffix(output_path.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(output_path) as fh:
         for row in parsed:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
-    tmp.replace(output_path)
 
     log.info("Wrote %d rows (was %d) → %s", len(parsed), existing_rows, output_path)
     return len(parsed)

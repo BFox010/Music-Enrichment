@@ -16,7 +16,7 @@ import csv
 from pathlib import Path
 
 from pipeline.config import INPUTS_DIR, TRACKS_PATH, TRACKS_SKELETON_PATH, configure_logging, get_logger
-from pipeline.schema import read_jsonl
+from pipeline.schema import atomic_open, read_jsonl
 
 OUTPUT_PATH = INPUTS_DIR / "tunemymusic_upload.csv"
 PENDING_OUTPUT_PATH = INPUTS_DIR / "pending_exportify.csv"
@@ -45,8 +45,7 @@ def export(
 
     log.info("Read %d unique tracks", len(tracks))
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="") as fh:
+    with atomic_open(output_path, newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(["Artist", "Track", "Album"])
         for t in tracks:
@@ -75,8 +74,7 @@ def export_pending(
 
     pending = [t for t in read_jsonl(tracks_path) if not t.get("audio_features")]
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="") as fh:
+    with atomic_open(output_path, newline="") as fh:
         writer = csv.writer(fh)
         writer.writerow(["Artist", "Track", "Album"])
         for t in pending:

@@ -39,7 +39,7 @@ from pipeline.config import (
 )
 from pipeline.name_variations import strip_feat
 from pipeline.normalize import normalize_track
-from pipeline.schema import compute_canonical_track_id
+from pipeline.schema import atomic_open, compute_canonical_track_id
 
 log = get_logger(__name__)
 
@@ -415,13 +415,12 @@ def resolve(
         raise ValueError("identity resolution altered total play count")
     log.info("Play total preserved: %d", plays_after)
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(output_path) as fh:
         for row in merged_rows:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     if rejected:
-        with open(review_path, "w", encoding="utf-8", newline="\n") as fh:
+        with atomic_open(review_path) as fh:
             for row in rejected:
                 fh.write(json.dumps(row, ensure_ascii=False) + "\n")
         log.info("Wrote %d near-miss pairs → %s", len(rejected), review_path)
