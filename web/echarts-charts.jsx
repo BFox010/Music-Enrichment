@@ -943,7 +943,7 @@ function ForgottenFavoritesPage({ active, refreshVersion = 0 }) {
                       <span className="ff-badge">Peak {item.peak_year}</span>
                       <span className="ff-badge ff-badge-muted">Last {item.last_heard}</span>
                       {item.genres.slice(0, 1).map((g) => <span className="ff-tag" key={g}>{g}</span>)}
-                      {item.moods.slice(0, 1).map((m) => <span className="ff-tag ff-tag-mood" key={m}>{m}</span>)}
+                      {item.moods.slice(0, 1).map((m) => <span className="ff-tag ff-tag-mood" key={m} style={{ "--mood": moodColor(m) }}>{m}</span>)}
                     </div>
                   </div>
                   <div className="ff-spark-wrap">
