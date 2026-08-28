@@ -250,6 +250,10 @@ phases:
     callable: classify
     inputs:
       - tracks_with_features.jsonl
+      # mood_audit.csv (repo root) is canonical (#66) and the only copy a fresh
+      # clone has. The gitignored legacy path is still preferred at runtime —
+      # #83's F-06 — so both are declared until that is fixed.
+      - mood_audit.csv
       - inputs/existing_audit.csv
     outputs:
       - tracks_with_moods.jsonl
