@@ -412,7 +412,7 @@ def _recover_owner_labels(tracks: list[dict]) -> dict[tuple[str, str], dict]:
 
 
 def classify(
-    audit_path: Path = INPUT_EXISTING_AUDIT,
+    audit_path: Path | None = None,
     tracks_path: Path = TRACKS_WITH_AUDIO_PATH,
     output_path: Path = TRACKS_WITH_MOODS_PATH,
     claude_results_path: Path = INPUT_CLAUDE_MOOD_RESULTS,
@@ -420,11 +420,19 @@ def classify(
 ) -> dict[str, int]:
     """Classify moods. Falls back to skeleton if tracks_with_audio missing.
 
+    ``audit_path`` defaults to the canonical, git-tracked ``mood_audit.csv`` at
+    the repo root (``MOOD_AUDIT_PATH``) — pass ``audit_path=INPUT_EXISTING_AUDIT``
+    explicitly to use the legacy gitignored copy instead; it is never chosen
+    silently.
+
     Returns ``{total, classified_centroid, claude_overrides, batched_for_claude,
     no_match}``.
     """
     configure_logging(run_log_path)
     log.info("=== Phase 6: mood classification ===")
+
+    if audit_path is None:
+        audit_path = REPO_ROOT / "mood_audit.csv"
 
     # DEEPEST intermediate wins, so every upstream field survives (5b features,
     # 5 availability, 4b discogs_styles, ...). tracks.jsonl is the last resort:
@@ -446,13 +454,20 @@ def classify(
         log.error("No tracks file found — run earlier phases first.")
         raise FileNotFoundError("tracks_with_audio.jsonl or tracks_with_metadata.jsonl")
 
-    # inputs/ is gitignored, so a fresh clone has no audit CSV and would train on
-    # nothing. Fall back to the committed root copy.
-    if not audit_path.exists():
-        root_audit = REPO_ROOT / "mood_audit.csv"
-        if root_audit.exists():
-            log.info("%s missing — using committed %s", audit_path, root_audit)
-            audit_path = root_audit
+    # mood_audit.csv (repo root) is the canonical, git-tracked label file (#66)
+    # and the unconditional default above. inputs/existing_audit.csv is a
+    # gitignored legacy copy that must never silently win — a forgotten local
+    # file would otherwise make classification non-reproducible relative to a
+    # fresh clone or CI, with no visible sign of which file actually trained
+    # the run. If it's present alongside the canonical file, ignore it loudly;
+    # to use it deliberately, pass audit_path=INPUT_EXISTING_AUDIT explicitly.
+    if INPUT_EXISTING_AUDIT.exists() and audit_path != INPUT_EXISTING_AUDIT:
+        log.warning(
+            "%s exists but is not authoritative — ignoring it in favor of %s. "
+            "Reconcile any local edits into the committed file; pass "
+            "audit_path=INPUT_EXISTING_AUDIT explicitly to use it instead.",
+            INPUT_EXISTING_AUDIT, audit_path,
+        )
 
     log.info("Tracks input: %s", chosen_input)
     log.info("Audit input : %s (exists=%s)", audit_path, audit_path.exists())

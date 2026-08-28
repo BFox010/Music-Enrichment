@@ -85,7 +85,7 @@ inputs/lastfm_export.json
   4e resolve_identity      → tracks_resolved.jsonl          (clusters on the ISRC 5a just resolved)
   5  check_apple_music     → tracks_with_availability.jsonl ← iTunes Search
   5b enrich_audio_features → tracks_with_features.jsonl     ← ReccoBeats, keyed by ISRC
-  6  classify_moods        → tracks_with_moods.jsonl        ← inputs/existing_audit.csv
+  6  classify_moods        → tracks_with_moods.jsonl        ← mood_audit.csv
   7  apply_taste_profile   → tracks_with_taste.jsonl        ← taste_profile.md
   8  update_tracks         → tracks.jsonl                   canonical
 ```
@@ -182,11 +182,14 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   the whole classifier is built on. A fresher centroid pass must never overwrite
   one. Trust order lives once, in `MOOD_SOURCE_RANK` (`pipeline/config.py`):
   `manual` > `audit` > `claude_batch` > `centroid`. Don't re-encode it locally.
-- **`mood_audit.csv` at the repo root is the canonical label file** (#66). The
-  older `inputs/existing_audit.csv` is gitignored and not authoritative; where
-  the two disagree, the committed file wins. Phase 6 prefers `inputs/` when
-  present, so if you restore that file, reconcile it into `mood_audit.csv`
-  rather than letting a run train on a copy nobody can see.
+- **`mood_audit.csv` at the repo root is the canonical label file** (#66) and
+  Phase 6's unconditional default (`classify()`'s `audit_path` resolves to it
+  when omitted). The older `inputs/existing_audit.csv` is gitignored and never
+  authoritative — if it's present too, Phase 6 logs a warning and ignores it
+  rather than silently training on it; reconcile any local edits into
+  `mood_audit.csv` instead. To use the legacy file deliberately, pass
+  `audit_path=INPUT_EXISTING_AUDIT` explicitly (#83/F-06 — this used to be
+  reversed: the gitignored file silently won whenever it existed).
   `tests/test_data_integrity.py` asserts the committed audit still reaches the
   committed library — the drift it caught went unnoticed because every other
   test builds its own fixtures.

@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pipeline.config import (
+    MOOD_SOURCE_RANK,
     REPO_ROOT,
     TRACKS_PATH,
     TRACKS_SKELETON_PATH,
@@ -209,9 +210,9 @@ _AUTHORITATIVE_NULL_FIELDS: frozenset[str] = frozenset(
 def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     """Merge a freshly enriched row into the existing tracks.jsonl row.
 
-    Priority: (1) human-edited fields, (2) higher-confidence mood
-    (audit/claude_batch/manual), then (3) new wins unless it is None/empty — which
-    keeps enrichment a later phase simply didn't carry forward.
+    Priority: (1) human-edited fields, (2) higher-ranked mood source per
+    MOOD_SOURCE_RANK, then (3) new wins unless it is None/empty — which keeps
+    enrichment a later phase simply didn't carry forward.
     """
     if existing is None:
         return new
@@ -239,14 +240,18 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
         if existing.get(field) is not None:
             merged[field] = existing[field]
 
-    # "audit" counts as high-quality: it is the owner's own labelling and the
-    # classifier's training signal. A fresher centroid pass must never overwrite it.
+    # Mood is one provenance bundle — tags, source, confidence, and distance
+    # must all come from whichever side wins, never mixed across sources.
+    # MOOD_SOURCE_RANK (pipeline/config.py) is the single trust order both this
+    # module and classify_moods consult; a tie favors the fresh row, matching
+    # the "new wins by default" rule the loop above already applies.
     existing_source = existing.get("mood_source")
     new_source = new.get("mood_source")
-    if existing_source in ("audit", "claude_batch", "manual") and new_source != existing_source:
-        merged["mood_tags"] = existing.get("mood_tags") or merged.get("mood_tags")
+    if MOOD_SOURCE_RANK.get(existing_source, 0) > MOOD_SOURCE_RANK.get(new_source, 0):
+        merged["mood_tags"] = existing.get("mood_tags")
         merged["mood_source"] = existing_source
         merged["mood_confidence"] = existing.get("mood_confidence")
+        merged["mood_distance"] = existing.get("mood_distance")
 
     # playlists is derived from taste_profile.md by Phase 7, not hand-edited, so the
     # latest output always wins — preserving it strands tracks in sections the

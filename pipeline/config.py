@@ -31,6 +31,11 @@ TRACKS_WITH_MOODS_PATH: Path = REPO_ROOT / "tracks_with_moods.jsonl"
 # ── Human-edited reference (DO NOT auto-modify) ──
 TASTE_PROFILE_PATH: Path = REPO_ROOT / "taste_profile.md"
 
+# ── Canonical mood training labels (#66) — git-tracked, always the default for
+# Phase 6. inputs/existing_audit.csv (below) is a gitignored legacy copy that is
+# never authoritative; where the two disagree, this file wins.
+MOOD_AUDIT_PATH: Path = REPO_ROOT / "mood_audit.csv"
+
 # ── Directories ──
 RUNS_DIR: Path = REPO_ROOT / "runs"
 VIEWS_DIR: Path = REPO_ROOT / "views"        # gitignored
@@ -40,7 +45,7 @@ INPUTS_DIR: Path = REPO_ROOT / "inputs"      # gitignored
 # ── Owner-provided inputs (not committed) ──
 INPUT_LASTFM_EXPORT: Path = INPUTS_DIR / "lastfm_export.json"
 INPUT_APPLE_MUSIC_LIBRARY: Path = INPUTS_DIR / "apple_music_library.xml"  # iTunes XML export
-INPUT_EXISTING_AUDIT: Path = INPUTS_DIR / "existing_audit.csv"
+INPUT_EXISTING_AUDIT: Path = INPUTS_DIR / "existing_audit.csv"  # legacy; see MOOD_AUDIT_PATH
 INPUT_EXPORTIFY_CSV: Path = INPUTS_DIR / "exportify.csv"
 INPUT_CLAUDE_MOOD_RESULTS: Path = INPUTS_DIR / "claude_mood_results.jsonl"
 # Spotify app credentials (Client ID + Secret). Either set the env vars

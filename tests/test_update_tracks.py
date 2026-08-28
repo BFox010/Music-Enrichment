@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from pipeline.config import MOOD_SOURCE_RANK
 from pipeline.update_tracks import (
     _enrichment_sources,
     _merge_with_existing,
@@ -72,6 +73,79 @@ class TestMergeWithExisting:
                     "curation_state": None}
         merged = _merge_with_existing(new, existing)
         assert merged["playlists"] == []
+
+
+class TestMoodSourceRankPrecedence:
+    """F-02: mood provenance must follow MOOD_SOURCE_RANK exactly — the single
+    trust order documented in pipeline/config.py and consulted by classify_moods
+    and resolve_identity too. Every ordered pair of sources is exercised so a
+    reintroduced ad hoc rule (e.g. "keep existing if it's in {audit,
+    claude_batch, manual}") fails loudly instead of only on the pairs it happens
+    to get wrong.
+    """
+
+    SOURCES = ["manual", "audit", "claude_batch", "centroid", "inherited", None]
+
+    def _row(self, source, tags, confidence="high", distance=0.1):
+        return {
+            "artist": "x", "track": "y",
+            "mood_tags": tags,
+            "mood_source": source,
+            "mood_confidence": confidence,
+            "mood_distance": distance,
+        }
+
+    @pytest.mark.parametrize("existing_source", SOURCES)
+    @pytest.mark.parametrize("new_source", SOURCES)
+    def test_higher_ranked_source_wins(self, existing_source, new_source) -> None:
+        existing = self._row(existing_source, ["Existing"], confidence="existing-conf",
+                              distance=0.9)
+        new = self._row(new_source, ["New"], confidence="new-conf", distance=0.1)
+
+        merged = _merge_with_existing(new, existing)
+
+        existing_rank = MOOD_SOURCE_RANK.get(existing_source, 0)
+        new_rank = MOOD_SOURCE_RANK.get(new_source, 0)
+
+        if existing_rank > new_rank:
+            winner, tags = existing, ["Existing"]
+        else:
+            # Ties and new-wins both resolve to the fresh row — ties are
+            # deliberately not preserved-by-default (see module docstring).
+            winner, tags = new, ["New"]
+
+        assert merged["mood_source"] == winner["mood_source"]
+        assert merged["mood_tags"] == tags
+        assert merged["mood_confidence"] == winner["mood_confidence"]
+        assert merged["mood_distance"] == winner["mood_distance"]
+
+    def test_provenance_fields_are_never_mixed_across_sources(self) -> None:
+        """A regression the old ad hoc rule was prone to: keeping existing
+        mood_tags while new's mood_confidence/mood_distance leaked through."""
+        existing = self._row("audit", ["Sad", "Slow"], confidence="high", distance=0.05)
+        new = self._row("centroid", ["Fast"], confidence="low", distance=0.8)
+
+        merged = _merge_with_existing(new, existing)
+
+        assert merged["mood_source"] == "audit"
+        assert merged["mood_tags"] == ["Sad", "Slow"]
+        assert merged["mood_confidence"] == "high"
+        assert merged["mood_distance"] == 0.05
+
+    def test_unrelated_fields_still_use_the_general_merge_rule(self) -> None:
+        """Confirms the mood-specific block doesn't leak into fields outside
+        the provenance bundle — genres still follow the ordinary new-wins rule."""
+        existing = {
+            "artist": "x", "track": "y", "genres": ["rock"],
+            "mood_tags": ["Sad"], "mood_source": "audit", "mood_confidence": "high",
+        }
+        new = {
+            "artist": "x", "track": "y", "genres": ["jazz"],
+            "mood_tags": ["Fast"], "mood_source": "centroid", "mood_confidence": "low",
+        }
+        merged = _merge_with_existing(new, existing)
+        assert merged["genres"] == ["jazz"]
+        assert merged["mood_source"] == "audit"
 
 
 class TestEnrichmentSources:

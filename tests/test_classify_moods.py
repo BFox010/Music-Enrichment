@@ -424,7 +424,8 @@ class TestAuditFallbackToCommittedCSV:
         cm.CLAUDE_BATCH_PATH = tmp / "claude_mood_batch.jsonl"
         try:
             cm.classify(
-                audit_path=tmp / "inputs" / "existing_audit.csv",   # deliberately absent
+                # audit_path omitted — the default now IS the canonical
+                # mood_audit.csv, resolved off the (patched) REPO_ROOT above.
                 tracks_path=tracks_file,
                 output_path=out,
                 claude_results_path=tmp / "nonexistent_claude.jsonl",
@@ -451,6 +452,115 @@ class TestAuditFallbackToCommittedCSV:
         with tempfile.TemporaryDirectory() as tmp:
             rows = self._run(Path(tmp), write_root_csv=False)
         assert all(r.get("mood_source") != "audit" for r in rows)
+
+
+class TestAuditFilePrecedence:
+    """F-06: mood_audit.csv (repo root) is the unconditional default and must
+    win whenever the gitignored legacy inputs/existing_audit.csv also exists —
+    never the reverse, and never silently. A forgotten local existing_audit.csv
+    used to retrain the classifier differently than a fresh clone or CI would,
+    with nothing in the output showing which file actually won.
+    """
+
+    def _classify(
+        self, tmp: Path, *, legacy_path: Path, write_root_csv: bool, **kwargs
+    ) -> tuple[list[dict], str]:
+        import pipeline.classify_moods as cm
+
+        library = [{
+            "artist": "Portishead", "track": "Roads",
+            "artist_normalized": "portishead", "track_normalized": "roads",
+            "audio_features": _features(energy=0.2, valence=0.1),
+            "mood_tags": None, "mood_source": None,
+        }]
+        tracks_file = tmp / "tracks_with_availability.jsonl"
+        tracks_file.write_text(
+            "".join(json.dumps(r) + "\n" for r in library), encoding="utf-8"
+        )
+        if write_root_csv:
+            (tmp / "mood_audit.csv").write_text(
+                "artist,track,mood_tags\n"
+                "Portishead,Roads,\"Sad, Slow\"\n",
+                encoding="utf-8",
+            )
+
+        out = tmp / "out.jsonl"
+        run_log = tmp / "run.log"
+        original = (cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH, cm.INPUT_EXISTING_AUDIT)
+        cm.REPO_ROOT = tmp
+        cm.CLAUDE_BATCH_PATH = tmp / "claude_mood_batch.jsonl"
+        cm.INPUT_EXISTING_AUDIT = legacy_path
+        try:
+            cm.classify(
+                tracks_path=tracks_file,
+                output_path=out,
+                claude_results_path=tmp / "nonexistent_claude.jsonl",
+                run_log_path=run_log,
+                **kwargs,
+            )
+        finally:
+            cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH, cm.INPUT_EXISTING_AUDIT = original
+            close_run_log_handlers()
+        rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
+        log_text = run_log.read_text(encoding="utf-8")
+        return rows, log_text
+
+    def _write_legacy(self, tmp: Path) -> Path:
+        legacy = tmp / "inputs" / "existing_audit.csv"
+        legacy.parent.mkdir(parents=True)
+        legacy.write_text(
+            "artist,track,mood_tags\n"
+            "Portishead,Roads,\"Hype, Fast\"\n",
+            encoding="utf-8",
+        )
+        return legacy
+
+    def test_both_present_and_different_committed_file_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            legacy = self._write_legacy(tmp_path)
+            rows, log_text = self._classify(tmp_path, legacy_path=legacy, write_root_csv=True)
+
+        assert rows[0]["mood_source"] == "audit"
+        assert rows[0]["mood_tags"] == ["Sad", "Slow"]  # from mood_audit.csv, not legacy
+        assert "not authoritative" in log_text
+
+    def test_only_canonical_present_is_used(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            legacy = tmp_path / "inputs" / "existing_audit.csv"  # never created
+            rows, log_text = self._classify(tmp_path, legacy_path=legacy, write_root_csv=True)
+
+        assert rows[0]["mood_source"] == "audit"
+        assert rows[0]["mood_tags"] == ["Sad", "Slow"]
+        assert "not authoritative" not in log_text
+
+    def test_canonical_missing_does_not_silently_fall_back_to_legacy(self) -> None:
+        """No mood_audit.csv means no owner labels for this run — it must not
+        quietly pick up the gitignored legacy file instead. The log makes the
+        absence explicit rather than papering over it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            legacy = self._write_legacy(tmp_path)
+            rows, log_text = self._classify(tmp_path, legacy_path=legacy, write_root_csv=False)
+
+        assert rows[0].get("mood_source") != "audit"
+        assert "exists=False" in log_text
+
+    def test_explicit_opt_in_to_legacy_path_is_honored_without_warning(self) -> None:
+        """Passing audit_path=INPUT_EXISTING_AUDIT explicitly is the documented
+        way to use the legacy file deliberately — it must not trigger the
+        "ignored" warning, since nothing was silently overridden."""
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            legacy = self._write_legacy(tmp_path)
+            rows, log_text = self._classify(
+                tmp_path, legacy_path=legacy, write_root_csv=True, audit_path=legacy,
+            )
+
+        assert rows[0]["mood_source"] == "audit"
+        assert rows[0]["mood_tags"] == ["Hype", "Fast"]
+        assert "not authoritative" not in log_text
 
 
 class TestAuditOutranksClaudeBatch:

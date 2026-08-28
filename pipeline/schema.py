@@ -113,15 +113,6 @@ HUMAN_EDITED_FIELDS: tuple[str, ...] = (
     "curation_state",
 )
 
-# Existing value wins over a fresh pass when its source field names a
-# higher-quality producer — e.g. a claude_batch mood must survive a centroid re-run.
-PROTECTED_WHEN_HIGHER_QUALITY: dict[str, dict[str, str]] = {
-    "mood_tags": {
-        "source_field": "mood_source",
-        "high_quality_values": "claude_batch,manual",
-    },
-}
-
 
 # ── Versioned dataclasses ──
 

@@ -124,7 +124,7 @@ half being missing.
 | 4e | [resolve_identity](pipeline/resolve_identity.py) | `tracks_with_isrcs.jsonl` | `tracks_resolved.jsonl` |
 | 5 | [check_apple_music](pipeline/check_apple_music.py) | `tracks_resolved.jsonl` | `tracks_with_availability.jsonl` |
 | 5b | [enrich_audio_features](pipeline/enrich_audio_features.py) | `tracks_with_availability.jsonl` | `tracks_with_features.jsonl` |
-| 6 | [classify_moods](pipeline/classify_moods.py) | + `inputs/existing_audit.csv` | `tracks_with_moods.jsonl` |
+| 6 | [classify_moods](pipeline/classify_moods.py) | + `mood_audit.csv` | `tracks_with_moods.jsonl` |
 | 7 | [apply_taste_profile](pipeline/apply_taste_profile.py) | + [taste_profile.md](taste_profile.md) | `tracks_with_taste.jsonl` |
 | 8 | [update_tracks](pipeline/update_tracks.py) | `tracks_with_taste.jsonl` | `tracks.jsonl` |
 
