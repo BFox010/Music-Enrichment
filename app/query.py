@@ -30,8 +30,10 @@ MIN_TRACK_FIELDS: tuple[str, ...] = (
     "play_count", "peak_year",
     "first_scrobbled", "last_scrobbled",
     "apple_music_available", "enrichment_sources", "saturation_tier", "playlists",
-    # join keys for the client-side scrobble cross-join
-    "artist_normalized", "track_normalized",
+    # join keys for the client-side scrobble cross-join — identity_aliases lets
+    # the browser join a scrobble logged under a historical artist credit the
+    # same way app.metrics._track_index() does server-side (F-03).
+    "artist_normalized", "track_normalized", "identity_aliases",
 )
 
 # Charted client-side. The rest (tempo, loudness, …) stay server-side in

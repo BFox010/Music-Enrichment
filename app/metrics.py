@@ -70,9 +70,12 @@ def _track_index() -> dict[tuple[str, str], dict]:
             index[("cid", cid)] = t
         # Credit variants folded by Phase 4e. The scrobble log is never rewritten,
         # so a play logged under "Clipse" must still find the full-credit row.
+        # Normalized defensively rather than trusting every producer already
+        # lowercased/trimmed the pair before writing it.
         for alias in t.get("identity_aliases") or []:
             if isinstance(alias, (list, tuple)) and len(alias) == 2:
-                index.setdefault((alias[0], alias[1]), t)
+                key = (str(alias[0] or "").lower().strip(), str(alias[1] or "").lower().strip())
+                index.setdefault(key, t)
     return index
 
 
@@ -397,11 +400,19 @@ def artist_trajectory(top: int = 15) -> dict[str, Any]:
 
     top_set = {a for a, _ in artist_plays.most_common(top)}
 
+    # Resolve every scrobble through the shared alias-aware index rather than
+    # matching its raw artist string — a play logged under a historical credit
+    # (Phase 4e's identity_aliases) must still count toward the track's
+    # current display artist, the same way play_count_integrity() already does.
+    index = _track_index()
     traj: Counter[tuple[str, str]] = Counter()
     for s in scrobbles:
-        artist = s.get("artist")
         year, month = s.get("year"), s.get("month")
-        if not artist or year is None or month is None:
+        if year is None or month is None:
+            continue
+        track = _lookup(index, s)
+        artist = (track.get("artist") if track else None) or s.get("artist")
+        if not artist:
             continue
         key = artist.lower()
         if key in top_set:
@@ -498,7 +509,6 @@ def forgotten_favorites(
     recent window are included.
     """
     scrobbles = get_scrobbles()
-    tracks = get_tracks()
     if not scrobbles:
         return []
 
@@ -507,20 +517,28 @@ def forgotten_favorites(
         t = (obj.get("track_normalized") or obj.get("track") or "").lower().strip()
         return f"{a}\x00{t}"
 
+    # Resolve every scrobble through the shared alias-aware index instead of
+    # building a single-key map off the scrobble's own name fields — a play
+    # logged under a historical credit must fold into the same track's yearly
+    # counts as everything logged under the current one, not fork into a
+    # separate "forgotten" entry that never accumulates enough plays to show.
+    index = _track_index()
     yearly: dict[str, Counter] = defaultdict(Counter)
     scrobble_labels: dict[str, dict] = {}
+    track_info: dict[str, dict] = {}
     for s in scrobbles:
         yr = s.get("year")
         if yr is None:
             continue
-        k = _key(s)
+        track = _lookup(index, s)
+        k = _key(track) if track is not None else _key(s)
+        if track is not None:
+            track_info.setdefault(k, track)
         yearly[k][int(yr)] += 1
         # Fallback label for keys with no tracks.jsonl row, so nothing renders blank.
         scrobble_labels.setdefault(
             k, {"artist": s.get("artist") or "", "track": s.get("track") or ""}
         )
-
-    track_info: dict[str, dict] = {_key(t): t for t in tracks}
 
     all_years = sorted({y for c in yearly.values() for y in c})
     if not all_years:

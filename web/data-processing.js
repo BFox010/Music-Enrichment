@@ -148,6 +148,42 @@ function trackKey(o) {
   const t = (o.track_normalized || o.track || "").toLowerCase();
   return a + "\x00" + t;
 }
+
+/* Every identity key a track can be scrobbled under: its own name pair plus
+   every alias Phase 4e folded into it (identity_aliases, carried through by
+   /api/tracks.min once F-03 added it to MIN_TRACK_FIELDS). A play logged
+   under a historical artist credit only matches the current display name
+   through one of these alias keys — without them, browser joins undercount
+   in exactly the cases the server's alias-aware app.metrics._track_index()
+   already handles, so charts and KPIs disagree. */
+function trackKeys(o) {
+  const keys = [trackKey(o)];
+  const aliases = o.identity_aliases;
+  if (Array.isArray(aliases)) {
+    for (const alias of aliases) {
+      if (!Array.isArray(alias) || alias.length !== 2) continue;
+      const a = String(alias[0] || "").toLowerCase().trim();
+      const t = String(alias[1] || "").toLowerCase().trim();
+      const k = a + "\x00" + t;
+      if (keys.indexOf(k) === -1) keys.push(k);
+    }
+  }
+  return keys;
+}
+
+/* Alias-aware index: every track registered under its primary key AND every
+   alias key. First writer wins on a collision, matching the server's
+   `index.setdefault` behavior in app.metrics._track_index(). */
+function buildTrackIndex(rawTracks) {
+  const idx = new Map();
+  for (let i = 0; i < rawTracks.length; i++) {
+    for (const k of trackKeys(rawTracks[i])) {
+      if (!idx.has(k)) idx.set(k, i);
+    }
+  }
+  return idx;
+}
+
 function buildPlayWindows(scrobbleRows) {
   computeAnchor(scrobbleRows);
   const map = new Map();
@@ -178,10 +214,22 @@ function attachWindows(rawTracks, scrobbleRows) {
   if (!scrobbleRows || !scrobbleRows.length) return rawTracks;
   const win = buildPlayWindows(scrobbleRows);
   for (const t of rawTracks) {
-    const e = win.get(trackKey(t));
-    if (e) {
-      t.py = e.py; t.tm = e.tm; t.lm = e.lm;
-      t.tw = e.tw; t.lw = e.lw; t.ts = e.ts; t.ls = e.ls;
+    // A track's window entries can be split across several keys — one per
+    // name it was scrobbled under — so every alias key must be summed, not
+    // just the primary one.
+    let merged = null;
+    for (const k of trackKeys(t)) {
+      const e = win.get(k);
+      if (!e) continue;
+      if (!merged) merged = { py: {}, tm: 0, lm: 0, tw: 0, lw: 0, ts: 0, ls: 0 };
+      for (const y in e.py) merged.py[y] = (merged.py[y] || 0) + e.py[y];
+      merged.tm += e.tm; merged.lm += e.lm;
+      merged.tw += e.tw; merged.lw += e.lw;
+      merged.ts += e.ts; merged.ls += e.ls;
+    }
+    if (merged) {
+      t.py = merged.py; t.tm = merged.tm; t.lm = merged.lm;
+      t.tw = merged.tw; t.lw = merged.lw; t.ts = merged.ts; t.ls = merged.ls;
     }
   }
   return rawTracks;
@@ -194,11 +242,14 @@ function buildDrill(rawTracks, scrobbleRows) {
   if (!rawTracks || !scrobbleRows || !scrobbleRows.length) return null;
   const info = new Map();
   for (const t of rawTracks) {
-    info.set(trackKey(t), {
+    const entry = {
       genres: Array.isArray(t.genres) ? t.genres : [],
       moods: Array.isArray(t.mood_tags) ? t.mood_tags : (Array.isArray(t.moods) ? t.moods : []),
       label: `${t.artist || "Unknown"} — ${t.track || "Untitled"}`,
-    });
+    };
+    for (const k of trackKeys(t)) {
+      if (!info.has(k)) info.set(k, entry);
+    }
   }
   const mk = () => ({ genres: {}, moods: {}, tracks: {}, total: 0 });
   const season = {}, hour = {}, dow = {};
@@ -248,8 +299,7 @@ function buildCube(rawTracks, scrobbleRows) {
   const hour = new Uint8Array(n), dow = new Uint8Array(n), season = new Uint8Array(n);
   const tf = new Uint16Array(n), track = new Int32Array(n);
 
-  const idx = new Map();
-  if (rawTracks) for (let i = 0; i < rawTracks.length; i++) idx.set(trackKey(rawTracks[i]), i);
+  const idx = rawTracks ? buildTrackIndex(rawTracks) : new Map();
 
   for (let i = 0; i < n; i++) {
     const s = scrobbleRows[i];

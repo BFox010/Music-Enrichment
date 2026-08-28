@@ -235,6 +235,50 @@ class TestAliasResolution:
             assert mass["Slow"] == pytest.approx(1.0)
             assert "Fast" not in mass
 
+    def test_artist_trajectory_counts_plays_under_a_merged_credit(self):
+        """artist_trajectory() used to join by raw scrobble artist string,
+        undercounting plays logged under a historical credit alias — the exact
+        gap #83/F-03 measured as 332 scrobbles (2.0%) on real data (Mac Miller
+        -15, Gorillaz -5), even though play_count_integrity() already showed
+        zero unmatched scrobbles via the shared alias-aware index."""
+        track = _track("Clipse, Pharrell Williams", "So Far Ahead", ["Moody"], play_count=2)
+        track["identity_aliases"] = [
+            ["clipse", "so far ahead"],
+            ["clipse, pharrell williams", "so far ahead"],
+        ]
+        scrobbles = [
+            _scrobble("Clipse", "So Far Ahead", "2025-01-01"),
+            _scrobble("Clipse, Pharrell Williams", "So Far Ahead", "2025-01-02"),
+        ]
+        with _library([track], scrobbles):
+            traj = metrics.artist_trajectory(top=5)
+            total = sum(
+                count for _period, count, name in traj["data"]
+                if name == "Clipse, Pharrell Williams"
+            )
+            assert total == 2
+
+    def test_forgotten_favorites_folds_alias_plays_into_one_track(self):
+        """forgotten_favorites() built its own single-key maps off each
+        scrobble's raw name fields — a track whose historical peak was logged
+        under an old credit split into two separate, individually-too-small
+        entries instead of accumulating under the one track it belongs to."""
+        track = _track("Clipse, Pharrell Williams", "So Far Ahead", ["Moody"], play_count=7)
+        track["identity_aliases"] = [
+            ["clipse", "so far ahead"],
+            ["clipse, pharrell williams", "so far ahead"],
+        ]
+        scrobbles = (
+            [_scrobble("Clipse", "So Far Ahead", "2020-01-01") for _ in range(6)]
+            + [_scrobble("Clipse, Pharrell Williams", "So Far Ahead", "2024-06-01")]
+        )
+        with _library([track], scrobbles):
+            forgotten = metrics.forgotten_favorites(min_peak=5, recent_years=2)
+            assert len(forgotten) == 1
+            assert forgotten[0]["artist"] == "Clipse, Pharrell Williams"
+            assert forgotten[0]["peak_plays"] == 6
+            assert forgotten[0]["peak_year"] == 2020
+
 
 class TestCurationNeverFilters:
     def test_rejected_plays_are_still_counted(self):
