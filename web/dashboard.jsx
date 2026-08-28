@@ -795,7 +795,7 @@ function App() {
                     </div>
                   ))}
                   <div className="legend-item">
-                    <span className="covdots"><span className="covdot warn" style={{ "--cov": COV_SOURCES[COV_SOURCES.length - 1].color }}></span></span>
+                    <span className="covdots"><span className="covdot warn" style={{ "--cov": COV_SOURCES.find((c) => c.key === "moods").color }}></span></span>
                     <span>A <b>hollow</b> square is a source that is present but lower-confidence — today only a centroid-inferred mood.</span>
                   </div>
                   <div className="legend-item">

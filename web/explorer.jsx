@@ -101,7 +101,7 @@ const COV_SOURCES = [
   { key: "apple",  color: "oklch(0.70 0.14 285)", label: "Apple Music",    note: "confirmed available on Apple Music.",
     state: (t) => (t.apple ? "on" : "") },
   { key: "moods",  color: "oklch(0.72 0.17 340)", label: "Mood tags",      note: "hand-labelled or classified moods.",
-    state: (t) => (t.moods ? (t.mood_source === "centroid" ? "warn" : "on") : "") },
+    state: (t) => (t.moods && t.moods.length ? (t.mood_source === "centroid" ? "warn" : "on") : "") },
 ];
 
 function CovDots({ track }) {
