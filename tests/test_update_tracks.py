@@ -506,3 +506,24 @@ class TestMergeSurvivesRenormalization:
             stats = update(input_path=inp, output_path=out)
             assert stats["updated"] == 1
             assert stats["new"] == 0
+
+
+class TestPlaylistsAbsenceIsNotAVerdict:
+    """Phase 7 is optional. When it is skipped, Phase 8 merges Phase 6's output,
+    where ``playlists`` is simply absent — which says nothing about curation.
+    Reading that absence as "no playlists" wiped every grouping label the
+    dashboard shows out of tracks.jsonl.
+    """
+
+    def test_absent_playlists_key_preserves_existing(self) -> None:
+        new = {"artist": "x", "track": "y", "mood_tags": ["Slow"]}
+        existing = {"artist": "x", "track": "y", "playlists": ["night_drive"]}
+        merged = _merge_with_existing(new, existing)
+        assert merged["playlists"] == ["night_drive"]
+
+    def test_present_but_empty_still_clears(self) -> None:
+        """A row that *did* go through Phase 7 and matched no section clears."""
+        new = {"artist": "x", "track": "y", "playlists": []}
+        existing = {"artist": "x", "track": "y", "playlists": ["night_drive"]}
+        merged = _merge_with_existing(new, existing)
+        assert merged["playlists"] == []

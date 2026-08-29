@@ -303,6 +303,14 @@ def _union_lists(rows: list[dict], field: str) -> list:
     return out
 
 
+# Fields whose provenance must travel with them when merge_cluster fills a gap
+# from another row in the cluster.
+_GAP_FILL_PROVENANCE: dict[str, tuple[str, ...]] = {
+    "isrc": ("isrc_source", "isrc_retrieved_at"),
+    "apple_music_available": ("apple_music_checked_at",),
+}
+
+
 def merge_cluster(rows: list[dict]) -> dict:
     """Fold a cluster into one row.
 
@@ -339,14 +347,21 @@ def merge_cluster(rows: list[dict]) -> dict:
         if values:
             merged[field] = values
 
-    # Fill scalar gaps from the other rows rather than losing them.
+    # Fill scalar gaps from the other rows rather than losing them. A field with
+    # its own provenance travels with it: an ISRC taken from another row keeps
+    # that row's isrc_source, or the next run reads a Deezer name-search ISRC as
+    # one of unknown (hence trusted) provenance and lets it veto a merge this
+    # run made — splitting the cluster back apart and the plays with it.
     for field in ("musicbrainz_id", "isrc", "spotify_id", "apple_music_id",
-                  "artist_mbid", "release_year", "duration_ms", "audio_features",
-                  "itunes_genre", "apple_music_available"):
+                  "artist_mbid", "release_year", "duration_ms", "explicit",
+                  "audio_features", "itunes_genre", "apple_music_available",
+                  "album", "lastfm_listeners", "lastfm_playcount"):
         if merged.get(field) in (None, "", []):
             for r in ordered[1:]:
                 if r.get(field) not in (None, "", []):
                     merged[field] = r[field]
+                    for companion in _GAP_FILL_PROVENANCE.get(field, ()):
+                        merged[companion] = r.get(companion)
                     break
 
     best_mood = max(
@@ -362,6 +377,10 @@ def merge_cluster(rows: list[dict]) -> dict:
         merged["mood_tags"] = list(best_mood["mood_tags"])
         merged["mood_source"] = best_mood.get("mood_source")
         merged["mood_confidence"] = best_mood.get("mood_confidence")
+        # mood_distance belongs to the same bundle — leaving the most-played
+        # row's distance beside another row's tags describes a fit that was
+        # never measured.
+        merged["mood_distance"] = best_mood.get("mood_distance")
 
     merged["identity_aliases"] = _collect_aliases(rows)
     merged["canonical_track_id"] = compute_canonical_track_id(merged)

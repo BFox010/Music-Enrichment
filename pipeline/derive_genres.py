@@ -27,14 +27,35 @@ from pathlib import Path
 
 from pipeline.config import (
     REPO_ROOT,
+    TRACKS_SKELETON_PATH,
+    TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_DISCOGS_PATH,
     TRACKS_WITH_GENRES_PATH,
+    TRACKS_WITH_METADATA_PATH,
     configure_logging,
     get_logger,
 )
+from pipeline.enrich_apple_library import TRACKS_WITH_APPLE_PATH
 from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
+
+# Input preference — deepest in the chain first. Phase 4b (Discogs) is the
+# immediate predecessor but is optional: it is skipped without a DISCOGS_TOKEN,
+# and this phase is required. Pinning the input to 4b's output meant a run
+# without Discogs credentials either halted the whole pipeline here or, worse,
+# silently re-derived genres from a *stale* tracks_with_discogs.jsonl left by an
+# earlier run — dropping every tag Phase 4 had just fetched and every track
+# ingested since. Falling back the way every sibling phase does keeps the chain
+# linear when an optional phase drops out.
+_INPUT_PRIORITY: list[Path] = [
+    TRACKS_WITH_DISCOGS_PATH,
+    TRACKS_WITH_METADATA_PATH,
+    TRACKS_WITH_AUDIO_PATH,
+    TRACKS_WITH_APPLE_PATH,
+    TRACKS_SKELETON_PATH,
+]
+DEFAULT_INPUT = TRACKS_WITH_DISCOGS_PATH
 
 # ── Canonical genre labels ──
 HIP_HOP      = "Hip-Hop / Rap"
@@ -332,13 +353,39 @@ def derive_genres_for_track(track: dict) -> list[str]:
     return result
 
 
+def _pick_input() -> Path:
+    """Deepest existing input, skipping one left behind by an earlier run.
+
+    Phase 4b writes its output from the same Phase 4 file this phase falls back
+    to, so if the Discogs file is older than the metadata file, 4b did not run
+    this time — reading it would re-derive genres from tags fetched days ago and
+    drop every track ingested since.
+    """
+    existing = [p for p in _INPUT_PRIORITY if p.exists()]
+    if not existing:
+        return DEFAULT_INPUT
+    chosen = existing[0]
+    freshest = max(p.stat().st_mtime for p in existing)
+    if chosen.stat().st_mtime < freshest:
+        newer = next(p for p in existing if p.stat().st_mtime == freshest)
+        log.warning(
+            "%s is older than %s — an earlier run left it behind. Using %s.",
+            chosen.name, newer.name, newer.name,
+        )
+        chosen = newer
+    return chosen
+
+
 def derive(
-    input_path: Path = TRACKS_WITH_DISCOGS_PATH,
+    input_path: Path | None = None,
     output_path: Path = TRACKS_WITH_GENRES_PATH,
     run_log_path: Path | None = None,
 ) -> dict[str, int]:
     configure_logging(run_log_path)
     log.info("=== Phase 4c: Genre derivation ===")
+
+    if input_path is None:
+        input_path = _pick_input()
     log.info("Input : %s", input_path)
     log.info("Output: %s", output_path)
 

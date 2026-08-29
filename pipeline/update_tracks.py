@@ -277,7 +277,14 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     # playlists is derived from taste_profile.md by Phase 7, not hand-edited, so the
     # latest output always wins — preserving it strands tracks in sections the
     # markdown no longer has. curation_state is the hand-edited half (HUMAN_EDITED_FIELDS).
-    merged["playlists"] = list(new.get("playlists") or [])
+    #
+    # Only when the source row went through Phase 7 at all. Phase 7 is optional
+    # (it needs taste_profile.md), so a run that skips it merges tracks_with_moods
+    # — where the key is simply absent, saying nothing about curation. Reading the
+    # absence as "no playlists" wiped every grouping label out of tracks.jsonl,
+    # the same absent-vs-null distinction the mood bundle above turns on.
+    if "playlists" in new:
+        merged["playlists"] = list(new.get("playlists") or [])
 
     return merged
 

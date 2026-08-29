@@ -723,3 +723,52 @@ class TestAuditMatchesThroughIdentityAliases:
                 close_run_log_handlers()
 
         assert stats["audit_unmatched"] == 1
+
+
+class TestStaleCentroidDistanceIsCleared:
+    """``mood_distance`` describes how well a *centroid* fit the track.
+
+    It travels with the mood bundle (update_tracks._MOOD_BUNDLE_FIELDS), so a row
+    the owner has since labelled by hand kept reporting the fit an earlier
+    centroid run measured for the guess that label replaced.
+    """
+
+    def _run(self, tmp: Path) -> list[dict]:
+        import pipeline.classify_moods as cm
+
+        library = [{
+            "artist": "Portishead", "track": "Roads",
+            "artist_normalized": "portishead", "track_normalized": "roads",
+            "audio_features": _features(energy=0.2, valence=0.1),
+            "mood_tags": ["Hype"], "mood_source": "centroid",
+            "mood_confidence": "medium", "mood_distance": 1.234,
+        }]
+        tracks_file = tmp / "tracks_with_availability.jsonl"
+        tracks_file.write_text(
+            "".join(json.dumps(r) + "\n" for r in library), encoding="utf-8"
+        )
+        (tmp / "mood_audit.csv").write_text(
+            "artist,track,mood_tags\nPortishead,Roads,\"Sad, Slow\"\n",
+            encoding="utf-8",
+        )
+        out = tmp / "out.jsonl"
+        original, original_batch = cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH
+        cm.REPO_ROOT = tmp
+        cm.CLAUDE_BATCH_PATH = tmp / "claude_mood_batch.jsonl"
+        try:
+            cm.classify(
+                tracks_path=tracks_file,
+                output_path=out,
+                claude_results_path=tmp / "nonexistent_claude.jsonl",
+                run_log_path=tmp / "run.log",
+            )
+        finally:
+            cm.REPO_ROOT, cm.CLAUDE_BATCH_PATH = original, original_batch
+            close_run_log_handlers()
+        return [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+    def test_audit_label_clears_the_previous_centroid_distance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = self._run(Path(tmp))
+        assert rows[0]["mood_source"] == "audit"
+        assert rows[0]["mood_distance"] is None

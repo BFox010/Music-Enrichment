@@ -178,7 +178,12 @@ def parse_exportify_row(row: dict[str, Any]) -> dict[str, Any] | None:
             row, "Track Duration (ms)", "Duration (ms)", "Duration",
         )),
         "explicit": _b(_ci_get(row, "Explicit")),
-        "isrc": _ci_get(row, "ISRC").strip() or None,
+        # Upper-cased on the way in: an ISRC is case-insensitive, but every
+        # downstream consumer compares it as a plain string — Phase 4e clusters
+        # on it, compute_canonical_track_id keys on it, and Phase 5b looks
+        # ReccoBeats' upper-cased answer back up by it. A lower-case CSV value
+        # silently became a second identity for the same recording.
+        "isrc": (_ci_get(row, "ISRC").strip().upper() or None),
         "release_year": _year_from_date(
             _ci_get(row, "Album Release Date", "Release Date")
         ),
