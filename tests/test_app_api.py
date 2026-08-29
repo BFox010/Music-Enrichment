@@ -241,6 +241,13 @@ class TestArtistTrajectory:
         assert entry[1] == 1
         assert entry[0] == "2020-06-01"
 
+    def test_top_ceiling_reaches_the_tail(self, client):
+        """The picker on the Trajectory page needs the long tail, not a top-20
+        slice (#30). Guard the widened bound so a future tidy-up cannot quietly
+        shrink the page back to the same heavy-rotation handful."""
+        assert client.get("/api/artist-trajectory?top=500").status_code == 200
+        assert client.get("/api/artist-trajectory?top=501").status_code == 422
+
 
 class TestTop:
     def test_artists(self, client):

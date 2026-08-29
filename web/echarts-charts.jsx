@@ -37,6 +37,11 @@ function ensureECharts() {
 /* ── shared ECharts mount hook ── */
 function useEChart(ref) {
   const chartRef = useRef(null);
+  // ECharts can finish loading after a view's data has already arrived, in which
+  // case the render effect bailed on a null instance and nothing would wake it.
+  // Bumping state on init re-renders, so an effect that lists `chart.current`
+  // among its dependencies runs again against the live instance.
+  const [, setReady] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let ro;
@@ -48,6 +53,7 @@ function useEChart(ref) {
       if (cancelled || chartRef.current || !ref.current) return;
       if (!window.echarts) { pollId = setTimeout(init, 50); return; }
       chartRef.current = echarts.init(ref.current, null, { renderer: "canvas" });
+      setReady((n) => n + 1);
       window.addEventListener("resize", onResize);
       // The container is often 0×0 at init time (skeleton showing, or the page
       // hidden via display:none). Observe it and resize once it gains real size
@@ -85,52 +91,75 @@ const cardTools = { display: "flex", alignItems: "center", gap: 14, flexShrink: 
 const cardDesc  = { margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.55, color: "var(--muted-s)", maxWidth: 640 };
 
 /* ── Timeline chart ── */
-function TimelineChart({ active }) {
+
+/* The Trajectory page unmounts whichever view is hidden rather than leaving an
+   idle ECharts instance behind the toggle (#31), so this view's state has to
+   outlive the component. Module scope, not a ref — the component is gone in
+   between. `data` is keyed by the year/month toggle. */
+const __timelineState = { by: "year", data: {}, ver: 0 };
+
+function TimelineChart({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
-  const [by, setBy] = useState("year");
-  const [loading, setLoading] = useState(true);
+  const [by, setBy] = useState(__timelineState.by);
+  const [rows, setRows] = useState(() => __timelineState.data[__timelineState.by] || null);
+  const loading = rows === null;
+  useEffect(() => { __timelineState.by = by; });
 
   useEffect(() => {
     if (!active) return;
-    setLoading(true);
+    // A refresh rewrites scrobbles.jsonl underneath the cache. This view used to
+    // re-fetch every time the page was opened, so the caching that survives the
+    // #31 toggle has to drop on a refresh or the page would show the old counts
+    // for the rest of the session.
+    if (__timelineState.ver !== refreshVersion) {
+      __timelineState.ver = refreshVersion;
+      __timelineState.data = {};
+    }
+    const cached = __timelineState.data[by];
+    if (cached) { setRows(cached); return; }
+    setRows(null);
+    let stale = false;
     fetch(`/api/timeline?by=${by}`)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then((data) => {
-        setLoading(false);
-        if (!chart.current || !data?.length) return;
-        const c = themeVars();
-        const periods = data.map((d) => d.period);
-        const plays   = data.map((d) => d.plays);
-        chart.current.setOption({
-          backgroundColor: "transparent",
-          tooltip: { trigger: "axis", backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
-          grid: { top: 20, bottom: 36, left: 52, right: 16 },
-          xAxis: {
-            type: "category", data: periods,
-            axisLabel: { color: c.muted, rotate: periods.length > 24 ? 45 : 0, fontSize: 11 },
-            axisLine: { lineStyle: { color: c.line } },
-            splitLine: { show: false },
-          },
-          yAxis: {
-            type: "value",
-            axisLabel: { color: c.muted },
-            splitLine: { lineStyle: { color: c.line, type: "dashed" } },
-          },
-          series: [{
-            type: "line", data: plays, smooth: true,
-            symbol: "circle", symbolSize: 4,
-            lineStyle: { color: c.accent, width: 2 },
-            itemStyle: { color: c.accent },
-            areaStyle: {
-              color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
-                colorStops: [{ offset: 0, color: c.accent + "55" }, { offset: 1, color: c.accent + "05" }] },
-            },
-          }],
-        });
-      })
-      .catch(() => setLoading(false));
-  }, [active, by]);
+      .then((d) => { __timelineState.data[by] = d || []; if (!stale) setRows(d || []); })
+      .catch(() => { if (!stale) setRows([]); });
+    return () => { stale = true; };
+  }, [active, by, refreshVersion]);
+
+  useEffect(() => {
+    if (!active || !chart.current || !rows?.length) return;
+    chart.current.resize();
+    const c = themeVars();
+    const periods = rows.map((d) => d.period);
+    const plays   = rows.map((d) => d.plays);
+    chart.current.setOption({
+      backgroundColor: "transparent",
+      tooltip: { trigger: "axis", backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
+      grid: { top: 20, bottom: 36, left: 52, right: 16 },
+      xAxis: {
+        type: "category", data: periods,
+        axisLabel: { color: c.muted, rotate: periods.length > 24 ? 45 : 0, fontSize: 11 },
+        axisLine: { lineStyle: { color: c.line } },
+        splitLine: { show: false },
+      },
+      yAxis: {
+        type: "value",
+        axisLabel: { color: c.muted },
+        splitLine: { lineStyle: { color: c.line, type: "dashed" } },
+      },
+      series: [{
+        type: "line", data: plays, smooth: true,
+        symbol: "circle", symbolSize: 4,
+        lineStyle: { color: c.accent, width: 2 },
+        itemStyle: { color: c.accent },
+        areaStyle: {
+          color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: c.accent + "55" }, { offset: 1, color: c.accent + "05" }] },
+        },
+      }],
+    });
+  }, [active, rows, chart.current]);
 
   return (
     <section className="block">
@@ -154,39 +183,81 @@ function TimelineChart({ active }) {
 }
 
 /* ── Artist Trajectory (line / stream + artist picker) ── */
-function ArtistTrajectory({ active }) {
+
+/* How deep into the play-count tail the picker can reach. The page used to
+   fetch 20, which made it a view of the same heavy-rotation handful and
+   nothing else. Measured 2026-08-29 against the committed library: 300 costs
+   ~19 KB gzipped and ~35 ms server-side, against ~3 KB at 20 — and the fetch is
+   gated on the page being open, so the dashboard's first paint is untouched
+   either way. /api/artist-trajectory caps at 500 if this needs to go further. */
+const TRAJECTORY_TOP = 300;
+
+/* How many artists the picker seeds with, and how many Shuffle draws. */
+const TRAJECTORY_SEED = 8;
+
+/* Chips are cheap individually but 300 of them is a real layout cost on every
+   keystroke. Render a window of the current ordering and tell the reader the
+   filter box reaches the rest. */
+const TRAJECTORY_CHIP_LIMIT = 80;
+
+/* Artists by total plays, descending — the picker's ordering and the source of
+   both the "Top N" seed and the shuffle pool. */
+function rankArtists(rows) {
+  const totals = {};
+  rows.forEach(([, c, n]) => { totals[n] = (totals[n] || 0) + c; });
+  return Object.keys(totals).sort((a, b) => totals[b] - totals[a]).map((n) => ({ name: n, total: totals[n] }));
+}
+
+/* Held across the unmount the view toggle causes (see __timelineState): the
+   payload is the page's largest fetch, and losing the reader's artist
+   selection on every flick of the toggle would make the picker unusable. */
+const __trajectoryState = { raw: null, mode: "lines", selected: null, query: "", ver: 0 };
+
+function ArtistTrajectory({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
-  const [raw, setRaw] = useState(null);
-  const [mode, setMode] = useState("lines");
-  const [selected, setSelected] = useState(null);  // Set of artist names
-  const [query, setQuery] = useState("");
-  const [loading, setLoading] = useState(true);
-
-  // Fetch once (top 20); seed the selection with the top 8 by total plays.
+  const [raw, setRaw] = useState(__trajectoryState.raw);
+  const [mode, setMode] = useState(__trajectoryState.mode);
+  const [selected, setSelected] = useState(__trajectoryState.selected);  // Set of artist names
+  const [query, setQuery] = useState(__trajectoryState.query);
+  const [loading, setLoading] = useState(!__trajectoryState.raw);
   useEffect(() => {
-    if (!active || raw) return;
+    __trajectoryState.raw = raw;
+    __trajectoryState.mode = mode;
+    __trajectoryState.selected = selected;
+    __trajectoryState.query = query;
+  });
+
+  // Fetch once; seed the selection with the most-played TRAJECTORY_SEED.
+  useEffect(() => {
+    if (!active) return;
+    // See __timelineState: the cache outlives the component, so a refresh has to
+    // invalidate it explicitly. Dropping `raw` re-enters this effect and fetches.
+    if (__trajectoryState.ver !== refreshVersion) {
+      __trajectoryState.ver = refreshVersion;
+      __trajectoryState.raw = null;
+      if (raw) { setLoading(true); setRaw(null); return; }
+    }
+    if (raw) return;
     setLoading(true);
-    fetch("/api/artist-trajectory?top=20")
+    fetch(`/api/artist-trajectory?top=${TRAJECTORY_TOP}`)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => {
-        setLoading(false);
         const rows = (d && d.data) || [];
-        setRaw({ data: rows });
-        const totals = {};
-        rows.forEach(([, c, n]) => { totals[n] = (totals[n] || 0) + c; });
-        const ordered = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
-        setSelected(new Set(ordered.slice(0, 8)));
+        const seed = new Set(rankArtists(rows).slice(0, TRAJECTORY_SEED).map((a) => a.name));
+        // Straight into module state as well as component state: the view can be
+        // toggled away mid-flight, and this is the page's one big fetch — a
+        // response already paid for should not be thrown away with the unmount.
+        __trajectoryState.raw = { data: rows };
+        __trajectoryState.selected = seed;
+        setLoading(false);
+        setRaw(__trajectoryState.raw);
+        setSelected(seed);
       })
       .catch(() => setLoading(false));
-  }, [active, raw]);
+  }, [active, raw, refreshVersion]);
 
-  const artists = useMemo(() => {
-    if (!raw) return [];
-    const totals = {};
-    raw.data.forEach(([, c, n]) => { totals[n] = (totals[n] || 0) + c; });
-    return Object.keys(totals).sort((a, b) => totals[b] - totals[a]).map((n) => ({ name: n, total: totals[n] }));
-  }, [raw]);
+  const artists = useMemo(() => (raw ? rankArtists(raw.data) : []), [raw]);
 
   useEffect(() => {
     if (!active || !chart.current || !raw || !selected) return;
@@ -225,12 +296,34 @@ function ArtistTrajectory({ active }) {
         series,
       }, true);
     }
-  }, [active, raw, mode, selected, chart]);
+  }, [active, raw, mode, selected, chart.current]);
 
   const toggleArtist = (name) => setSelected((s) => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
-  const resetTop = () => setSelected(new Set(artists.slice(0, 8).map((a) => a.name)));
+  const resetTop = () => setSelected(new Set(artists.slice(0, TRAJECTORY_SEED).map((a) => a.name)));
+
+  /* Partial Fisher-Yates over a copy: the whole point is to surface artists the
+     top-N ordering buries, so every artist in the payload is equally likely. */
+  const shuffleArtists = () => {
+    const pool = artists.map((a) => a.name);
+    const n = Math.min(TRAJECTORY_SEED, pool.length);
+    for (let i = 0; i < n; i++) {
+      const j = i + Math.floor(Math.random() * (pool.length - i));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    setSelected(new Set(pool.slice(0, n)));
+  };
+
   const q = query.trim().toLowerCase();
-  const shownArtists = q ? artists.filter((a) => a.name.toLowerCase().includes(q)) : artists;
+  const matching = q ? artists.filter((a) => a.name.toLowerCase().includes(q)) : artists;
+  /* Selected artists always stay visible, even outside the chip window — a
+     shuffled pick from the deep tail must remain un-clickable-off. */
+  const shownArtists = useMemo(() => {
+    const head = matching.slice(0, TRAJECTORY_CHIP_LIMIT);
+    const inHead = new Set(head.map((a) => a.name));
+    const strays = selected ? matching.filter((a) => selected.has(a.name) && !inHead.has(a.name)) : [];
+    return head.concat(strays);
+  }, [matching, selected]);
+  const hiddenCount = matching.length - shownArtists.length;
   const selCount = selected ? selected.size : 0;
 
   return (
@@ -244,16 +337,17 @@ function ArtistTrajectory({ active }) {
                 <button key={v} aria-pressed={mode === v} onClick={() => setMode(v)}>{l}</button>
               ))}
             </div>
-            <span className="card-meta">monthly plays · top 20</span>
+            <span className="card-meta">monthly plays · {artists.length} artists</span>
           </div>
         </div>
-        <p style={cardDesc}>Compare how your listening shifted month to month. <b>Lines</b> plot plays per month per artist; <b>Stream</b> stacks them into a flowing river.</p>
+        <p style={cardDesc}>Compare how your listening shifted month to month. <b>Lines</b> plot plays per month per artist; <b>Stream</b> stacks them into a flowing river. Filter by name, or <b>Shuffle</b> for a random handful from the tail.</p>
         <div className="artist-picker">
           <div className="ap-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter artists…" />
             <span className="ap-count">{selCount} shown</span>
-            <button className="ap-reset" onClick={resetTop} title="Reset to top 8">Top 8</button>
+            <button className="ap-reset" onClick={shuffleArtists} title={`Pick ${TRAJECTORY_SEED} at random from all ${artists.length} artists`}>Shuffle</button>
+            <button className="ap-reset" onClick={resetTop} title={`Reset to the ${TRAJECTORY_SEED} most-played`}>Top {TRAJECTORY_SEED}</button>
           </div>
           <div className="ap-chips">
             {shownArtists.map((a) => (
@@ -262,11 +356,52 @@ function ArtistTrajectory({ active }) {
               </button>
             ))}
           </div>
+          {hiddenCount > 0 && (
+            <p className="ap-more">{hiddenCount} more — type to narrow the list.</p>
+          )}
         </div>
         <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
         {loading && <ChartLoading height={560} />}
       </div>
     </section>
+  );
+}
+
+/* ── Trajectory page: the two time-oriented views behind one toggle (#31) ──
+   Timeline used to be its own nav entry; both views answer "how did this move
+   over time", so they share a page.
+
+   The hidden view is unmounted, not merely handed active={false}: useEChart
+   disposes on unmount, so the toggle never leaves a second idle ECharts
+   instance holding a canvas — which is the cost the `active` prop exists to
+   avoid in the first place. Each view keeps its fetched payload and its own
+   controls in module state (__timelineState / __trajectoryState), so coming
+   back to a view is a re-render rather than a re-fetch. */
+function TrajectoryPage({ active, refreshVersion = 0 }) {
+  const [view, setView] = useState("overall");
+  return (
+    <div>
+      <div className="page-intro">
+        <h2 className="page-title">Trajectory</h2>
+        <p className="page-lede">How your listening moved over time — the whole history at a glance, or month by month for the artists you choose.</p>
+      </div>
+      <div className="slicer">
+        <span className="slicer-label">View</span>
+        <div className="seg" role="group" aria-label="Trajectory view">
+          {[["overall", "Overall"], ["artist", "By artist"]].map(([v, l]) => (
+            <button key={v} aria-pressed={view === v} onClick={() => setView(v)}>{l}</button>
+          ))}
+        </div>
+        <span className="slicer-note">
+          {view === "overall"
+            ? <>Every scrobble counted, by <b>year</b> or <b>month</b></>
+            : <>Monthly plays for the artists you pick</>}
+        </span>
+      </div>
+      {view === "overall"
+        ? <TimelineChart active={active} refreshVersion={refreshVersion} />
+        : <ArtistTrajectory active={active} refreshVersion={refreshVersion} />}
+    </div>
   );
 }
 
@@ -974,7 +1109,7 @@ function ForgottenFavoritesPage({ active, refreshVersion = 0 }) {
 }
 
 Object.assign(window, {
-  TimelineChart, ArtistTrajectory, ListeningMap,
+  TrajectoryPage, ListeningMap,
   AudioFeaturesChart, SaturationChart, TagConstellation, AlbumsPage,
   ForgottenFavoritesPage,
 });
