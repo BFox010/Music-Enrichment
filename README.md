@@ -124,7 +124,7 @@ half being missing.
 | 4e | [resolve_identity](pipeline/resolve_identity.py) | `tracks_with_isrcs.jsonl` | `tracks_resolved.jsonl` |
 | 5 | [check_apple_music](pipeline/check_apple_music.py) | `tracks_resolved.jsonl` | `tracks_with_availability.jsonl` |
 | 5b | [enrich_audio_features](pipeline/enrich_audio_features.py) | `tracks_with_availability.jsonl` | `tracks_with_features.jsonl` |
-| 6 | [classify_moods](pipeline/classify_moods.py) | + `mood_audit.csv` | `tracks_with_moods.jsonl` |
+| 6 | [classify_moods](pipeline/classify_moods.py) | + [mood_audit.csv](mood_audit.csv) | `tracks_with_moods.jsonl` |
 | 7 | [apply_taste_profile](pipeline/apply_taste_profile.py) | + [taste_profile.md](taste_profile.md) | `tracks_with_taste.jsonl` |
 | 8 | [update_tracks](pipeline/update_tracks.py) | `tracks_with_taste.jsonl` | `tracks.jsonl` |
 
@@ -139,6 +139,13 @@ when its output is absent.
 Phases that read a JSONL pick the **deepest existing intermediate** rather than a
 fixed path, so skipping an optional phase doesn't silently drop the fields a
 later one added.
+
+**Phase 6's mood labels:** `mood_audit.csv` at the repo root is the canonical
+hand-labelled set (#66) and the only one a fresh clone has. The older
+`inputs/existing_audit.csv` is gitignored and no longer authoritative — but note
+that the code still *prefers* it when present, which is #83's F-06. If you
+restore a local copy, reconcile it into `mood_audit.csv` rather than letting a
+run train on labels no reviewer can see.
 
 ```bash
 python -m pipeline.run_full_pipeline
@@ -269,6 +276,10 @@ it.
 | `scrobbles.jsonl` | Raw play history — Phase 1 output | yes |
 | `taste_profile.md` | Hand-edited curation reference, read by Phase 7 | yes |
 | `taste_profile_template.md` | Blank starter for the above | yes |
+| `mood_audit.csv` | Canonical hand-labelled mood training set, read by Phase 6 | yes |
+| `docs/` | Provenance — audit findings, adjudicated decisions, dated measurements | yes |
+| `identity_review.jsonl` | Phase 4e near-misses, regenerated each run | no |
+| `taste_profile_unmatched.jsonl` | Phase 7 entries that matched no track (#65) | no |
 | `tracks_*.jsonl` | Per-phase intermediates | no |
 | `inputs/` | Owner-provided exports and audit CSVs | no |
 | `.cache/` | Per-API response caches | no |
@@ -283,11 +294,22 @@ human judgement; JSONL is the derived index, regenerated each run.
 | Script | Purpose |
 |---|---|
 | [library_stats.py](scripts/library_stats.py) | Coverage and distribution pulse-check between runs |
+| [coverage_snapshot.py](scripts/coverage_snapshot.py) | Field-coverage snapshot, and before/after diff of two runs |
 | [make_view.py](scripts/make_view.py) | XLSX/CSV view of `tracks.jsonl` for inspection |
 | [build_label_queue.py](scripts/build_label_queue.py) | Mood-labeling queue ranked by plays explained |
+| [write_mood_results.py](scripts/write_mood_results.py) | Replay the committed Claude mood verdicts into the file Phase 6 reads |
+| [apply_bass_labels.py](scripts/apply_bass_labels.py) | Re-apply the owner's Heavy Bass overlay — **must follow Phase 8**, see below |
+| [backfill_audio_features.py](scripts/backfill_audio_features.py) | Run 5a/5b straight against `tracks.jsonl`, without the intermediate chain |
 | [eval_spotify_resolution.py](scripts/eval_spotify_resolution.py) | Precision/recall of the Phase B matcher against known IDs |
+| [test_match_variations.py](scripts/test_match_variations.py) | Diagnostic: which name variation recovers an unmatched track |
 | [generate_library_js.py](scripts/generate_library_js.py) | Static offline snapshot for the `file://` workflow |
 | [build_frontend.mjs](scripts/build_frontend.mjs) | esbuild JSX → `web/app.bundle.js` |
+
+**After any full pipeline run, `apply_bass_labels.py --apply` must follow Phase
+8.** Heavy Bass cannot come from the centroid — the 9 audio features carry no
+bass descriptor, so the measured allowlist withholds it — and the owner's
+hand-reviewed verdicts are a durable overlay, not a pipeline output. Skipping
+the re-apply loses them.
 
 [scripts/archive/](scripts/archive/README.md) holds one-off utilities kept for
 provenance. Nothing imports them.
@@ -322,5 +344,24 @@ every push to `main` and every pull request
 - [docs/apple-music-xml.md](docs/apple-music-xml.md) — iTunes XML field mapping
 - [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md) — load-time and compute profile
 - [docs/WOW_FACTOR_IDEAS.md](docs/WOW_FACTOR_IDEAS.md) — visual-polish backlog
+
+Provenance — decisions and dated measurements, kept because the reasoning is not
+recoverable from the code:
+
+- [docs/capture_coverage_2026-08-24.md](docs/capture_coverage_2026-08-24.md) —
+  what the 5a/5b chain actually covers versus Exportify, and why 3a/3b/3c stay
+- [docs/mood_centroid_decisions.md](docs/mood_centroid_decisions.md) — how the
+  mood allowlist was measured, and which labels it withholds
+- [docs/blacklist_archive_2026-08.md](docs/blacklist_archive_2026-08.md) — the
+  `blacklisted` values as they stood when #63 dropped the field
+- [docs/bass_review_2026-06-05.csv](docs/bass_review_2026-06-05.csv) ·
+  [docs/claude_mood_verdicts_2026-08-25.jsonl](docs/claude_mood_verdicts_2026-08-25.jsonl)
+  — the raw label verdicts the two overlays replay from
+
+Open work is tracked in [#77](https://github.com/BFox010/Music-Enrichment/issues/77)
+(pipeline data quality), [#83](https://github.com/BFox010/Music-Enrichment/issues/83)
+(orchestration safety and identity-alias gaps), and the dashboard issues. Figures
+in an issue body are a snapshot of its filing date — re-measure before
+implementing.
 
 The git log is the authoritative history.

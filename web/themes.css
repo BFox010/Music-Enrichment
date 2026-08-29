@@ -27,6 +27,15 @@
   --bad:       #fb7185;
   --track-bg:  #1e1e28;
 
+  /* Season identity — one definition, used by the Overview "Seasons of
+     listening" tiles (.season) and the Seasonal page cards (.season-card).
+     The .season-<key> classes below bind one of these to --season, so every
+     surface reads the season colour from the same place. */
+  --season-winter: #5b9dff;
+  --season-spring: #4ade80;
+  --season-summer: #fbbf24;
+  --season-fall:   #fb7185;
+
   --font-display: 'Space Grotesk', system-ui, sans-serif;
   --font-body:    'Manrope', system-ui, sans-serif;
   --font-mono:    'Space Grotesk', ui-monospace, monospace;
@@ -375,14 +384,21 @@ section.block { margin-bottom: 16px; }
 .dowrow .dfill { height: 100%; background: var(--accent); border-radius: var(--bar-radius); background-image: var(--bar-texture); transition: width .5s; }
 .dowrow .dval { font-family: var(--font-mono); font-size: 11.5px; color: var(--text-2); font-variant-numeric: tabular-nums; min-width: 42px; text-align: right; }
 
+/* `.season` (Overview tiles) and `.season-card` (Seasonal page) are different
+   components; this is the one thing they share. */
+.season-winter { --season: var(--season-winter); }
+.season-spring { --season: var(--season-spring); }
+.season-summer { --season: var(--season-summer); }
+.season-fall   { --season: var(--season-fall); }
+
 .seasons { display: grid; grid-template-columns: repeat(4,1fr); gap: 10px; }
 .season { background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: var(--radius-sm); padding: 12px; display: flex; flex-direction: column; gap: 8px; }
 .season .s-top { display: flex; align-items: center; justify-content: space-between; }
-.season .s-name { font-size: 12px; color: var(--text-2); text-transform: capitalize; font-weight: 600; }
+.season .s-name { font-size: 12px; color: color-mix(in oklab, var(--season, var(--text-2)) 45%, var(--text-2)); text-transform: capitalize; font-weight: 600; }
 .season .s-glyph { font-size: 13px; }
 .season .s-val { font-family: var(--kpi-family); font-size: 22px; color: var(--text); font-variant-numeric: tabular-nums; font-weight: var(--display-weight); }
 .season .s-bar { height: 5px; background: var(--track-bg); border-radius: var(--bar-radius); overflow: hidden; }
-.season .s-bar > span { display: block; height: 100%; background: var(--accent); border-radius: var(--bar-radius); }
+.season .s-bar > span { display: block; height: 100%; background: var(--season, var(--accent)); border-radius: var(--bar-radius); }
 .season .s-pct { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-s); }
 
 /* ============================================================
@@ -391,7 +407,7 @@ section.block { margin-bottom: 16px; }
 .moods { display: flex; flex-direction: column; gap: 9px; }
 .moodrow { display: grid; grid-template-columns: 96px 1fr auto; align-items: center; gap: 12px; cursor: pointer; padding: 3px 4px; border-radius: var(--radius-sm); transition: background .14s; }
 .moodrow:hover { background: var(--panel-2); }
-.moodrow.active { background: color-mix(in oklab, var(--accent) 16%, var(--panel)); }
+.moodrow.active { background: color-mix(in oklab, var(--mood, var(--accent)) 16%, var(--panel)); }
 .moodrow .m-name { font-size: 12.5px; color: var(--text); font-weight: 500; white-space: nowrap; }
 /* Flex so the hand-labelled and classifier-inferred segments sit end to end
    inside one bar rather than stacking. */
@@ -488,7 +504,7 @@ section.block { margin-bottom: 16px; }
 .legend-group { display: flex; flex-direction: column; gap: 10px; }
 .legend-gtitle { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-2); font-weight: 600; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .legend-gtitle .lg-note { font-family: var(--font-body); text-transform: none; letter-spacing: 0; font-size: 11.5px; color: var(--muted-s); font-weight: 400; }
-.legend-item { display: grid; grid-template-columns: 72px 1fr; align-items: start; gap: 12px; font-size: 13px; color: var(--text-2); line-height: 1.5; }
+.legend-item { display: grid; grid-template-columns: 80px 1fr; align-items: start; gap: 12px; font-size: 13px; color: var(--text-2); line-height: 1.5; }
 .legend-item b { color: var(--text); font-weight: 600; }
 .legend-item .covdots { padding-top: 3px; }
 .legend-item .msrc { justify-self: start; }
@@ -542,11 +558,14 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .td-year { font-family: var(--font-mono); color: var(--muted-s); font-variant-numeric: tabular-nums; }
 .td-plays { font-family: var(--font-mono); font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; text-align: right; }
 .cellmoods { display: flex; gap: 5px; flex-wrap: wrap; }
-.minimood { font-size: 10.5px; padding: 2px 7px; border-radius: var(--radius-pill); background: var(--panel-hi); color: var(--text-2); white-space: nowrap; border: 1px solid var(--line-soft); }
+.minimood { --chip-base: var(--panel-hi); font-size: 10.5px; padding: 2px 7px; border-radius: var(--radius-pill); white-space: nowrap; border: 1px solid var(--line-soft); }
+.mood-key { display: flex; flex-wrap: wrap; gap: 5px; }
 .covdots { display: inline-flex; gap: 4px; align-items: center; }
-.covdot { width: 8px; height: 8px; border-radius: 2px; background: var(--track-bg); position: relative; }
-.covdot.on { background: var(--accent); }
-.covdot.warn { background: var(--warn); }
+.covdot { width: 9px; height: 9px; border-radius: 2px; background: var(--track-bg); position: relative; }
+.covdot.on { background: var(--cov, var(--accent)); }
+/* present but lower-confidence: same hue, hollow, so it still reads as "this
+   source is here" while looking unfinished next to a solid one */
+.covdot.warn { background: var(--track-bg); box-shadow: inset 0 0 0 2px var(--cov, var(--warn)); }
 .srcpill { font-family: var(--font-mono); font-size: 10px; color: var(--muted-s); }
 .empty { padding: 60px 20px; text-align: center; color: var(--muted-s); }
 .empty .big { font-family: var(--font-display); font-size: 20px; color: var(--text-2); margin-bottom: 6px; text-transform: var(--display-transform); }
@@ -645,7 +664,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .season.s-empty { opacity: .42; }
 .season.s-empty .s-val { color: var(--faint); }
 .season.sel { border-color: var(--accent); background: color-mix(in oklab, var(--accent) 13%, var(--panel-2)); }
-.season.sel .s-bar > span { box-shadow: 0 0 12px -2px var(--accent); }
+.season.sel .s-bar > span { box-shadow: 0 0 12px -2px var(--season, var(--accent)); }
 /* keep lift/background hover affordances on real pointers only, so a single
    tap activates on touch instead of being consumed applying :hover */
 @media (hover: hover) {
@@ -654,6 +673,8 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   .dowrow.clickable:hover { background: var(--panel-hi); }
   .dowrow.clickable:hover .dfill { filter: brightness(1.18); }
   .season.clickable:hover { border-color: var(--faint); transform: translateY(-2px); }
+  /* The banner is always on, so hover brightens it rather than revealing it. */
+  .season-card:hover::after { filter: brightness(1.3); box-shadow: 0 0 14px 0 var(--season, var(--accent)); }
 }
 
 /* drill-down panel */
@@ -714,17 +735,22 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 /* seasonal favorites */
 .seasonal-grid { gap: 16px; }
 .season-card { position: relative; overflow: hidden; }
-.season-card::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px; }
-.season-card.season-winter::before { background: linear-gradient(90deg, #5b9dff, transparent); }
-.season-card.season-spring::before { background: linear-gradient(90deg, #4ade80, transparent); }
-.season-card.season-summer::before { background: linear-gradient(90deg, #fbbf24, transparent); }
-.season-card.season-fall::before   { background: linear-gradient(90deg, #fb7185, transparent); }
+/* The banner sits on ::after, not ::before: ::before is the app-wide cursor
+   spotlight (`.card::before`, further down). Sharing one pseudo-element made
+   the cascade resolve per-property — the banner won `background`, the
+   spotlight's `opacity: 0` stayed — so the spotlight never drew and the
+   banner only appeared once `.lit` flipped the opacity on hover. */
+.season-card::after {
+  content: ""; position: absolute; top: 0; left: 0; right: 0; height: 3px;
+  z-index: 1; pointer-events: none;
+  background: linear-gradient(90deg, var(--season, var(--accent)), transparent);
+  transition: box-shadow .22s ease, filter .22s ease;
+}
 .season-glyph { font-size: 15px; opacity: .8; margin-left: 4px; }
 .season-sub { font-family: var(--font-mono); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; margin: 16px 0 8px; }
 .season-sub:first-of-type { margin-top: 4px; }
 .season-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .season-chips .tagchip { cursor: default; padding: 4px 9px; font-size: 12px; }
-.season-chips .mood-chip { border-color: color-mix(in oklab, var(--good) 35%, var(--line)); color: color-mix(in oklab, var(--good) 60%, var(--text-2)); }
 .mini-tl { margin-top: 2px; }
 .mini-tl .trk { padding: 6px 4px; }
 .mini-tl .trk-plays .mini { width: 44px; }
@@ -840,9 +866,21 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   border: 1px solid var(--line-soft); border-radius: var(--radius-pill);
   padding: 2px 8px; text-transform: capitalize;
 }
+/* ── Mood tint: one recipe, every mood-chip surface ──
+   `--mood` is set per element from MOOD_COLORS (charts.jsx). Kept as a single
+   rule because the previous per-surface copies are exactly how the Forgotten
+   Favorites chips were left behind on a hard-coded green while every other
+   mood surface moved to the shared palette. The fallbacks keep a chip legible
+   if it ever renders without a --mood.
+
+   Placed after all three base rules so it wins the cascade for `.minimood`,
+   whose `border` shorthand would otherwise reset border-color. */
+.minimood,
+.season-chips .mood-chip,
 .ff-tag.ff-tag-mood {
-  border-color: color-mix(in oklab, var(--good) 35%, var(--line));
-  color: color-mix(in oklab, var(--good) 60%, var(--text-2));
+  background: color-mix(in oklab, var(--mood, transparent) 13%, var(--chip-base, var(--panel-2)));
+  color: color-mix(in oklab, var(--mood, var(--text-2)) 62%, var(--text));
+  border-color: color-mix(in oklab, var(--mood, var(--line-soft)) 38%, var(--line-soft));
 }
 
 .ff-spark-wrap { display: flex; flex-direction: column; gap: 6px; }

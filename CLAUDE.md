@@ -58,13 +58,18 @@ Two things look like playlist machinery but are not:
 | `scripts/` | Operational helpers (view generation, label queues, eval harnesses) |
 | `scripts/archive/` | One-off utilities kept for provenance. Not imported by anything |
 | `tests/` | pytest suite, self-contained (no network, no secrets) |
+| `docs/` | Provenance — audit findings, adjudicated decisions, dated measurements |
+| `pipeline_manifest.yaml` | Phase order, dependencies, `optional`/`accepts_force` flags |
 | `tracks.jsonl` | Canonical enriched library — Phase 8 output |
 | `scrobbles.jsonl` | Raw play history — Phase 1 output |
 | `taste_profile.md` | Hand-edited curation reference, read by Phase 7 |
+| `mood_audit.csv` | Hand-labelled mood training set, read by Phase 6 |
 
 Gitignored and absent from a fresh clone: `inputs/` (owner-provided exports),
 `.cache/` (API responses), `runs/` (logs), `views/`, `tracks_*.jsonl`
-intermediates.
+intermediates, and the two review logs a run regenerates —
+`identity_review.jsonl` (4e near-misses) and `taste_profile_unmatched.jsonl`
+(Phase 7 entries that matched nothing, #65).
 
 ## Pipeline chain
 
@@ -85,7 +90,7 @@ inputs/lastfm_export.json
   4e resolve_identity      → tracks_resolved.jsonl          (clusters on the ISRC 5a just resolved)
   5  check_apple_music     → tracks_with_availability.jsonl ← iTunes Search
   5b enrich_audio_features → tracks_with_features.jsonl     ← ReccoBeats, keyed by ISRC
-  6  classify_moods        → tracks_with_moods.jsonl        ← mood_audit.csv
+  6  classify_moods        → tracks_with_moods.jsonl        ← mood_audit.csv (see gotcha)
   7  apply_taste_profile   → tracks_with_taste.jsonl        ← taste_profile.md
   8  update_tracks         → tracks.jsonl                   canonical
 ```
@@ -151,7 +156,8 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
 - Readers ignore unknown fields; `fill_defaults()` in `pipeline/schema.py`
   preserves forward-compat.
 - Additive fields **do not** bump the version. Breaking renames/removals **do**,
-  and require migration tests (`tests/test_schema_v5.py`).
+  and require migration tests — `tests/test_schema_v6.py` covers the current
+  schema; `tests/test_schema_v5.py` stays as a legacy-read compat test.
 - `FIELD_DEFAULTS` in `pipeline/schema.py` defines canonical write order.
 
 ## Conventions
@@ -177,11 +183,18 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   in Phase 5. Do not conflate them.
 - **A null `mood_tags` from Phase 6 is a verdict, not a gap.** The classifier
   declines to guess where audio features can't support one, and `update_tracks`
-  must let that blank survive the merge.
+  must let that blank survive the merge. A decline is a *machine* verdict, so it
+  clears a machine guess (`centroid`, `inherited`) but never a curated label
+  (`manual`, `audit`, `claude_batch`) — the split is `MOOD_CURATED_MIN_RANK`,
+  next to `MOOD_SOURCE_RANK`. Ranking the two sides alone is not enough: every
+  ranked source outranks an unset one, which silently reinstates the guess the
+  classifier just withdrew.
 - **`mood_source: "audit"` is the owner's own labelling** — the training signal
   the whole classifier is built on. A fresher centroid pass must never overwrite
   one. Trust order lives once, in `MOOD_SOURCE_RANK` (`pipeline/config.py`):
-  `manual` > `audit` > `claude_batch` > `centroid`. Don't re-encode it locally.
+  `manual` > `audit` > `claude_batch` > `centroid` > `inherited` > unset.
+  Don't re-encode it locally — `update_tracks._merge_with_existing()` consults
+  it directly (#83/F-02 replaced the ad hoc rule it used to carry).
 - **`mood_audit.csv` at the repo root is the canonical label file** (#66) and
   Phase 6's unconditional default (`classify()`'s `audit_path` resolves to it
   when omitted). The older `inputs/existing_audit.csv` is gitignored and never
@@ -199,3 +212,20 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   across restarts.
 - **No CORS middleware, deliberately.** The dashboard is same-origin; allowing
   all origins would let any site read the full listening history over the tunnel.
+
+## Open audits
+
+Three tracking issues hold the known-unfixed work. Read the relevant one before
+filing a finding — it is probably already there, and several have been
+re-measured since filing.
+
+| Issue | Scope | Remaining |
+|---|---|---|
+| [#77](https://github.com/BFox010/Music-Enrichment/issues/77) | Pipeline data quality (23 Aug) | #68, #70, #75, #76 |
+| [#83](https://github.com/BFox010/Music-Enrichment/issues/83) | Orchestration safety, mood precedence, alias gaps (26 Aug) | all of it; tracking only, nothing scheduled |
+| [#42](https://github.com/BFox010/Music-Enrichment/issues/42) | Phase A joins the iTunes XML on name, matching ~3% | the whole issue |
+
+**Re-measure before implementing.** Three of #77's items had premises that had
+gone stale by the time they were worked (#72's 310-row payoff was 0 rows by
+then); the re-measurement is what surfaced four further defects nobody had
+filed. Coverage figures in an issue body are a snapshot of its filing date.
