@@ -35,9 +35,8 @@ data and sync new scrobbles. See [.env.example](.env.example) for the rest.
 | Library | Tag Constellation | Tag/style co-occurrence graph, force-laid-out |
 | Library | Audio Features | Feature histograms and the energy × valence scatter |
 | Library | Coverage | Per-field enrichment coverage and saturation tiers |
-| Listening | Timeline | Scrobbles over time, by year or month |
 | Listening | Listening Map | Hour × weekday matrix and a calendar heatmap |
-| Listening | Artists | Per-artist plays over time (themeRiver) |
+| Listening | Trajectory | Scrobbles over time (by year or month), or per-artist plays month by month |
 | Listening | Seasonal | Per-season favourites with a tracks-and-time drill-down |
 | Listening | Forgotten | Tracks with a peak-then-fade listening arc |
 | Browse | Tracks | Filterable, paginated track table |

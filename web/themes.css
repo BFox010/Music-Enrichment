@@ -757,9 +757,9 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 
 /* artist picker */
 .artist-picker { margin-bottom: 18px; }
-.ap-search { position: relative; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.ap-search { position: relative; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .ap-search > svg { position: absolute; left: 12px; width: 14px; height: 14px; color: var(--muted-s); pointer-events: none; }
-.ap-search input { flex: 1; font-family: var(--font-body); font-size: 13px; color: var(--text); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-sm); padding: 9px 12px 9px 34px; outline: none; transition: border-color .16s; }
+.ap-search input { flex: 1 1 220px; font-family: var(--font-body); font-size: 13px; color: var(--text); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-sm); padding: 9px 12px 9px 34px; outline: none; transition: border-color .16s; }
 .ap-search input:focus { border-color: var(--accent); }
 .ap-search input::placeholder { color: var(--muted-s); }
 .ap-count { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-s); letter-spacing: .04em; white-space: nowrap; }
@@ -771,6 +771,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .ap-chip .ap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: background .14s; }
 .ap-chip.on { background: color-mix(in oklab, var(--accent) 18%, var(--panel)); border-color: var(--accent); color: var(--text); }
 .ap-chip.on .ap-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.ap-more { margin: 9px 2px 0; font-size: 11.5px; color: var(--muted-s); }
 
 /* listening calendar */
 .echart-wrap.cal { width: 100%; min-height: 220px; }
@@ -966,6 +967,141 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 ::view-transition-old(nav-marker),
 ::view-transition-new(nav-marker) { animation: none; opacity: 1; }
 
+/* ---------- ambient sprites (ambient.js) ---------- */
+/* Rare drifting visitors, above the mesh gradient and below the app. All of the
+   motion is CSS: JS inserts an element and removes it on animationend, so
+   nothing runs on the main thread in the long stretches between appearances.
+   Every animation here has a finite iteration count — the sway included, whose
+   count ambient.js works out from the crossing time — so the layer honours the
+   "nothing loops" rule the rest of the motion layer follows. */
+.ambient-sprites {
+  position: fixed; inset: 0; z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  color: var(--accent);
+  filter: blur(0.8px);
+  /* Its own view-transition group. Without one the layer is captured into the
+     root snapshot, and a sprite mid-flight cross-fades against itself for the
+     length of a page transition — which reads as a rendering bug rather than
+     as a passing jellyfish. */
+  view-transition-name: ambient-sprites;
+}
+::view-transition-old(ambient-sprites),
+::view-transition-new(ambient-sprites) { animation: none; opacity: 1; }
+
+.ambient-sprite { position: absolute; opacity: 0; will-change: transform, opacity; }
+.ambient-sprite svg { display: block; width: var(--as-size); height: auto; }
+.as-drifter { top: var(--as-lane); left: 0; animation: as-drift var(--as-dur) linear forwards; }
+.as-riser { left: var(--as-lane); bottom: 0; animation: as-rise var(--as-dur) linear forwards; }
+/* Drifters that entered from the right face the way they are travelling. */
+.as-mirror .as-body { scale: -1 1; }
+
+@keyframes as-drift {
+  0%   { opacity: 0; transform: translateX(-25vw); }
+  14%  { opacity: var(--as-peak); }
+  86%  { opacity: var(--as-peak); }
+  100% { opacity: 0; transform: translateX(125vw); }
+}
+@keyframes as-rise {
+  0%   { opacity: 0; transform: translateY(20vh); }
+  16%  { opacity: var(--as-peak); }
+  84%  { opacity: var(--as-peak); }
+  100% { opacity: 0; transform: translateY(-120vh); }
+}
+
+/* ---- the lava lamp ---- */
+/* The other three are one shape being moved. A blob that gloops has to pool at
+   the base, neck upward, let go, and leave something behind — which one
+   transform cannot express, so the work is split across nested elements that
+   each animate one thing:
+     .as-glooper   fades in and out, and owns the animationend that removes it
+     .as-body      drifts sideways (the shared sway; convection is not plumb)
+     .gloop-rise   pool -> neck -> release -> float, as translate + squash
+     .gloop        morphs its border-radius, which is what sells the goo
+     .gloop-pool   stays at the base, swells as the blob necks, then subsides
+   Every one of them is finite, so the whole thing still stops on its own. */
+.as-glooper { left: var(--as-lane); bottom: 0; animation: as-gloop-fade var(--as-dur) linear forwards; }
+.gloop {
+  display: block; width: var(--as-size); aspect-ratio: 1 / 1.08;
+  border-radius: 58% 42% 47% 53% / 55% 60% 40% 45%;
+  background:
+    radial-gradient(58% 46% at 34% 26%, color-mix(in oklab, currentColor 45%, #fff) 0%, transparent 70%),
+    linear-gradient(158deg, currentColor 0%, color-mix(in oklab, currentColor 60%, #000) 100%);
+}
+/* The SVG cast paints at ~.5 fill, so the blob — which is solid — is knocked
+   back here to land in the same weight once --as-peak is applied on top. */
+.gloop-rise { display: block; opacity: .7; transform-origin: 50% 100%; animation: as-gloop-rise var(--as-dur) linear both; }
+.gloop-pool {
+  position: absolute; left: -14%; bottom: -8%; width: 128%; height: 42%;
+  border-radius: 46% 54% 50% 50% / 84% 80% 20% 16%;
+  background: linear-gradient(0deg, color-mix(in oklab, currentColor 70%, #000), currentColor);
+  transform-origin: 50% 100%;
+  opacity: .7;
+  animation: as-gloop-pool var(--as-dur) linear both;
+}
+
+@keyframes as-gloop-fade {
+  0%, 4% { opacity: 0; }
+  12%    { opacity: var(--as-peak); }
+  90%    { opacity: var(--as-peak); }
+  100%   { opacity: 0; }
+}
+/* The pacing is in the keyframe spacing, not in an easing curve: it dwells at
+   the base for a fifth of the crossing, snaps up on release, then coasts. */
+@keyframes as-gloop-rise {
+  0%   { transform: translateY(14vh) scale(1.3, .58); }
+  10%  { transform: translateY(9vh)  scale(1.26, .64); }
+  19%  { transform: translateY(3vh)  scale(.82, 1.3); }    /* drawn upward */
+  25%  { transform: translateY(-9vh) scale(1.2, .84); }    /* let go, rebound */
+  38%  { transform: translateY(-30vh) scale(.9, 1.14); }
+  55%  { transform: translateY(-56vh) scale(1.1, .93); }
+  73%  { transform: translateY(-82vh) scale(.94, 1.08); }
+  90%  { transform: translateY(-104vh) scale(1.18, .8); }
+  100% { transform: translateY(-118vh) scale(1.34, .62); }
+}
+/* The pool is also the neck: it draws up into a thin stalk under the blob and
+   snaps back flat the moment the blob lets go, which is the read a single
+   squashed shape could never give on its own. */
+@keyframes as-gloop-pool {
+  0%   { transform: scale(1, .5); }
+  12%  { transform: scale(1.02, .82); }
+  19%  { transform: scale(.34, 1.5); }   /* the stalk */
+  24%  { transform: scale(.5, 1.05); }
+  28%  { transform: scale(1.08, .38); }  /* snaps flat once it lets go */
+  46%  { transform: scale(.9, .12); opacity: .7; }
+  60%, 100% { transform: scale(.86, 0); opacity: 0; }
+}
+
+.as-body { animation: var(--as-sway) var(--as-sway-dur) ease-in-out var(--as-sway-n) alternate both; }
+@keyframes as-bob   { from { transform: translateY(-9px) scaleY(1.04); } to { transform: translateY(9px) scaleY(.96); } }
+@keyframes as-tumble{ from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
+@keyframes as-wobble{ from { transform: translateX(-14px) scaleX(.94); } to { transform: translateX(14px) scaleX(1.06); } }
+
+/* Secondary motion inside the artwork — a bell that breathes, a tail that
+   flicks — so a sprite reads as alive rather than as a sticker being panned
+   across the screen. Each runs at its own fraction of the sway period and
+   scales its iteration count to match, so all of it still stops when the
+   crossing does. transform-box: fill-box makes transform-origin resolve
+   against each shape's own bounding box rather than the whole SVG. */
+.ambient-sprite [class^="fx-"] { transform-box: fill-box; }
+.fx-pulse { transform-origin: 50% 5%; animation: as-pulse calc(var(--as-sway-dur) * .5) ease-in-out calc(var(--as-sway-n) * 2) alternate both; }
+.fx-trail { transform-origin: 50% 0; animation: as-trail calc(var(--as-sway-dur) * .5) ease-in-out calc(var(--as-sway-n) * 2) alternate both; }
+.fx-tail  { transform-origin: 0 100%;  animation: as-tail  calc(var(--as-sway-dur) * .8) ease-in-out calc(var(--as-sway-n) * 1.25) alternate both; }
+.fx-bub   { transform-origin: 50% 50%; animation: as-bub   calc(var(--as-sway-dur) * .65) ease-in-out calc(var(--as-sway-n) * 1.5) alternate both; }
+.fx-morph { animation: as-morph calc(var(--as-sway-dur) * .42) ease-in-out calc(var(--as-sway-n) * 2.4) alternate both; }
+.fx-bub:nth-of-type(2) { animation-delay: -1.1s; }
+.fx-bub:nth-of-type(3) { animation-delay: -2.3s; }
+.fx-bub:nth-of-type(4) { animation-delay: -0.5s; }
+
+@keyframes as-pulse { from { transform: scale(1.05, .94); } to { transform: scale(.95, 1.06); } }
+@keyframes as-trail { from { transform: translateY(-3px) scaleY(.94); } to { transform: translateY(3px) scaleY(1.06); } }
+@keyframes as-tail  { from { transform: rotate(-11deg); } to { transform: rotate(9deg); } }
+@keyframes as-bub   { from { transform: scale(.93); } to { transform: scale(1.07); } }
+@keyframes as-morph {
+  from { border-radius: 63% 37% 44% 56% / 61% 64% 36% 39%; }
+  to   { border-radius: 41% 59% 62% 38% / 43% 37% 63% 57%; }
+}
+
 /* ---------- reduced motion ---------- */
 /* Every effect above degrades to its static end state, not to a faster
    animation: the spotlight is gone, the backdrop holds still, and lists snap
@@ -979,5 +1115,8 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   }
   .card::before { display: none; }
   .ambient-bg { filter: blur(28px); }
+  /* ambient.js already refuses to spawn under reduced motion; this is the
+     belt-and-braces for a preference flipped mid-flight. */
+  .ambient-sprites { display: none; }
   ::view-transition-group(*) { animation: none !important; }
 }
