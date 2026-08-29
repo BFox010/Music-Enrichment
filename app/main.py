@@ -5,6 +5,7 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 ``html=True`` so ``index.html`` is the SPA fallback.
 """
 
+import asyncio
 import os
 import secrets
 from pathlib import Path
@@ -179,8 +180,20 @@ def api_tag_graph(
 
 
 @app.post("/api/reload", dependencies=[Depends(require_token)])
-def api_reload():
-    return data.reload()
+async def api_reload():
+    """Shares the refresh/sync mutation lock (F-05): a reload racing a
+    full refresh could otherwise re-read tracks.jsonl mid-rewrite."""
+    from app.refresh import RefreshInProgress, _exclusive
+    try:
+        async with _exclusive("reload"):
+            # data.reload() re-parses both JSONL files synchronously. This
+            # endpoint had to become a coroutine to hold the async lock, which
+            # took it out of the threadpool FastAPI runs `def` handlers in — so
+            # without to_thread the parse would block the event loop and stall
+            # every concurrent request for its duration.
+            return await asyncio.to_thread(data.reload)
+    except RefreshInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
 
 
 @app.get("/api/lastfm/status")
@@ -199,11 +212,18 @@ def lastfm_status():
 
 @app.post("/api/lastfm/sync", dependencies=[Depends(require_token)])
 async def lastfm_sync():
+    """Shares the refresh/reload mutation lock (F-05): a direct sync used to
+    run outside it entirely, so it could overlap a full refresh mid-rewrite
+    of scrobbles.jsonl and the pipeline intermediates that read it."""
     from app.lastfm_sync import sync as _sync
+    from app.refresh import RefreshInProgress, _exclusive
     try:
-        result = await _sync(SCROBBLES_PATH)
-        data.reload()
-        return result
+        async with _exclusive("sync"):
+            result = await _sync(SCROBBLES_PATH)
+            data.reload()
+            return result
+    except RefreshInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
     except RuntimeError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 

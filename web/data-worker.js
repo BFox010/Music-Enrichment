@@ -6,10 +6,13 @@
 importScripts("data-processing.js");
 
 self.onmessage = (e) => {
-  const { tracksText, scrobblesText } = e.data || {};
+  // Either raw JSONL text (parsed here) or already-parsed rows — the
+  // drag/drop path on the main thread can hand over pre-parsed rows since a
+  // dropped file may be a plain JSON array rather than JSONL.
+  const { tracksText, scrobblesText, trRows: preTr, scRows: preSc } = e.data || {};
   try {
-    const trRows = tracksText ? parseJSONL(tracksText) : null;
-    const scRows = scrobblesText ? parseJSONL(scrobblesText) : null;
+    const trRows = preTr !== undefined ? preTr : (tracksText ? parseJSONL(tracksText) : null);
+    const scRows = preSc !== undefined ? preSc : (scrobblesText ? parseJSONL(scrobblesText) : null);
     const { nt, ns, drill, cube } = processLibrary(trRows, scRows);
     // The cube's typed arrays are transferred, not cloned — moving ~130KB of
     // buffers costs nothing and keeps the hand-off off the copy path.

@@ -35,6 +35,7 @@ from pipeline.config import (
     INPUT_CLAUDE_MOOD_RESULTS,
     INPUT_EXISTING_AUDIT,
     INPUTS_DIR,
+    MOOD_AUDIT_FILENAME,
     MOOD_CATEGORIES,
     REPO_ROOT,
     TRACKS_PATH,
@@ -44,6 +45,7 @@ from pipeline.config import (
     get_logger,
 )
 from pipeline.normalize import normalize_artist, normalize_track
+from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
@@ -314,8 +316,7 @@ def write_claude_batch(tracks: list[dict], path: Path = CLAUDE_BATCH_PATH) -> in
     only the fields needed to classify. Owner pastes verdicts back as
     ``inputs/claude_mood_results.jsonl`` (same join key + mood_tags).
     """
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(path) as fh:
         for t in tracks:
             payload = {
                 "artist": t.get("artist"),
@@ -412,7 +413,7 @@ def _recover_owner_labels(tracks: list[dict]) -> dict[tuple[str, str], dict]:
 
 
 def classify(
-    audit_path: Path = INPUT_EXISTING_AUDIT,
+    audit_path: Path | None = None,
     tracks_path: Path = TRACKS_WITH_AUDIO_PATH,
     output_path: Path = TRACKS_WITH_MOODS_PATH,
     claude_results_path: Path = INPUT_CLAUDE_MOOD_RESULTS,
@@ -420,11 +421,23 @@ def classify(
 ) -> dict[str, int]:
     """Classify moods. Falls back to skeleton if tracks_with_audio missing.
 
+    ``audit_path`` defaults to the canonical, git-tracked ``mood_audit.csv`` at
+    the repo root (``MOOD_AUDIT_PATH``) — pass ``audit_path=INPUT_EXISTING_AUDIT``
+    explicitly to use the legacy gitignored copy instead; it is never chosen
+    silently.
+
     Returns ``{total, classified_centroid, claude_overrides, batched_for_claude,
     no_match}``.
     """
     configure_logging(run_log_path)
     log.info("=== Phase 6: mood classification ===")
+
+    if audit_path is None:
+        # Resolved against the module's REPO_ROOT rather than importing the
+        # ready-made MOOD_AUDIT_PATH, so tests that redirect REPO_ROOT to a
+        # tmpdir redirect the audit file with it. MOOD_AUDIT_FILENAME keeps the
+        # name itself defined once.
+        audit_path = REPO_ROOT / MOOD_AUDIT_FILENAME
 
     # DEEPEST intermediate wins, so every upstream field survives (5b features,
     # 5 availability, 4b discogs_styles, ...). tracks.jsonl is the last resort:
@@ -446,13 +459,20 @@ def classify(
         log.error("No tracks file found — run earlier phases first.")
         raise FileNotFoundError("tracks_with_audio.jsonl or tracks_with_metadata.jsonl")
 
-    # inputs/ is gitignored, so a fresh clone has no audit CSV and would train on
-    # nothing. Fall back to the committed root copy.
-    if not audit_path.exists():
-        root_audit = REPO_ROOT / "mood_audit.csv"
-        if root_audit.exists():
-            log.info("%s missing — using committed %s", audit_path, root_audit)
-            audit_path = root_audit
+    # mood_audit.csv (repo root) is the canonical, git-tracked label file (#66)
+    # and the unconditional default above. inputs/existing_audit.csv is a
+    # gitignored legacy copy that must never silently win — a forgotten local
+    # file would otherwise make classification non-reproducible relative to a
+    # fresh clone or CI, with no visible sign of which file actually trained
+    # the run. If it's present alongside the canonical file, ignore it loudly;
+    # to use it deliberately, pass audit_path=INPUT_EXISTING_AUDIT explicitly.
+    if INPUT_EXISTING_AUDIT.exists() and audit_path != INPUT_EXISTING_AUDIT:
+        log.warning(
+            "%s exists but is not authoritative — ignoring it in favor of %s. "
+            "Reconcile any local edits into the committed file; pass "
+            "audit_path=INPUT_EXISTING_AUDIT explicitly to use it instead.",
+            INPUT_EXISTING_AUDIT, audit_path,
+        )
 
     log.info("Tracks input: %s", chosen_input)
     log.info("Audit input : %s (exists=%s)", audit_path, audit_path.exists())
@@ -638,8 +658,7 @@ def classify(
             "; ".join(f"{a} — {t}" for a, t in sorted(unmatched_audit)[:20]),
         )
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(output_path) as fh:
         for row in tracks:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 

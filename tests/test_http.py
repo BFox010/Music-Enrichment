@@ -339,3 +339,92 @@ class TestFlushBatching:
             c.get(URL, {}, "k2")
             on_disk = json.loads(c.cache_path.read_text(encoding="utf-8"))
             assert set(on_disk) == {"k1", "k2"}
+
+
+class TestFlushThresholdGrowth:
+    """F-08c: a fixed flush_every rewrites the whole, ever-growing cache dict
+    every N new entries, so cumulative bytes written over a large first-time
+    run scale roughly with entry_count**2. The threshold must instead grow
+    with the cache's current size — the array-doubling trick — so a run with
+    thousands of new entries doesn't pay for that quadratic blow-up, while a
+    small cache (the common case) behaves exactly as flush_every describes.
+    """
+
+    def test_threshold_is_flush_every_for_a_small_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, flush_every=50)
+            c.cache = {str(i): OK_BODY for i in range(10)}
+            assert c._next_flush_threshold() == 50
+
+    def test_threshold_grows_once_the_cache_is_large(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, flush_every=50)
+            c.cache = {str(i): OK_BODY for i in range(2000)}
+            assert c._next_flush_threshold() == 200  # 10% of 2000, > flush_every
+
+    def test_flush_count_grows_sublinearly_with_entry_count(self) -> None:
+        """Direct evidence of the fix: over N new entries, the number of full
+        rewrites must land well under the old fixed-cadence count
+        (N // flush_every) — logarithmic-ish growth, not linear-in-N."""
+        n = 5000
+        flush_every = 50
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(
+                tmp, flush_every=flush_every,
+                responses=[_FakeResponse(200, OK_BODY) for _ in range(n)],
+            )
+            flush_calls = 0
+            original_flush = c.flush
+
+            def counting_flush():
+                nonlocal flush_calls
+                flush_calls += 1
+                original_flush()
+
+            c.flush = counting_flush
+            for i in range(n):
+                c.get(URL, {}, f"k{i}")
+
+        old_fixed_cadence_flushes = n // flush_every  # 100
+        assert 0 < flush_calls < old_fixed_cadence_flushes / 3
+
+    def test_cumulative_bytes_written_are_far_below_fixed_cadence(self) -> None:
+        """The whole point: total bytes written across a large run — the sum
+        of every flushed snapshot's size — must be far smaller than a fixed
+        flush_every would have produced for the same data, not just fewer
+        flush *calls* that each happen to write more each time."""
+        n = 4000
+        flush_every = 50
+        entry_bytes = len(json.dumps(OK_BODY, ensure_ascii=False))
+
+        def run_with_threshold(threshold_fn) -> int:
+            with tempfile.TemporaryDirectory() as tmp:
+                c = _client(
+                    tmp, flush_every=flush_every,
+                    responses=[_FakeResponse(200, OK_BODY) for _ in range(n)],
+                )
+                c._next_flush_threshold = threshold_fn.__get__(c)
+                total = 0
+                original_flush = c.flush
+
+                def counting_flush():
+                    nonlocal total
+                    total += len(json.dumps(c.cache, ensure_ascii=False))
+                    original_flush()
+
+                c.flush = counting_flush
+                for i in range(n):
+                    c.get(URL, {}, f"k{i}")
+                counting_flush()  # final explicit flush, as every phase does
+                return total
+
+        actual_bytes = run_with_threshold(RateLimitedClient._next_flush_threshold)
+        fixed_cadence_bytes = run_with_threshold(lambda self: flush_every)
+
+        # Same data, same entry count, same flush_every floor — only the
+        # growth behavior differs. Growing the threshold should cut total
+        # bytes written by a large factor at this scale.
+        assert actual_bytes < fixed_cadence_bytes / 3
+        # Sanity: the fixed-cadence baseline really is roughly quadratic-ish
+        # for this run — otherwise the comparison above is meaningless.
+        assert fixed_cadence_bytes > n * entry_bytes * (n / flush_every) / 4

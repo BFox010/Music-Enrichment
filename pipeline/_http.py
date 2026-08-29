@@ -80,9 +80,12 @@ def _is_expired(
 class RateLimitedClient:
     """Rate-limited HTTP client with exponential backoff and a JSON disk cache.
 
-    ``user_agent`` is required by MusicBrainz. ``flush_every`` writes the cache to
-    disk every N new entries. ``force`` is one of ``FORCE_MODES``.
-    ``negative_ttl``/``transient_ttl`` are injectable so tests need not sleep.
+    ``user_agent`` is required by MusicBrainz. ``flush_every`` is the minimum
+    number of new entries between disk writes — the actual threshold grows
+    with cache size (see ``_next_flush_threshold``) so a large run doesn't
+    pay for a full rewrite on every small batch. ``force`` is one of
+    ``FORCE_MODES``. ``negative_ttl``/``transient_ttl`` are injectable so
+    tests need not sleep.
     """
 
     def __init__(
@@ -281,6 +284,22 @@ class RateLimitedClient:
         self.cache[cache_key] = result
         self._refetched.add(cache_key)
         self._dirty_count += 1
-        if self._dirty_count >= self.flush_every:
+        if self._dirty_count >= self._next_flush_threshold():
             self.flush()
         return result
+
+    def _next_flush_threshold(self) -> int:
+        """Dirty-entry count needed to trigger the next flush.
+
+        A fixed ``flush_every`` rewrites the *whole*, ever-growing cache dict
+        every N new entries, so cumulative bytes written over a large
+        first-time run scale with roughly ``final_size**2 / flush_every``.
+        Scaling the threshold with the cache's current size instead — flush
+        after it grows another ~10%, floored at ``flush_every`` so small
+        caches behave exactly as before — is the amortized-doubling trick
+        array growth uses: total bytes written for the whole run become
+        ``O(size * log(size))`` instead of quadratic, while every flush still
+        writes the same single plain JSON file CLAUDE.md documents (no new
+        format, no extra files, no change to how a cache is read).
+        """
+        return max(self.flush_every, int(len(self.cache) * 0.1))

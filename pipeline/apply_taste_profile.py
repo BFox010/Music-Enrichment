@@ -36,6 +36,7 @@ from pipeline.config import (
 )
 from pipeline.name_variations import lookup_variations
 from pipeline.normalize import normalize_artist, normalize_track
+from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
@@ -476,8 +477,7 @@ def _write_unmatched(unmatched: list[dict], path: Path = UNMATCHED_PATH) -> None
     if not unmatched:
         path.unlink(missing_ok=True)
         return
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(path) as fh:
         for row in unmatched:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
@@ -600,8 +600,7 @@ def apply(
         log.warning("%d saturation-tier artists matched no track: %s",
                     len(unmatched_tiers), ", ".join(unmatched_tiers[:20]))
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(output_path) as fh:
         for row in tracks:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 

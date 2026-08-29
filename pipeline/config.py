@@ -31,6 +31,12 @@ TRACKS_WITH_MOODS_PATH: Path = REPO_ROOT / "tracks_with_moods.jsonl"
 # ── Human-edited reference (DO NOT auto-modify) ──
 TASTE_PROFILE_PATH: Path = REPO_ROOT / "taste_profile.md"
 
+# ── Canonical mood training labels (#66) — git-tracked, always the default for
+# Phase 6. inputs/existing_audit.csv (below) is a gitignored legacy copy that is
+# never authoritative; where the two disagree, this file wins.
+MOOD_AUDIT_FILENAME: str = "mood_audit.csv"
+MOOD_AUDIT_PATH: Path = REPO_ROOT / MOOD_AUDIT_FILENAME
+
 # ── Directories ──
 RUNS_DIR: Path = REPO_ROOT / "runs"
 VIEWS_DIR: Path = REPO_ROOT / "views"        # gitignored
@@ -40,7 +46,7 @@ INPUTS_DIR: Path = REPO_ROOT / "inputs"      # gitignored
 # ── Owner-provided inputs (not committed) ──
 INPUT_LASTFM_EXPORT: Path = INPUTS_DIR / "lastfm_export.json"
 INPUT_APPLE_MUSIC_LIBRARY: Path = INPUTS_DIR / "apple_music_library.xml"  # iTunes XML export
-INPUT_EXISTING_AUDIT: Path = INPUTS_DIR / "existing_audit.csv"
+INPUT_EXISTING_AUDIT: Path = INPUTS_DIR / "existing_audit.csv"  # legacy; see MOOD_AUDIT_PATH
 INPUT_EXPORTIFY_CSV: Path = INPUTS_DIR / "exportify.csv"
 INPUT_CLAUDE_MOOD_RESULTS: Path = INPUTS_DIR / "claude_mood_results.jsonl"
 # Spotify app credentials (Client ID + Secret). Either set the env vars
@@ -82,6 +88,13 @@ MOOD_SOURCE_RANK: dict[str | None, int] = {
     "manual": 5, "audit": 4, "claude_batch": 3, "centroid": 2,
     "inherited": 1, None: 0,
 }
+# Sources at or above this rank are curated judgements — a person's, or an LLM
+# pass a person commissioned and reviewed. Below it are machine guesses derived
+# from audio features. The split matters because Phase 6 declining to label a
+# row (mood_source None) is itself a machine verdict: it must clear a stale
+# machine guess but never erase a curated label. See
+# update_tracks._merge_with_existing.
+MOOD_CURATED_MIN_RANK: int = MOOD_SOURCE_RANK["claude_batch"]
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
 AUDIO_FEATURE_SOURCES: tuple[str, ...] = ("exportify", "reccobeats")

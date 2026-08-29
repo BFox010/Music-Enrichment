@@ -74,21 +74,40 @@ SKIPPED = "skipped"
 FAILED = "failed"
 
 
-def _phase(phase_id: str, name: str, fn, *args, **kwargs) -> str:
-    """Run a phase function; log the outcome. Returns OK / SKIPPED / FAILED."""
+def _phase(phase_id: str, name: str, fn, *, optional: bool, outputs: list[str] = (), **kwargs) -> str:
+    """Run a phase function; log the outcome. Returns OK / SKIPPED / FAILED.
+
+    A missing input is only a benign SKIPPED for a phase the manifest marks
+    ``optional`` — for a required phase it means the run can't safely proceed and
+    is reported as FAILED instead. After a normal return, verify the phase's
+    declared outputs actually landed; a phase that returns without producing them
+    is also FAILED, not OK.
+    """
     log.info("=" * 60)
     log.info("Phase %s: %s", phase_id, name)
     log.info("=" * 60)
     try:
-        result = fn(*args, **kwargs)
-        log.info("Phase %s OK: %s", phase_id, result)
-        return OK
+        result = fn(**kwargs)
     except FileNotFoundError as e:
-        log.warning("Phase %s SKIPPED — missing input: %s", phase_id, e)
-        return SKIPPED
+        if optional:
+            log.warning("Phase %s SKIPPED — missing input: %s", phase_id, e)
+            return SKIPPED
+        log.error("Phase %s FAILED — required input missing: %s", phase_id, e, exc_info=True)
+        return FAILED
     except Exception as e:
         log.error("Phase %s FAILED: %s", phase_id, e, exc_info=True)
         return FAILED
+
+    missing = [f for f in outputs if not (REPO_ROOT / f).exists()]
+    if missing:
+        log.error(
+            "Phase %s FAILED — returned normally but declared output(s) missing: %s",
+            phase_id, missing,
+        )
+        return FAILED
+
+    log.info("Phase %s OK: %s", phase_id, result)
+    return OK
 
 
 def failed_phases(results: dict[str, str]) -> list[str]:
@@ -164,12 +183,22 @@ def run(
             results[phase_id] = OK  # assumed done
             continue
 
+        optional = phase_def.get("optional", False)
+
         # ── Manual phase ──
         if phase_def.get("manual"):
             outputs = phase_def.get("outputs", [])
             output_exists = any((REPO_ROOT / f).exists() for f in outputs)
-            optional = phase_def.get("optional", False)
-            if not output_exists and not skip_pause and not optional:
+            if output_exists:
+                results[phase_id] = OK
+                continue
+            if optional:
+                log.info(
+                    "Phase %s SKIPPED — manual+optional, no output present.", phase_id
+                )
+                results[phase_id] = SKIPPED
+                continue
+            if not skip_pause:
                 log.info("PAUSE: Phase %s is manual.", phase_id)
                 instructions = phase_def.get("instructions", "").strip()
                 if instructions:
@@ -177,27 +206,36 @@ def run(
                         log.info("  %s", line)
                 log.info("Stopping pipeline — re-run with --start-from %s once complete.", phase_id)
                 break
-            if not output_exists and optional:
-                log.info(
-                    "Phase %s SKIPPED — manual+optional, no output present.", phase_id
-                )
-            results[phase_id] = OK if output_exists else SKIPPED
-            continue
+            # Required manual step, no output, and we've been told not to pause —
+            # there is nothing to run and no operator to wait for. Fail rather
+            # than silently marking a required phase SKIPPED and letting later
+            # phases consume whatever stale intermediate is lying around.
+            log.error(
+                "Phase %s FAILED — manual step required but output missing, "
+                "and --skip-pause was set.", phase_id,
+            )
+            results[phase_id] = FAILED
+            log.error("Required phase %s failed — stopping pipeline.", phase_id)
+            break
 
         # ── Conditional: required file gate ──
         req_file = phase_def.get("requires_file")
         if req_file and not (REPO_ROOT / req_file).exists():
-            log.warning(
-                "Phase %s SKIPPED — required file missing: %s",
-                phase_id, req_file,
-            )
-            results[phase_id] = SKIPPED
-            continue
+            if optional:
+                log.warning(
+                    "Phase %s SKIPPED — required file missing: %s",
+                    phase_id, req_file,
+                )
+                results[phase_id] = SKIPPED
+                continue
+            log.error("Phase %s FAILED — required file missing: %s", phase_id, req_file)
+            results[phase_id] = FAILED
+            log.error("Required phase %s failed — stopping pipeline.", phase_id)
+            break
 
         # ── Dynamic import + execute ──
         module_path = phase_def.get("module")
         callable_name = phase_def.get("callable")
-        optional = phase_def.get("optional", False)
 
         try:
             mod = importlib.import_module(module_path)
@@ -206,15 +244,23 @@ def run(
             if optional:
                 log.info("Phase %s SKIPPED — not yet implemented: %s", phase_id, e)
                 results[phase_id] = SKIPPED
-            else:
-                log.error("Phase %s FAILED to import %s.%s: %s", phase_id, module_path, callable_name, e)
-                results[phase_id] = FAILED
-            continue
+                continue
+            log.error("Phase %s FAILED to import %s.%s: %s", phase_id, module_path, callable_name, e)
+            results[phase_id] = FAILED
+            log.error("Required phase %s failed — stopping pipeline.", phase_id)
+            break
 
         kwargs = {}
         if force != FORCE_OFF and phase_def.get("accepts_force"):
             kwargs["force"] = force
-        results[phase_id] = _phase(phase_id, phase_def["name"], fn, **kwargs)
+        status = _phase(
+            phase_id, phase_def["name"], fn,
+            optional=optional, outputs=phase_def.get("outputs", []), **kwargs,
+        )
+        results[phase_id] = status
+        if status == FAILED and not optional:
+            log.error("Required phase %s failed — stopping pipeline.", phase_id)
+            break
 
     # ── Summary ──
     log.info("=" * 60)

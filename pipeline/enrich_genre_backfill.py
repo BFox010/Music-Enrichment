@@ -52,6 +52,7 @@ from pipeline.derive_genres import _genres_from_tags
 from pipeline.name_variations import first_artist
 from pipeline.normalize import normalize_artist
 from pipeline.tag_filter import build_artist_block, filter_tags
+from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
@@ -302,8 +303,7 @@ def enrich(
     stats["recovered_artist_propagation"] = _propagate_within_artist(tracks, today)
     stats["still_empty"] -= stats["recovered_artist_propagation"]
 
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(output_path, "w", encoding="utf-8", newline="\n") as fh:
+    with atomic_open(output_path) as fh:
         for row in tracks:
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 

@@ -183,18 +183,26 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   in Phase 5. Do not conflate them.
 - **A null `mood_tags` from Phase 6 is a verdict, not a gap.** The classifier
   declines to guess where audio features can't support one, and `update_tracks`
-  must let that blank survive the merge.
+  must let that blank survive the merge. A decline is a *machine* verdict, so it
+  clears a machine guess (`centroid`, `inherited`) but never a curated label
+  (`manual`, `audit`, `claude_batch`) — the split is `MOOD_CURATED_MIN_RANK`,
+  next to `MOOD_SOURCE_RANK`. Ranking the two sides alone is not enough: every
+  ranked source outranks an unset one, which silently reinstates the guess the
+  classifier just withdrew.
 - **`mood_source: "audit"` is the owner's own labelling** — the training signal
   the whole classifier is built on. A fresher centroid pass must never overwrite
   one. Trust order lives once, in `MOOD_SOURCE_RANK` (`pipeline/config.py`):
   `manual` > `audit` > `claude_batch` > `centroid` > `inherited` > unset.
-  Don't re-encode it locally — `update_tracks._merge_with_existing()` currently
-  does, with its own rule, which is #83's F-02.
-- **`mood_audit.csv` at the repo root is the canonical label file** (#66). The
-  older `inputs/existing_audit.csv` is gitignored and not authoritative; where
-  the two disagree, the committed file wins. Phase 6 prefers `inputs/` when
-  present, so if you restore that file, reconcile it into `mood_audit.csv`
-  rather than letting a run train on a copy nobody can see.
+  Don't re-encode it locally — `update_tracks._merge_with_existing()` consults
+  it directly (#83/F-02 replaced the ad hoc rule it used to carry).
+- **`mood_audit.csv` at the repo root is the canonical label file** (#66) and
+  Phase 6's unconditional default (`classify()`'s `audit_path` resolves to it
+  when omitted). The older `inputs/existing_audit.csv` is gitignored and never
+  authoritative — if it's present too, Phase 6 logs a warning and ignores it
+  rather than silently training on it; reconcile any local edits into
+  `mood_audit.csv` instead. To use the legacy file deliberately, pass
+  `audit_path=INPUT_EXISTING_AUDIT` explicitly (#83/F-06 — this used to be
+  reversed: the gitignored file silently won whenever it existed).
   `tests/test_data_integrity.py` asserts the committed audit still reaches the
   committed library — the drift it caught went unnoticed because every other
   test builds its own fixtures.
