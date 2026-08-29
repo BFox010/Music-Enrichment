@@ -96,9 +96,9 @@ const cardDesc  = { margin: "0 0 16px", fontSize: 12.5, lineHeight: 1.55, color:
    idle ECharts instance behind the toggle (#31), so this view's state has to
    outlive the component. Module scope, not a ref — the component is gone in
    between. `data` is keyed by the year/month toggle. */
-const __timelineState = { by: "year", data: {} };
+const __timelineState = { by: "year", data: {}, ver: 0 };
 
-function TimelineChart({ active }) {
+function TimelineChart({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [by, setBy] = useState(__timelineState.by);
@@ -108,6 +108,14 @@ function TimelineChart({ active }) {
 
   useEffect(() => {
     if (!active) return;
+    // A refresh rewrites scrobbles.jsonl underneath the cache. This view used to
+    // re-fetch every time the page was opened, so the caching that survives the
+    // #31 toggle has to drop on a refresh or the page would show the old counts
+    // for the rest of the session.
+    if (__timelineState.ver !== refreshVersion) {
+      __timelineState.ver = refreshVersion;
+      __timelineState.data = {};
+    }
     const cached = __timelineState.data[by];
     if (cached) { setRows(cached); return; }
     setRows(null);
@@ -117,7 +125,7 @@ function TimelineChart({ active }) {
       .then((d) => { __timelineState.data[by] = d || []; if (!stale) setRows(d || []); })
       .catch(() => { if (!stale) setRows([]); });
     return () => { stale = true; };
-  }, [active, by]);
+  }, [active, by, refreshVersion]);
 
   useEffect(() => {
     if (!active || !chart.current || !rows?.length) return;
@@ -203,9 +211,9 @@ function rankArtists(rows) {
 /* Held across the unmount the view toggle causes (see __timelineState): the
    payload is the page's largest fetch, and losing the reader's artist
    selection on every flick of the toggle would make the picker unusable. */
-const __trajectoryState = { raw: null, mode: "lines", selected: null, query: "" };
+const __trajectoryState = { raw: null, mode: "lines", selected: null, query: "", ver: 0 };
 
-function ArtistTrajectory({ active }) {
+function ArtistTrajectory({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [raw, setRaw] = useState(__trajectoryState.raw);
@@ -222,18 +230,32 @@ function ArtistTrajectory({ active }) {
 
   // Fetch once; seed the selection with the most-played TRAJECTORY_SEED.
   useEffect(() => {
-    if (!active || raw) return;
+    if (!active) return;
+    // See __timelineState: the cache outlives the component, so a refresh has to
+    // invalidate it explicitly. Dropping `raw` re-enters this effect and fetches.
+    if (__trajectoryState.ver !== refreshVersion) {
+      __trajectoryState.ver = refreshVersion;
+      __trajectoryState.raw = null;
+      if (raw) { setLoading(true); setRaw(null); return; }
+    }
+    if (raw) return;
     setLoading(true);
     fetch(`/api/artist-trajectory?top=${TRAJECTORY_TOP}`)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => {
-        setLoading(false);
         const rows = (d && d.data) || [];
-        setRaw({ data: rows });
-        setSelected(new Set(rankArtists(rows).slice(0, TRAJECTORY_SEED).map((a) => a.name)));
+        const seed = new Set(rankArtists(rows).slice(0, TRAJECTORY_SEED).map((a) => a.name));
+        // Straight into module state as well as component state: the view can be
+        // toggled away mid-flight, and this is the page's one big fetch — a
+        // response already paid for should not be thrown away with the unmount.
+        __trajectoryState.raw = { data: rows };
+        __trajectoryState.selected = seed;
+        setLoading(false);
+        setRaw(__trajectoryState.raw);
+        setSelected(seed);
       })
       .catch(() => setLoading(false));
-  }, [active, raw]);
+  }, [active, raw, refreshVersion]);
 
   const artists = useMemo(() => (raw ? rankArtists(raw.data) : []), [raw]);
 
@@ -355,7 +377,7 @@ function ArtistTrajectory({ active }) {
    avoid in the first place. Each view keeps its fetched payload and its own
    controls in module state (__timelineState / __trajectoryState), so coming
    back to a view is a re-render rather than a re-fetch. */
-function TrajectoryPage({ active }) {
+function TrajectoryPage({ active, refreshVersion = 0 }) {
   const [view, setView] = useState("overall");
   return (
     <div>
@@ -377,8 +399,8 @@ function TrajectoryPage({ active }) {
         </span>
       </div>
       {view === "overall"
-        ? <TimelineChart active={active} />
-        : <ArtistTrajectory active={active} />}
+        ? <TimelineChart active={active} refreshVersion={refreshVersion} />
+        : <ArtistTrajectory active={active} refreshVersion={refreshVersion} />}
     </div>
   );
 }

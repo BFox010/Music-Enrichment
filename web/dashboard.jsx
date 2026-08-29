@@ -94,7 +94,7 @@ function App() {
   const [toast, setToast] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   // Bumped after a successful refresh so API-backed pages (Albums, Forgotten
-  // Favorites) drop their cached response and re-fetch the updated data.
+  // Favorites, Trajectory) drop their cached response and re-fetch the updated data.
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [isLoadingLive, setIsLoadingLive] = useState(true);
   const fileRef = useRef(null);
@@ -645,7 +645,7 @@ function App() {
 
         {/* ── PAGE: Trajectory (overall timeline + per-artist) ────── */}
         <div style={{ display: page === "trajectory" ? "" : "none" }}>
-          {TrajectoryPage && <TrajectoryPage active={page === "trajectory"} />}
+          {TrajectoryPage && <TrajectoryPage active={page === "trajectory"} refreshVersion={refreshVersion} />}
         </div>
 
         {/* ── PAGE: Listening Map ─────────────────────────────────── */}

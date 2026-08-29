@@ -256,6 +256,12 @@
     el.innerHTML = `<div class="as-body">${cast.art}</div>`;
     // The sway animation ends first and also bubbles; only the crossing means done.
     el.addEventListener("animationend", (e) => { if (e.target === el) el.remove(); });
+    // Belt and braces. One-at-a-time is enforced by "is the layer empty", so a
+    // sprite that never fires animationend — an animation cancelled out from
+    // under it, a browser that drops the event on a backgrounded tab — would
+    // silence every later sighting for the rest of the session. Sweep it at
+    // twice its own crossing time; by then it is long gone either way.
+    setTimeout(() => el.remove(), dur * 2000);
     spriteLayer().appendChild(el);
   }
 
@@ -414,7 +420,7 @@
        Honours the ambient and reduced-motion gates, and replaces whatever is
        crossing rather than breaking the one-at-a-time rule. */
     summon(id) {
-      if (!spritesAllowed()) return;
+      if (!spritesAllowed() || !pickCast(id)) return;
       if (st.spriteLayer) st.spriteLayer.replaceChildren();
       spawnSprite(id);
     },
