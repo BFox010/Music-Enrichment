@@ -180,14 +180,27 @@
       <path d="M29 49A32 32 0 0 1 48 29" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".2"/>
     </svg>`;
 
-  /* weight: relative odds of being the one that shows up. size: viewport width
-     it spans. dur: seconds to cross, randomised inside the range. peak: the
-     opacity it holds mid-crossing — these sit over a near-black backdrop, so
-     "visible" is a lot less than it sounds. */
+  /* The lava lamp is the one that is not an SVG. A blob that gloops has to
+     change shape, and animating border-radius on a plain element is both far
+     cheaper and far more convincing than morphing path data — the classic
+     "blob" trick. Four nested pieces, each with one job (see themes.css):
+     the root fades, .as-body drifts sideways, .gloop-rise carries the pool →
+     neck → release → float, .gloop morphs, and .gloop-pool is what stays
+     behind at the base and subsides once the blob has let go. */
+  const ART_LAVA_GLOOP = `
+    <span class="gloop-pool"></span>
+    <span class="gloop-rise"><span class="gloop fx-morph"></span></span>`;
+
+  /* weight: relative odds of being the one that shows up. travel: which route
+     it takes across the viewport (see .as-<travel> in themes.css). size: the
+     viewport width it spans. dur: seconds to cross, randomised inside the
+     range. peak: the opacity it holds mid-crossing — these sit over a
+     near-black backdrop, so "visible" is a lot less than it sounds. */
   const CAST = [
-    { id: "bubbles",   weight: 60, svg: SVG_BUBBLES,     rise: true,  size: [5, 8],   dur: [34, 52], peak: 0.72, sway: "as-wobble", swayDur: 6.5 },
-    { id: "jellyfish", weight: 30, svg: SVG_JELLYFISH,   rise: false, size: [5, 7.5], dur: [46, 70], peak: 0.72, sway: "as-bob",    swayDur: 4.5 },
-    { id: "cat",       weight: 10, svg: SVG_HELMET_CAT,  rise: false, size: [6, 8.5], dur: [55, 80], peak: 0.72, sway: "as-tumble", swayDur: 9 },
+    { id: "bubbles",   weight: 35, art: SVG_BUBBLES,    travel: "riser",   size: [5, 8],     dur: [34, 52], peak: 0.72, sway: "as-wobble", swayDur: 6.5 },
+    { id: "jellyfish", weight: 30, art: SVG_JELLYFISH,  travel: "drifter", size: [5, 7.5],   dur: [46, 70], peak: 0.72, sway: "as-bob",    swayDur: 4.5 },
+    { id: "gloop",     weight: 25, art: ART_LAVA_GLOOP, travel: "glooper", size: [7.5, 9],   dur: [58, 88], peak: 0.72, sway: "as-wobble", swayDur: 11 },
+    { id: "cat",       weight: 10, art: SVG_HELMET_CAT, travel: "drifter", size: [7.5, 8.5], dur: [55, 80], peak: 0.72, sway: "as-tumble", swayDur: 9 },
   ];
   const CAST_WEIGHT = CAST.reduce((n, c) => n + c.weight, 0);
 
@@ -225,13 +238,14 @@
     if (!cast) return;
     // Drifters pick a side to enter from: entering from the right is the same
     // crossing played backwards, with the body mirrored so it faces the way it
-    // is going.
-    const mirror = !cast.rise && Math.random() < 0.5;
+    // is going. Only drifters — a rising blob played backwards would sink.
+    const mirror = cast.travel === "drifter" && Math.random() < 0.5;
     const el = document.createElement("div");
-    el.className = "ambient-sprite " + (cast.rise ? "as-riser" : "as-drifter") + (mirror ? " as-mirror" : "");
+    el.className = "ambient-sprite as-" + cast.travel + (mirror ? " as-mirror" : "");
     if (mirror) el.style.animationDirection = "reverse";
     const dur = rand(cast.dur[0], cast.dur[1]);
     el.style.setProperty("--as-size", rand(cast.size[0], cast.size[1]).toFixed(2) + "vw");
+    // Drifters lane by height, risers by width; either way keep clear of the rim.
     el.style.setProperty("--as-lane", rand(8, 74).toFixed(1) + "%");
     el.style.setProperty("--as-dur", dur.toFixed(1) + "s");
     el.style.setProperty("--as-peak", String(cast.peak));
@@ -239,7 +253,7 @@
     el.style.setProperty("--as-sway-dur", cast.swayDur + "s");
     // Finite, not infinite: enough half-cycles to last the crossing and no more.
     el.style.setProperty("--as-sway-n", String(Math.max(1, Math.round(dur / cast.swayDur))));
-    el.innerHTML = `<div class="as-body">${cast.svg}</div>`;
+    el.innerHTML = `<div class="as-body">${cast.art}</div>`;
     // The sway animation ends first and also bubbles; only the crossing means done.
     el.addEventListener("animationend", (e) => { if (e.target === el) el.remove(); });
     spriteLayer().appendChild(el);
@@ -395,7 +409,8 @@
     },
     /* Sightings are rare by design, which makes them awkward to look at on
        purpose. Summon one: MLAmbient.summon() for a weighted draw, or
-       MLAmbient.summon("cat" | "jellyfish" | "bubbles") for a specific one.
+       MLAmbient.summon("cat" | "jellyfish" | "bubbles" | "gloop") for one of
+       the cast.
        Honours the ambient and reduced-motion gates, and replaces whatever is
        crossing rather than breaking the one-at-a-time rule. */
     summon(id) {

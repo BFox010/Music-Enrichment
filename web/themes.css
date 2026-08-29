@@ -1009,6 +1009,69 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   100% { opacity: 0; transform: translateY(-120vh); }
 }
 
+/* ---- the lava lamp ---- */
+/* The other three are one shape being moved. A blob that gloops has to pool at
+   the base, neck upward, let go, and leave something behind — which one
+   transform cannot express, so the work is split across nested elements that
+   each animate one thing:
+     .as-glooper   fades in and out, and owns the animationend that removes it
+     .as-body      drifts sideways (the shared sway; convection is not plumb)
+     .gloop-rise   pool -> neck -> release -> float, as translate + squash
+     .gloop        morphs its border-radius, which is what sells the goo
+     .gloop-pool   stays at the base, swells as the blob necks, then subsides
+   Every one of them is finite, so the whole thing still stops on its own. */
+.as-glooper { left: var(--as-lane); bottom: 0; animation: as-gloop-fade var(--as-dur) linear forwards; }
+.gloop {
+  display: block; width: var(--as-size); aspect-ratio: 1 / 1.08;
+  border-radius: 58% 42% 47% 53% / 55% 60% 40% 45%;
+  background:
+    radial-gradient(58% 46% at 34% 26%, color-mix(in oklab, currentColor 45%, #fff) 0%, transparent 70%),
+    linear-gradient(158deg, currentColor 0%, color-mix(in oklab, currentColor 60%, #000) 100%);
+}
+/* The SVG cast paints at ~.5 fill, so the blob — which is solid — is knocked
+   back here to land in the same weight once --as-peak is applied on top. */
+.gloop-rise { display: block; opacity: .7; transform-origin: 50% 100%; animation: as-gloop-rise var(--as-dur) linear both; }
+.gloop-pool {
+  position: absolute; left: -14%; bottom: -8%; width: 128%; height: 42%;
+  border-radius: 46% 54% 50% 50% / 84% 80% 20% 16%;
+  background: linear-gradient(0deg, color-mix(in oklab, currentColor 70%, #000), currentColor);
+  transform-origin: 50% 100%;
+  opacity: .7;
+  animation: as-gloop-pool var(--as-dur) linear both;
+}
+
+@keyframes as-gloop-fade {
+  0%, 4% { opacity: 0; }
+  12%    { opacity: var(--as-peak); }
+  90%    { opacity: var(--as-peak); }
+  100%   { opacity: 0; }
+}
+/* The pacing is in the keyframe spacing, not in an easing curve: it dwells at
+   the base for a fifth of the crossing, snaps up on release, then coasts. */
+@keyframes as-gloop-rise {
+  0%   { transform: translateY(14vh) scale(1.3, .58); }
+  10%  { transform: translateY(9vh)  scale(1.26, .64); }
+  19%  { transform: translateY(3vh)  scale(.82, 1.3); }    /* drawn upward */
+  25%  { transform: translateY(-9vh) scale(1.2, .84); }    /* let go, rebound */
+  38%  { transform: translateY(-30vh) scale(.9, 1.14); }
+  55%  { transform: translateY(-56vh) scale(1.1, .93); }
+  73%  { transform: translateY(-82vh) scale(.94, 1.08); }
+  90%  { transform: translateY(-104vh) scale(1.18, .8); }
+  100% { transform: translateY(-118vh) scale(1.34, .62); }
+}
+/* The pool is also the neck: it draws up into a thin stalk under the blob and
+   snaps back flat the moment the blob lets go, which is the read a single
+   squashed shape could never give on its own. */
+@keyframes as-gloop-pool {
+  0%   { transform: scale(1, .5); }
+  12%  { transform: scale(1.02, .82); }
+  19%  { transform: scale(.34, 1.5); }   /* the stalk */
+  24%  { transform: scale(.5, 1.05); }
+  28%  { transform: scale(1.08, .38); }  /* snaps flat once it lets go */
+  46%  { transform: scale(.9, .12); opacity: .7; }
+  60%, 100% { transform: scale(.86, 0); opacity: 0; }
+}
+
 .as-body { animation: var(--as-sway) var(--as-sway-dur) ease-in-out var(--as-sway-n) alternate both; }
 @keyframes as-bob   { from { transform: translateY(-9px) scaleY(1.04); } to { transform: translateY(9px) scaleY(.96); } }
 @keyframes as-tumble{ from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
@@ -1025,6 +1088,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .fx-trail { transform-origin: 50% 0; animation: as-trail calc(var(--as-sway-dur) * .5) ease-in-out calc(var(--as-sway-n) * 2) alternate both; }
 .fx-tail  { transform-origin: 0 100%;  animation: as-tail  calc(var(--as-sway-dur) * .8) ease-in-out calc(var(--as-sway-n) * 1.25) alternate both; }
 .fx-bub   { transform-origin: 50% 50%; animation: as-bub   calc(var(--as-sway-dur) * .65) ease-in-out calc(var(--as-sway-n) * 1.5) alternate both; }
+.fx-morph { animation: as-morph calc(var(--as-sway-dur) * .42) ease-in-out calc(var(--as-sway-n) * 2.4) alternate both; }
 .fx-bub:nth-of-type(2) { animation-delay: -1.1s; }
 .fx-bub:nth-of-type(3) { animation-delay: -2.3s; }
 .fx-bub:nth-of-type(4) { animation-delay: -0.5s; }
@@ -1033,6 +1097,10 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 @keyframes as-trail { from { transform: translateY(-3px) scaleY(.94); } to { transform: translateY(3px) scaleY(1.06); } }
 @keyframes as-tail  { from { transform: rotate(-11deg); } to { transform: rotate(9deg); } }
 @keyframes as-bub   { from { transform: scale(.93); } to { transform: scale(1.07); } }
+@keyframes as-morph {
+  from { border-radius: 63% 37% 44% 56% / 61% 64% 36% 39%; }
+  to   { border-radius: 41% 59% 62% 38% / 43% 37% 63% 57%; }
+}
 
 /* ---------- reduced motion ---------- */
 /* Every effect above degrades to its static end state, not to a faster
