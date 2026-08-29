@@ -187,7 +187,7 @@
   const CAST = [
     { id: "bubbles",   weight: 60, svg: SVG_BUBBLES,     rise: true,  size: [5, 8],   dur: [34, 52], peak: 0.72, sway: "as-wobble", swayDur: 6.5 },
     { id: "jellyfish", weight: 30, svg: SVG_JELLYFISH,   rise: false, size: [5, 7.5], dur: [46, 70], peak: 0.72, sway: "as-bob",    swayDur: 4.5 },
-    { id: "cat",       weight: 10, svg: SVG_HELMET_CAT,  rise: false, size: [11, 15], dur: [55, 80], peak: 0.72, sway: "as-tumble", swayDur: 9 },
+    { id: "cat",       weight: 10, svg: SVG_HELMET_CAT,  rise: false, size: [6, 8.5], dur: [55, 80], peak: 0.72, sway: "as-tumble", swayDur: 9 },
   ];
   const CAST_WEIGHT = CAST.reduce((n, c) => n + c.weight, 0);
 
