@@ -146,8 +146,17 @@ def _apply_lastfm_fields(track: dict, fields: dict[str, Any], usable: bool) -> N
 def _is_actionable(fields: dict[str, Any]) -> bool:
     """True if the response gave us something to store — a track MBID or
     at least one surviving (noise-filtered) tag. Mirrors the keep-condition
-    used for the ``matched`` stat below, and decides whether to stop retrying."""
+    used for the ``matched`` stat below."""
     return bool(fields["musicbrainz_id"] or fields["lastfm_tags"])
+
+
+# Scalars a later variation may fill when the original query left them blank.
+# First non-null wins: the original query is the most faithful rendering of the
+# credit, so a variation only ever backfills what it did not answer.
+_BACKFILL_KEYS: tuple[str, ...] = (
+    "musicbrainz_id", "artist_mbid",
+    "lastfm_duration_ms", "lastfm_listeners", "lastfm_playcount",
+)
 
 
 def _lookup_with_variations(
@@ -160,14 +169,25 @@ def _lookup_with_variations(
 
     Tries ``original`` first (preserving the existing cache key so prior runs
     still hit cache), then the measured recovery rules — strip_feat,
-    strip_parens, first_artist — stopping at the first variation that yields an
-    MBID or tags. Returns ``(filtered_fields, response, variation_label)``. If
-    nothing is actionable, returns the original query's result so the caller can
-    still classify it as an error or a genuine no-match.
+    strip_parens, first_artist.
+
+    Retries continue **while the tags are empty**, whether or not an MBID has
+    already landed (#75). Stopping at the first *actionable* response let an
+    MBID with zero tags end the search on exactly the rows whose tags are
+    missing — and tags are what Phase 4c derives genres from, so the gap
+    propagated. Fields are accumulated across the variations tried rather than
+    taken from one: the MBID from whichever query answered first, the tags from
+    whichever query found any.
+
+    Returns ``(fields, response, variation_label)``, where the response is the
+    one that supplied the tags, else the original query's — so the caller can
+    still classify a genuine error or no-match.
     """
     base_key = f"{track['artist_normalized']}|{track['track_normalized']}"
-    original_fields: dict[str, Any] | None = None
+    merged: dict[str, Any] | None = None
     original_response: Any = None
+    tag_response: Any = None
+    tag_label = "original"
 
     for label, artist, title in lookup_variations(track["artist"], track["track"]):
         cache_key = base_key if label == "original" else f"{base_key}#{label}"
@@ -182,17 +202,30 @@ def _lookup_with_variations(
         response = client.get(LASTFM_API_ROOT, params, cache_key)
         fields = _extract_lastfm_fields(response)
         # Drop noise tags (radio stations, artist names, "my …", years) before
-        # they ever land in the JSONL — and before the actionable check.
+        # they ever land in the JSONL — and before the empty-tags check below.
         fields["lastfm_tags"] = filter_tags(fields["lastfm_tags"], artist_block)
 
-        if label == "original":
-            original_fields, original_response = fields, response
+        if merged is None:
+            merged = dict(fields)
+            original_response = response
+        else:
+            for key in _BACKFILL_KEYS:
+                if merged.get(key) is None and fields.get(key) is not None:
+                    merged[key] = fields[key]
 
-        if _is_actionable(fields):
-            return fields, response, label
+        if fields["lastfm_tags"] and not merged["lastfm_tags"]:
+            merged["lastfm_tags"] = list(fields["lastfm_tags"])
+            tag_response, tag_label = response, label
 
-    # Nothing recovered usable data — report the original attempt.
-    return original_fields or {}, original_response, "original"
+        if merged["lastfm_tags"]:
+            break
+
+    merged = merged or {}
+    if merged.get("lastfm_tags"):
+        return merged, tag_response or original_response, tag_label
+    # No tags anywhere. An MBID recovered by a variation still counts as a
+    # match; the original response is what says whether this was an error.
+    return merged, original_response, "original"
 
 
 def enrich(
