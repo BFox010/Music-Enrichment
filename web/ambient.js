@@ -124,10 +124,12 @@
 
   const SVG_JELLYFISH = `
     <svg viewBox="0 0 64 112" fill="none" aria-hidden="true">
-      <path d="M4 40C4 20 16 6 32 6s28 14 28 34c0 6-4 9-10 9H14c-6 0-10-3-10-9Z" fill="currentColor" opacity=".5"/>
-      <path d="M4 40C4 20 16 6 32 6s28 14 28 34" stroke="currentColor" stroke-width="2.2" opacity=".75"/>
-      <ellipse cx="23" cy="25" rx="5" ry="7.5" fill="#fff" opacity=".14"/>
-      <g stroke="currentColor" stroke-width="2.4" stroke-linecap="round" opacity=".45">
+      <g class="fx-pulse">
+        <path d="M4 40C4 20 16 6 32 6s28 14 28 34c0 6-4 9-10 9H14c-6 0-10-3-10-9Z" fill="currentColor" opacity=".5"/>
+        <path d="M4 40C4 20 16 6 32 6s28 14 28 34" stroke="currentColor" stroke-width="2.2" opacity=".75"/>
+        <ellipse cx="23" cy="25" rx="5" ry="7.5" fill="#fff" opacity=".14"/>
+      </g>
+      <g class="fx-trail" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" opacity=".45">
         <path d="M15 49c-2 12 4 18 1 30s3 17 1 25"/>
         <path d="M26 49c-1 14 3 20 0 30s2 16 1 24"/>
         <path d="M38 49c1 13-3 19 0 30s-2 17-1 25"/>
@@ -137,30 +139,45 @@
 
   const SVG_BUBBLES = `
     <svg viewBox="0 0 72 124" fill="none" aria-hidden="true">
-      <circle cx="25" cy="98" r="19" fill="currentColor" opacity=".36"/>
-      <circle cx="48" cy="60" r="13" fill="currentColor" opacity=".3"/>
-      <circle cx="20" cy="31" r="8.5" fill="currentColor" opacity=".26"/>
-      <circle cx="45" cy="11" r="5" fill="currentColor" opacity=".22"/>
+      <circle class="fx-bub" cx="25" cy="98" r="19" fill="currentColor" opacity=".36"/>
+      <circle class="fx-bub" cx="48" cy="60" r="13" fill="currentColor" opacity=".3"/>
+      <circle class="fx-bub" cx="20" cy="31" r="8.5" fill="currentColor" opacity=".26"/>
+      <circle class="fx-bub" cx="45" cy="11" r="5" fill="currentColor" opacity=".22"/>
       <circle cx="18" cy="91" r="6" fill="#fff" opacity=".12"/>
       <circle cx="44" cy="55" r="4" fill="#fff" opacity=".1"/>
     </svg>`;
 
+  /* Full-bodied and floating, not a head in a bubble: minimal shapes, one
+     helmet, a tail that flicks (fx-tail) as it drifts past. */
   const SVG_HELMET_CAT = `
-    <svg viewBox="0 0 100 94" fill="none" aria-hidden="true">
-      <circle cx="50" cy="46" r="34" fill="currentColor" opacity=".13"/>
-      <circle cx="50" cy="46" r="34" stroke="currentColor" stroke-width="2.4" opacity=".65"/>
-      <path d="M27 32c4-9 12-15 21-16" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".22"/>
-      <path d="M31 76h38" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity=".55"/>
-      <path d="M33 32.5 31 19l13 6.5Z" fill="currentColor" opacity=".5"/>
-      <path d="M67 32.5 69 19l-13 6.5Z" fill="currentColor" opacity=".5"/>
-      <path d="M32 47c0-10 8-18 18-18s18 8 18 18-8 20-18 20-18-10-18-20Z" fill="currentColor" opacity=".5"/>
-      <g fill="#0a0a11" opacity=".75">
-        <circle cx="43" cy="45" r="2.6"/><circle cx="57" cy="45" r="2.6"/>
-        <path d="M50 52.5 46.5 56h7Z"/>
+    <svg viewBox="0 0 212 148" fill="none" aria-hidden="true">
+      <path class="fx-tail" d="M162 74c17-3 32-16 33-32 1-9-5-15-11-12-5 2-6 9-2 12"
+            stroke="currentColor" stroke-width="8" stroke-linecap="round" opacity=".45"/>
+      <g stroke="currentColor" stroke-width="13" stroke-linecap="round" opacity=".45">
+        <path d="M97 94l-9 21"/><path d="M116 98l-3 22"/>
+        <path d="M144 96l8 20"/><path d="M158 89l13 17"/>
       </g>
-      <g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".4">
-        <path d="M36 51h-9M36 55l-9 3M64 51h9M64 55l9 3"/>
+      <path d="M78 64c6-15 27-23 47-23 27 0 46 15 46 35 0 20-19 33-46 33-25 0-45-11-47-28Z"
+            fill="currentColor" opacity=".5"/>
+      <g stroke="currentColor" stroke-width="3" stroke-linecap="round" opacity=".7">
+        <path d="M110 45c3 6 3 13 1 18"/><path d="M127 43c3 6 3 14 1 19"/>
+        <path d="M144 47c3 6 3 13 1 18"/>
       </g>
+      <path d="M37 45 35 30l17 8Z" fill="currentColor" opacity=".5"/>
+      <path d="M71 43 75 30l-17 9Z" fill="currentColor" opacity=".5"/>
+      <ellipse cx="54" cy="65" rx="28" ry="26" fill="currentColor" opacity=".5"/>
+      <g fill="#0a0a11" opacity=".7">
+        <ellipse cx="44" cy="62" rx="2.9" ry="3.5"/><ellipse cx="64" cy="62" rx="2.9" ry="3.5"/>
+        <path d="M54 71.5 50.3 75h7.4Z"/>
+      </g>
+      <g stroke="currentColor" stroke-width="1.7" stroke-linecap="round" opacity=".5">
+        <path d="M40 75H26M40 79l-13 5M68 75h14M68 79l13 5"/>
+      </g>
+      <ellipse cx="87" cy="46" rx="9" ry="7" transform="rotate(-26 87 46)"
+               stroke="currentColor" stroke-width="2.6" opacity=".5"/>
+      <circle cx="54" cy="61" r="38" fill="currentColor" opacity=".1"/>
+      <circle cx="54" cy="61" r="38" stroke="currentColor" stroke-width="2.6" opacity=".55"/>
+      <path d="M29 49A32 32 0 0 1 48 29" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".2"/>
     </svg>`;
 
   /* weight: relative odds of being the one that shows up. size: viewport width
@@ -170,7 +187,7 @@
   const CAST = [
     { id: "bubbles",   weight: 60, svg: SVG_BUBBLES,     rise: true,  size: [5, 8],   dur: [34, 52], peak: 0.72, sway: "as-wobble", swayDur: 6.5 },
     { id: "jellyfish", weight: 30, svg: SVG_JELLYFISH,   rise: false, size: [5, 7.5], dur: [46, 70], peak: 0.72, sway: "as-bob",    swayDur: 4.5 },
-    { id: "cat",       weight: 10, svg: SVG_HELMET_CAT,  rise: false, size: [7, 10],  dur: [55, 80], peak: 0.72, sway: "as-tumble", swayDur: 9 },
+    { id: "cat",       weight: 10, svg: SVG_HELMET_CAT,  rise: false, size: [11, 15], dur: [55, 80], peak: 0.72, sway: "as-tumble", swayDur: 9 },
   ];
   const CAST_WEIGHT = CAST.reduce((n, c) => n + c.weight, 0);
 
@@ -194,7 +211,16 @@
     return CAST[CAST.length - 1];
   }
 
+  function spriteInFlight() {
+    return !!st.spriteLayer && st.spriteLayer.childElementCount > 0;
+  }
+
   function spawnSprite(id) {
+    // Strictly one at a time. The schedule already keeps them apart — the
+    // minimum gap is longer than the slowest crossing — but two on screen at
+    // once turns a find into a parade, so the invariant is enforced here rather
+    // than left as a property of two constants that might be retuned apart.
+    if (spriteInFlight()) return;
     const cast = pickCast(id);
     if (!cast) return;
     // Drifters pick a side to enter from: entering from the right is the same
@@ -234,7 +260,8 @@
     st.spriteTimer = setTimeout(() => {
       st.spriteTimer = 0;
       // A sprite that crossed an unwatched tab was never seen; skip it and wait
-      // again rather than banking sightings nobody gets.
+      // again rather than banking sightings nobody gets. Same for one that is
+      // somehow still crossing: the next wait is punishment enough.
       if (spritesAllowed() && !document.hidden) spawnSprite();
       scheduleSprite(false);
     }, gap);
@@ -369,8 +396,13 @@
     /* Sightings are rare by design, which makes them awkward to look at on
        purpose. Summon one: MLAmbient.summon() for a weighted draw, or
        MLAmbient.summon("cat" | "jellyfish" | "bubbles") for a specific one.
-       Honours the same gates as a scheduled appearance. */
-    summon(id) { if (spritesAllowed()) spawnSprite(id); },
+       Honours the ambient and reduced-motion gates, and replaces whatever is
+       crossing rather than breaking the one-at-a-time rule. */
+    summon(id) {
+      if (!spritesAllowed()) return;
+      if (st.spriteLayer) st.spriteLayer.replaceChildren();
+      spawnSprite(id);
+    },
     enabled: () => st.enabled,
     setEnabled(on) {
       st.enabled = !!on;

@@ -1011,8 +1011,28 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 
 .as-body { animation: var(--as-sway) var(--as-sway-dur) ease-in-out var(--as-sway-n) alternate both; }
 @keyframes as-bob   { from { transform: translateY(-9px) scaleY(1.04); } to { transform: translateY(9px) scaleY(.96); } }
-@keyframes as-tumble{ from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
+@keyframes as-tumble{ from { transform: rotate(-7deg); } to { transform: rotate(7deg); } }
 @keyframes as-wobble{ from { transform: translateX(-14px) scaleX(.94); } to { transform: translateX(14px) scaleX(1.06); } }
+
+/* Secondary motion inside the artwork — a bell that breathes, a tail that
+   flicks — so a sprite reads as alive rather than as a sticker being panned
+   across the screen. Each runs at its own fraction of the sway period and
+   scales its iteration count to match, so all of it still stops when the
+   crossing does. transform-box: fill-box makes transform-origin resolve
+   against each shape's own bounding box rather than the whole SVG. */
+.ambient-sprite [class^="fx-"] { transform-box: fill-box; }
+.fx-pulse { transform-origin: 50% 5%; animation: as-pulse calc(var(--as-sway-dur) * .5) ease-in-out calc(var(--as-sway-n) * 2) alternate both; }
+.fx-trail { transform-origin: 50% 0; animation: as-trail calc(var(--as-sway-dur) * .5) ease-in-out calc(var(--as-sway-n) * 2) alternate both; }
+.fx-tail  { transform-origin: 0 100%;  animation: as-tail  calc(var(--as-sway-dur) * .8) ease-in-out calc(var(--as-sway-n) * 1.25) alternate both; }
+.fx-bub   { transform-origin: 50% 50%; animation: as-bub   calc(var(--as-sway-dur) * .65) ease-in-out calc(var(--as-sway-n) * 1.5) alternate both; }
+.fx-bub:nth-of-type(2) { animation-delay: -1.1s; }
+.fx-bub:nth-of-type(3) { animation-delay: -2.3s; }
+.fx-bub:nth-of-type(4) { animation-delay: -0.5s; }
+
+@keyframes as-pulse { from { transform: scale(1.05, .94); } to { transform: scale(.95, 1.06); } }
+@keyframes as-trail { from { transform: translateY(-3px) scaleY(.94); } to { transform: translateY(3px) scaleY(1.06); } }
+@keyframes as-tail  { from { transform: rotate(-11deg); } to { transform: rotate(9deg); } }
+@keyframes as-bub   { from { transform: scale(.93); } to { transform: scale(1.07); } }
 
 /* ---------- reduced motion ---------- */
 /* Every effect above degrades to its static end state, not to a faster
