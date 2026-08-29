@@ -4,6 +4,9 @@
    Hand-rolled (no shader lib): four moving blobs, quarter-resolution behind a CSS
    blur, 20fps. Stops entirely on hidden tab, prefers-reduced-motion, or Tweaks off.
 
+   Above it sits a second, much cheaper layer: rare drifting sprites (see "rare
+   drifting visitors" below), gated on the same switches.
+
    Loaded as <script> before app.bundle.js; React talks to it via window.MLAmbient. */
 (function () {
   "use strict";
@@ -99,11 +102,157 @@
     sig: "",
     gl: null, canvas: null, prog: null, loc: null,
     raf: 0, t0: 0, last: 0, running: false,
+    spriteLayer: null, spriteTimer: 0, spriteArmed: false,
   };
 
   const FRAME_MS = 50;  // 20fps — invisible on something drifting this slowly
   const SCALE = 0.25;   // render resolution; the CSS blur hides the rest
   const FADE = 0.035;   // per-tick approach to a new palette (~1.5s settle)
+
+  /* ── rare drifting visitors ──────────────────────────────────────────────
+     A find, not a feature. These are deliberately not shaded into the mesh
+     gradient's fragment shader: they are a different concern, and a CSS-animated
+     SVG costs nothing while nothing is on screen — no rAF loop, just a timer
+     between appearances.
+
+     Rarity lives here and nowhere else. Waits are drawn from an exponential
+     distribution so there is no rhythm to notice: a long session yields one,
+     maybe two, and the cast is weighted so the cat is the real find. */
+  const SPRITE_MEAN_GAP_MS  = 7 * 60 * 1000;  // average wait between sightings
+  const SPRITE_MIN_GAP_MS   = 2 * 60 * 1000;  // ...never two on top of each other
+  const SPRITE_FIRST_GAP_MS = 75 * 1000;      // ...and never one on the screen you arrive at
+
+  const SVG_JELLYFISH = `
+    <svg viewBox="0 0 64 112" fill="none" aria-hidden="true">
+      <path d="M4 40C4 20 16 6 32 6s28 14 28 34c0 6-4 9-10 9H14c-6 0-10-3-10-9Z" fill="currentColor" opacity=".5"/>
+      <path d="M4 40C4 20 16 6 32 6s28 14 28 34" stroke="currentColor" stroke-width="2.2" opacity=".75"/>
+      <ellipse cx="23" cy="25" rx="5" ry="7.5" fill="#fff" opacity=".14"/>
+      <g stroke="currentColor" stroke-width="2.4" stroke-linecap="round" opacity=".45">
+        <path d="M15 49c-2 12 4 18 1 30s3 17 1 25"/>
+        <path d="M26 49c-1 14 3 20 0 30s2 16 1 24"/>
+        <path d="M38 49c1 13-3 19 0 30s-2 17-1 25"/>
+        <path d="M49 49c2 12-4 18-1 30s-3 16-1 23"/>
+      </g>
+    </svg>`;
+
+  const SVG_BUBBLES = `
+    <svg viewBox="0 0 72 124" fill="none" aria-hidden="true">
+      <circle cx="25" cy="98" r="19" fill="currentColor" opacity=".36"/>
+      <circle cx="48" cy="60" r="13" fill="currentColor" opacity=".3"/>
+      <circle cx="20" cy="31" r="8.5" fill="currentColor" opacity=".26"/>
+      <circle cx="45" cy="11" r="5" fill="currentColor" opacity=".22"/>
+      <circle cx="18" cy="91" r="6" fill="#fff" opacity=".12"/>
+      <circle cx="44" cy="55" r="4" fill="#fff" opacity=".1"/>
+    </svg>`;
+
+  const SVG_HELMET_CAT = `
+    <svg viewBox="0 0 100 94" fill="none" aria-hidden="true">
+      <circle cx="50" cy="46" r="34" fill="currentColor" opacity=".13"/>
+      <circle cx="50" cy="46" r="34" stroke="currentColor" stroke-width="2.4" opacity=".65"/>
+      <path d="M27 32c4-9 12-15 21-16" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".22"/>
+      <path d="M31 76h38" stroke="currentColor" stroke-width="5" stroke-linecap="round" opacity=".55"/>
+      <path d="M33 32.5 31 19l13 6.5Z" fill="currentColor" opacity=".5"/>
+      <path d="M67 32.5 69 19l-13 6.5Z" fill="currentColor" opacity=".5"/>
+      <path d="M32 47c0-10 8-18 18-18s18 8 18 18-8 20-18 20-18-10-18-20Z" fill="currentColor" opacity=".5"/>
+      <g fill="#0a0a11" opacity=".75">
+        <circle cx="43" cy="45" r="2.6"/><circle cx="57" cy="45" r="2.6"/>
+        <path d="M50 52.5 46.5 56h7Z"/>
+      </g>
+      <g stroke="currentColor" stroke-width="1.6" stroke-linecap="round" opacity=".4">
+        <path d="M36 51h-9M36 55l-9 3M64 51h9M64 55l9 3"/>
+      </g>
+    </svg>`;
+
+  /* weight: relative odds of being the one that shows up. size: viewport width
+     it spans. dur: seconds to cross, randomised inside the range. peak: the
+     opacity it holds mid-crossing — these sit over a near-black backdrop, so
+     "visible" is a lot less than it sounds. */
+  const CAST = [
+    { id: "bubbles",   weight: 60, svg: SVG_BUBBLES,     rise: true,  size: [5, 8],   dur: [34, 52], peak: 0.72, sway: "as-wobble", swayDur: 6.5 },
+    { id: "jellyfish", weight: 30, svg: SVG_JELLYFISH,   rise: false, size: [5, 7.5], dur: [46, 70], peak: 0.72, sway: "as-bob",    swayDur: 4.5 },
+    { id: "cat",       weight: 10, svg: SVG_HELMET_CAT,  rise: false, size: [7, 10],  dur: [55, 80], peak: 0.72, sway: "as-tumble", swayDur: 9 },
+  ];
+  const CAST_WEIGHT = CAST.reduce((n, c) => n + c.weight, 0);
+
+  const rand = (lo, hi) => lo + Math.random() * (hi - lo);
+
+  function spriteLayer() {
+    if (!st.spriteLayer) {
+      const el = document.createElement("div");
+      el.className = "ambient-sprites";
+      el.setAttribute("aria-hidden", "true");
+      document.body.appendChild(el);
+      st.spriteLayer = el;
+    }
+    return st.spriteLayer;
+  }
+
+  function pickCast(id) {
+    if (id) return CAST.find((c) => c.id === id) || null;
+    let r = Math.random() * CAST_WEIGHT;
+    for (const c of CAST) { r -= c.weight; if (r <= 0) return c; }
+    return CAST[CAST.length - 1];
+  }
+
+  function spawnSprite(id) {
+    const cast = pickCast(id);
+    if (!cast) return;
+    // Drifters pick a side to enter from: entering from the right is the same
+    // crossing played backwards, with the body mirrored so it faces the way it
+    // is going.
+    const mirror = !cast.rise && Math.random() < 0.5;
+    const el = document.createElement("div");
+    el.className = "ambient-sprite " + (cast.rise ? "as-riser" : "as-drifter") + (mirror ? " as-mirror" : "");
+    if (mirror) el.style.animationDirection = "reverse";
+    const dur = rand(cast.dur[0], cast.dur[1]);
+    el.style.setProperty("--as-size", rand(cast.size[0], cast.size[1]).toFixed(2) + "vw");
+    el.style.setProperty("--as-lane", rand(8, 74).toFixed(1) + "%");
+    el.style.setProperty("--as-dur", dur.toFixed(1) + "s");
+    el.style.setProperty("--as-peak", String(cast.peak));
+    el.style.setProperty("--as-sway", cast.sway);
+    el.style.setProperty("--as-sway-dur", cast.swayDur + "s");
+    // Finite, not infinite: enough half-cycles to last the crossing and no more.
+    el.style.setProperty("--as-sway-n", String(Math.max(1, Math.round(dur / cast.swayDur))));
+    el.innerHTML = `<div class="as-body">${cast.svg}</div>`;
+    // The sway animation ends first and also bubbles; only the crossing means done.
+    el.addEventListener("animationend", (e) => { if (e.target === el) el.remove(); });
+    spriteLayer().appendChild(el);
+  }
+
+  function spritesAllowed() {
+    return st.enabled && !mqReduce.matches;
+  }
+
+  function scheduleSprite(first) {
+    clearTimeout(st.spriteTimer);
+    st.spriteTimer = 0;
+    if (!spritesAllowed()) return;
+    // Inverse-transform sample of an exponential wait, shifted past the minimum.
+    const gap = first
+      ? SPRITE_FIRST_GAP_MS
+      : SPRITE_MIN_GAP_MS - Math.log(1 - Math.random()) * (SPRITE_MEAN_GAP_MS - SPRITE_MIN_GAP_MS);
+    st.spriteTimer = setTimeout(() => {
+      st.spriteTimer = 0;
+      // A sprite that crossed an unwatched tab was never seen; skip it and wait
+      // again rather than banking sightings nobody gets.
+      if (spritesAllowed() && !document.hidden) spawnSprite();
+      scheduleSprite(false);
+    }, gap);
+  }
+
+  function syncSprites() {
+    if (!spritesAllowed()) {
+      clearTimeout(st.spriteTimer);
+      st.spriteTimer = 0;
+      st.spriteArmed = false;
+      if (st.spriteLayer) st.spriteLayer.replaceChildren();
+      return;
+    }
+    if (st.spriteTimer) return;
+    const first = !st.spriteArmed;
+    st.spriteArmed = true;
+    scheduleSprite(first);
+  }
 
   function compile(gl, type, src) {
     const sh = gl.createShader(type);
@@ -179,6 +328,7 @@
   }
 
   function sync() {
+    syncSprites();
     const want = shouldRun();
     if (st.canvas) st.canvas.classList.toggle("off", !st.enabled || mqReduce.matches);
     if (want === st.running) return;
@@ -193,7 +343,8 @@
   }
 
   function start() {
-    if (!init()) return;
+    // Sprites are a plain DOM layer, so they run even where WebGL does not.
+    if (!init()) { syncSprites(); return; }
     // One frame even with motion off: the backdrop still carries the library's
     // colours, it just holds still.
     draw(performance.now());
@@ -215,6 +366,11 @@
       for (let i = 0; i < 4; i++) st.target[i] = parsed[i % parsed.length].slice();
       sync();
     },
+    /* Sightings are rare by design, which makes them awkward to look at on
+       purpose. Summon one: MLAmbient.summon() for a weighted draw, or
+       MLAmbient.summon("cat" | "jellyfish" | "bubbles") for a specific one.
+       Honours the same gates as a scheduled appearance. */
+    summon(id) { if (spritesAllowed()) spawnSprite(id); },
     enabled: () => st.enabled,
     setEnabled(on) {
       st.enabled = !!on;

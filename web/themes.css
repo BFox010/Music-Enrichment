@@ -967,6 +967,53 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 ::view-transition-old(nav-marker),
 ::view-transition-new(nav-marker) { animation: none; opacity: 1; }
 
+/* ---------- ambient sprites (ambient.js) ---------- */
+/* Rare drifting visitors, above the mesh gradient and below the app. All of the
+   motion is CSS: JS inserts an element and removes it on animationend, so
+   nothing runs on the main thread in the long stretches between appearances.
+   Every animation here has a finite iteration count — the sway included, whose
+   count ambient.js works out from the crossing time — so the layer honours the
+   "nothing loops" rule the rest of the motion layer follows. */
+.ambient-sprites {
+  position: fixed; inset: 0; z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  color: var(--accent);
+  filter: blur(0.8px);
+  /* Its own view-transition group. Without one the layer is captured into the
+     root snapshot, and a sprite mid-flight cross-fades against itself for the
+     length of a page transition — which reads as a rendering bug rather than
+     as a passing jellyfish. */
+  view-transition-name: ambient-sprites;
+}
+::view-transition-old(ambient-sprites),
+::view-transition-new(ambient-sprites) { animation: none; opacity: 1; }
+
+.ambient-sprite { position: absolute; opacity: 0; will-change: transform, opacity; }
+.ambient-sprite svg { display: block; width: var(--as-size); height: auto; }
+.as-drifter { top: var(--as-lane); left: 0; animation: as-drift var(--as-dur) linear forwards; }
+.as-riser { left: var(--as-lane); bottom: 0; animation: as-rise var(--as-dur) linear forwards; }
+/* Drifters that entered from the right face the way they are travelling. */
+.as-mirror .as-body { scale: -1 1; }
+
+@keyframes as-drift {
+  0%   { opacity: 0; transform: translateX(-25vw); }
+  14%  { opacity: var(--as-peak); }
+  86%  { opacity: var(--as-peak); }
+  100% { opacity: 0; transform: translateX(125vw); }
+}
+@keyframes as-rise {
+  0%   { opacity: 0; transform: translateY(20vh); }
+  16%  { opacity: var(--as-peak); }
+  84%  { opacity: var(--as-peak); }
+  100% { opacity: 0; transform: translateY(-120vh); }
+}
+
+.as-body { animation: var(--as-sway) var(--as-sway-dur) ease-in-out var(--as-sway-n) alternate both; }
+@keyframes as-bob   { from { transform: translateY(-9px) scaleY(1.04); } to { transform: translateY(9px) scaleY(.96); } }
+@keyframes as-tumble{ from { transform: rotate(-9deg); } to { transform: rotate(9deg); } }
+@keyframes as-wobble{ from { transform: translateX(-14px) scaleX(.94); } to { transform: translateX(14px) scaleX(1.06); } }
+
 /* ---------- reduced motion ---------- */
 /* Every effect above degrades to its static end state, not to a faster
    animation: the spotlight is gone, the backdrop holds still, and lists snap
@@ -980,5 +1027,8 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
   }
   .card::before { display: none; }
   .ambient-bg { filter: blur(28px); }
+  /* ambient.js already refuses to spawn under reduced motion; this is the
+     belt-and-braces for a preference flipped mid-flight. */
+  .ambient-sprites { display: none; }
   ::view-transition-group(*) { animation: none !important; }
 }
