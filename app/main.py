@@ -111,10 +111,10 @@ def api_artist_trajectory(top: int = Query(15, ge=1, le=500)):
 
     The ceiling is generous on purpose: the picker on the Trajectory page needs
     the long tail to be reachable, and the response is cheap. Measured 2026-08-29
-    against the committed library, top=300 cost ~140 KB uncompressed and ~25 ms
-    against ~26 KB at the old top=20 — and the curve flattens well before the
-    cap, because a tail artist contributes one or two rows. Responses over 1 KB
-    are gzipped by the middleware.
+    against the committed library: top=300 was ~19 KB gzipped and ~35 ms, against
+    ~3 KB and ~18 ms at the old top=20 — the payload is mostly repeated artist
+    names, so the middleware's gzip does most of the work, and the curve flattens
+    well before the cap because a tail artist contributes one or two rows.
     """
     return metrics.artist_trajectory(top=top)
 
