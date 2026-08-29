@@ -154,6 +154,24 @@ function TimelineChart({ active }) {
 }
 
 /* ── Artist Trajectory (line / stream + artist picker) ── */
+
+/* How deep into the play-count tail the picker can reach. The page used to
+   fetch 20, which made it a view of the same heavy-rotation handful and
+   nothing else. Measured 2026-08-29 against the committed library: 300 costs
+   ~140 KB uncompressed (gzipped in transit) and ~25 ms server-side, against
+   ~26 KB at 20 — and the fetch is gated on the page being open, so it is off
+   the dashboard's first-paint path either way. /api/artist-trajectory caps at
+   500 if this needs to go further. */
+const TRAJECTORY_TOP = 300;
+
+/* How many artists the picker seeds with, and how many Shuffle draws. */
+const TRAJECTORY_SEED = 8;
+
+/* Chips are cheap individually but 300 of them is a real layout cost on every
+   keystroke. Render a window of the current ordering and tell the reader the
+   filter box reaches the rest. */
+const TRAJECTORY_CHIP_LIMIT = 80;
+
 function ArtistTrajectory({ active }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
@@ -163,11 +181,11 @@ function ArtistTrajectory({ active }) {
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
 
-  // Fetch once (top 20); seed the selection with the top 8 by total plays.
+  // Fetch once; seed the selection with the most-played TRAJECTORY_SEED.
   useEffect(() => {
     if (!active || raw) return;
     setLoading(true);
-    fetch("/api/artist-trajectory?top=20")
+    fetch(`/api/artist-trajectory?top=${TRAJECTORY_TOP}`)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => {
         setLoading(false);
@@ -176,7 +194,7 @@ function ArtistTrajectory({ active }) {
         const totals = {};
         rows.forEach(([, c, n]) => { totals[n] = (totals[n] || 0) + c; });
         const ordered = Object.keys(totals).sort((a, b) => totals[b] - totals[a]);
-        setSelected(new Set(ordered.slice(0, 8)));
+        setSelected(new Set(ordered.slice(0, TRAJECTORY_SEED)));
       })
       .catch(() => setLoading(false));
   }, [active, raw]);
@@ -228,9 +246,31 @@ function ArtistTrajectory({ active }) {
   }, [active, raw, mode, selected, chart]);
 
   const toggleArtist = (name) => setSelected((s) => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
-  const resetTop = () => setSelected(new Set(artists.slice(0, 8).map((a) => a.name)));
+  const resetTop = () => setSelected(new Set(artists.slice(0, TRAJECTORY_SEED).map((a) => a.name)));
+
+  /* Partial Fisher-Yates over a copy: the whole point is to surface artists the
+     top-N ordering buries, so every artist in the payload is equally likely. */
+  const shuffleArtists = () => {
+    const pool = artists.map((a) => a.name);
+    const n = Math.min(TRAJECTORY_SEED, pool.length);
+    for (let i = 0; i < n; i++) {
+      const j = i + Math.floor(Math.random() * (pool.length - i));
+      [pool[i], pool[j]] = [pool[j], pool[i]];
+    }
+    setSelected(new Set(pool.slice(0, n)));
+  };
+
   const q = query.trim().toLowerCase();
-  const shownArtists = q ? artists.filter((a) => a.name.toLowerCase().includes(q)) : artists;
+  const matching = q ? artists.filter((a) => a.name.toLowerCase().includes(q)) : artists;
+  /* Selected artists always stay visible, even outside the chip window — a
+     shuffled pick from the deep tail must remain un-clickable-off. */
+  const shownArtists = useMemo(() => {
+    const head = matching.slice(0, TRAJECTORY_CHIP_LIMIT);
+    const inHead = new Set(head.map((a) => a.name));
+    const strays = selected ? matching.filter((a) => selected.has(a.name) && !inHead.has(a.name)) : [];
+    return head.concat(strays);
+  }, [matching, selected]);
+  const hiddenCount = matching.length - shownArtists.length;
   const selCount = selected ? selected.size : 0;
 
   return (
@@ -244,16 +284,17 @@ function ArtistTrajectory({ active }) {
                 <button key={v} aria-pressed={mode === v} onClick={() => setMode(v)}>{l}</button>
               ))}
             </div>
-            <span className="card-meta">monthly plays · top 20</span>
+            <span className="card-meta">monthly plays · {artists.length} artists</span>
           </div>
         </div>
-        <p style={cardDesc}>Compare how your listening shifted month to month. <b>Lines</b> plot plays per month per artist; <b>Stream</b> stacks them into a flowing river.</p>
+        <p style={cardDesc}>Compare how your listening shifted month to month. <b>Lines</b> plot plays per month per artist; <b>Stream</b> stacks them into a flowing river. Filter by name, or <b>Shuffle</b> for a random handful from the tail.</p>
         <div className="artist-picker">
           <div className="ap-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter artists…" />
             <span className="ap-count">{selCount} shown</span>
-            <button className="ap-reset" onClick={resetTop} title="Reset to top 8">Top 8</button>
+            <button className="ap-reset" onClick={shuffleArtists} title={`Pick ${TRAJECTORY_SEED} at random from all ${artists.length} artists`}>Shuffle</button>
+            <button className="ap-reset" onClick={resetTop} title={`Reset to the ${TRAJECTORY_SEED} most-played`}>Top {TRAJECTORY_SEED}</button>
           </div>
           <div className="ap-chips">
             {shownArtists.map((a) => (
@@ -262,6 +303,9 @@ function ArtistTrajectory({ active }) {
               </button>
             ))}
           </div>
+          {hiddenCount > 0 && (
+            <p className="ap-more">{hiddenCount} more — type to narrow the list.</p>
+          )}
         </div>
         <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
         {loading && <ChartLoading height={560} />}

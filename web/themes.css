@@ -757,9 +757,9 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 
 /* artist picker */
 .artist-picker { margin-bottom: 18px; }
-.ap-search { position: relative; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.ap-search { position: relative; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .ap-search > svg { position: absolute; left: 12px; width: 14px; height: 14px; color: var(--muted-s); pointer-events: none; }
-.ap-search input { flex: 1; font-family: var(--font-body); font-size: 13px; color: var(--text); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-sm); padding: 9px 12px 9px 34px; outline: none; transition: border-color .16s; }
+.ap-search input { flex: 1 1 220px; font-family: var(--font-body); font-size: 13px; color: var(--text); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-sm); padding: 9px 12px 9px 34px; outline: none; transition: border-color .16s; }
 .ap-search input:focus { border-color: var(--accent); }
 .ap-search input::placeholder { color: var(--muted-s); }
 .ap-count { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-s); letter-spacing: .04em; white-space: nowrap; }
@@ -771,6 +771,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .ap-chip .ap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: background .14s; }
 .ap-chip.on { background: color-mix(in oklab, var(--accent) 18%, var(--panel)); border-color: var(--accent); color: var(--text); }
 .ap-chip.on .ap-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.ap-more { margin: 9px 2px 0; font-size: 11.5px; color: var(--muted-s); }
 
 /* listening calendar */
 .echart-wrap.cal { width: 100%; min-height: 220px; }
