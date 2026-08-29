@@ -18,7 +18,7 @@ import contextlib
 import hashlib
 import json
 import os
-import tempfile
+import stat
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any, Iterable, Iterator, TextIO
@@ -386,20 +386,51 @@ def validate_dataset(rows: list[dict[str, Any]]) -> dict[str, Any]:
 # ── JSONL IO with version + order discipline ──
 
 
+# Attempts to find an unused temp-file name before giving up. A collision needs
+# two writers to draw the same 12 hex digits in the same directory.
+_TMP_NAME_ATTEMPTS = 32
+
+
+def _open_new_temp(directory: Path, prefix: str) -> tuple[int, Path]:
+    """Create and open a uniquely named temp file in ``directory``.
+
+    ``tempfile.mkstemp`` would be the obvious call, but it hardcodes mode 0600
+    and ``os.replace`` carries the temp file's mode onto the destination — so
+    every pipeline output would silently drop from 0644 to owner-only, breaking
+    any setup where the pipeline and the dashboard run as different users.
+    Opening with 0o666 instead lets the kernel apply the process umask, which is
+    exactly what a plain ``open(path, "w")`` does for a file that doesn't exist.
+    """
+    for _ in range(_TMP_NAME_ATTEMPTS):
+        candidate = directory / f"{prefix}{os.urandom(6).hex()}.tmp"
+        try:
+            fd = os.open(candidate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
+        except FileExistsError:
+            continue
+        return fd, candidate
+    raise FileExistsError(f"could not create a temp file in {directory}")
+
+
 @contextlib.contextmanager
 def atomic_open(path: Path, encoding: str = "utf-8", newline: str = "\n") -> Iterator[TextIO]:
     """Open a unique temp file in ``path``'s directory for writing; on clean exit,
     fsync it and ``os.replace()`` it onto ``path`` so a crash, disk-full condition,
     or exception mid-write can never leave ``path`` truncated or partially written.
     The temp file is removed if the block raises before the replace.
+
+    Permissions match what rewriting ``path`` in place would have produced: an
+    existing file keeps its own mode, a new one gets the umask default.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp_name = tempfile.mkstemp(
-        dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
-    )
-    tmp_path = Path(tmp_name)
+    fd, tmp_path = _open_new_temp(path.parent, f".{path.name}.")
     try:
         with os.fdopen(fd, "w", encoding=encoding, newline=newline) as fh:
+            try:
+                existing_mode = stat.S_IMODE(os.stat(path).st_mode)
+            except OSError:
+                pass  # Nothing to inherit — the umask default above stands.
+            else:
+                os.fchmod(fh.fileno(), existing_mode)
             yield fh
             fh.flush()
             os.fsync(fh.fileno())

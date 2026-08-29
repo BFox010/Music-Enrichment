@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 import pytest
@@ -173,6 +175,53 @@ class TestAtomicOpen:
         # The second writer's replace happened first (inner context exits
         # first), then the first writer's replace overwrote it last.
         assert path.read_text(encoding="utf-8") == "first\n"
+
+
+class TestAtomicOpenPermissions:
+    """``os.replace`` carries the *temp* file's mode onto the destination, so
+    the temp file's permissions become the output's permissions. Creating it
+    with ``tempfile.mkstemp`` — 0600, always — silently made every pipeline
+    output owner-only, which breaks any setup running the pipeline and the
+    dashboard as different users. A write must leave the same mode an ordinary
+    ``open(path, "w")`` would have.
+    """
+
+    def test_new_file_gets_the_umask_default_not_0600(self, tmp_path: Path) -> None:
+        reference = tmp_path / "reference.txt"
+        with open(reference, "w", encoding="utf-8") as fh:
+            fh.write("x")
+        expected = stat.S_IMODE(reference.stat().st_mode)
+
+        path = tmp_path / "out.jsonl"
+        with atomic_open(path) as fh:
+            fh.write("x")
+
+        assert stat.S_IMODE(path.stat().st_mode) == expected
+
+    def test_existing_file_keeps_its_own_mode(self, tmp_path: Path) -> None:
+        path = tmp_path / "out.jsonl"
+        path.write_text("old\n", encoding="utf-8")
+        os.chmod(path, 0o640)
+
+        with atomic_open(path) as fh:
+            fh.write("new\n")
+
+        assert stat.S_IMODE(path.stat().st_mode) == 0o640
+        assert path.read_text(encoding="utf-8") == "new\n"
+
+    def test_group_readable_destination_survives_a_rewrite(self, tmp_path: Path) -> None:
+        """The concrete regression: a 0644 tracks.jsonl stayed 0644."""
+        path = tmp_path / "tracks.jsonl"
+        path.write_text("old\n", encoding="utf-8")
+        os.chmod(path, 0o644)
+
+        with atomic_open(path) as fh:
+            fh.write("new\n")
+
+        mode = stat.S_IMODE(path.stat().st_mode)
+        assert mode & stat.S_IRGRP
+        assert mode & stat.S_IROTH
+        assert mode == 0o644
 
 
 class TestWriteJsonlAtomic:

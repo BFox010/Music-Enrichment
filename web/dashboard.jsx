@@ -252,6 +252,10 @@ function App() {
       else if (lname.includes("track") || rows[0]?.canonical_track_id || rows[0]?.track) { rawTracks = rows; names.push(f.name); }
       else if (rows[0]?.hour != null || rows[0]?.scrobbled_at) { rawScrob = rows; names.push(f.name); }
     }
+    // Bail before touching runProcessLibrary: claiming its load generation is
+    // what supersedes an in-flight load, so doing it for a drop we can't use
+    // would discard the real library the live fetch was still processing.
+    if (!rawTracks && !rawScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     // Process only after every file is read, so the scrobble cross-join works
     // regardless of arrival order. Off the main thread via the shared worker
     // helper (F-08b) — a large dropped library used to cross-join
@@ -259,7 +263,6 @@ function App() {
     const result = await runProcessLibrary({ trRows: rawTracks, scRows: rawScrob });
     if (!result) return; // superseded by a newer load
     const { nt: newTracks, ns: newScrob, drill: nd, cube: nc } = result;
-    if (!newTracks && !newScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     setData((d) => ({
       meta: { ...d.meta, isSample: false, trackCount: newTracks ? newTracks.length : d.meta.trackCount, scrobbleCount: newScrob ? newScrob.total : d.meta.scrobbleCount },
       tracks: newTracks || d.tracks,

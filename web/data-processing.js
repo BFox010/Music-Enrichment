@@ -149,48 +149,63 @@ function trackKey(o) {
   return a + "\x00" + t;
 }
 
-/* Every identity key a track can be scrobbled under: its own name pair plus
-   every alias Phase 4e folded into it (identity_aliases, carried through by
-   /api/tracks.min once F-03 added it to MIN_TRACK_FIELDS). A play logged
-   under a historical artist credit only matches the current display name
-   through one of these alias keys — without them, browser joins undercount
-   in exactly the cases the server's alias-aware app.metrics._track_index()
-   already handles, so charts and KPIs disagree. */
-function trackKeys(o) {
-  const keys = [trackKey(o)];
+/* The credit variants Phase 4e folded into a track (identity_aliases, carried
+   through by /api/tracks.min once F-03 added it to MIN_TRACK_FIELDS). A play
+   logged under a historical artist credit only matches the current display
+   name through one of these — without them, browser joins undercount in
+   exactly the cases the server's alias-aware app.metrics._track_index()
+   already handles, so charts and KPIs disagree.
+
+   Kept separate from the primary key because the two carry different
+   authority when they collide; see buildTrackIndex. */
+function aliasKeys(o) {
+  const keys = [];
   const aliases = o.identity_aliases;
-  if (Array.isArray(aliases)) {
-    for (const alias of aliases) {
-      if (!Array.isArray(alias) || alias.length !== 2) continue;
-      const a = String(alias[0] || "").toLowerCase().trim();
-      const t = String(alias[1] || "").toLowerCase().trim();
-      const k = a + "\x00" + t;
-      if (keys.indexOf(k) === -1) keys.push(k);
-    }
+  if (!Array.isArray(aliases)) return keys;
+  for (const alias of aliases) {
+    if (!Array.isArray(alias) || alias.length !== 2) continue;
+    const a = String(alias[0] || "").toLowerCase().trim();
+    const t = String(alias[1] || "").toLowerCase().trim();
+    const k = a + "\x00" + t;
+    if (keys.indexOf(k) === -1) keys.push(k);
   }
   return keys;
 }
-
-/* Alias-aware index: every track registered under its primary key AND every
-   alias key. First writer wins on a collision, matching the server's
-   `index.setdefault` behavior in app.metrics._track_index(). */
+/* Alias-aware key → track-array-index map. Collision arbitration mirrors
+   app.metrics._track_index() line for line, because the two must resolve any
+   given scrobble to the same track or the dashboard contradicts the API:
+   a primary key is assigned unconditionally (so owning a name outright always
+   beats another track merely claiming it as an alias, whatever the row order),
+   while an alias only fills a key nothing has claimed yet. Treating both as
+   first-writer-wins let an earlier row's alias shadow a later row's own name —
+   the exact server/client divergence F-03 exists to remove. */
 function buildTrackIndex(rawTracks) {
   const idx = new Map();
   for (let i = 0; i < rawTracks.length; i++) {
-    for (const k of trackKeys(rawTracks[i])) {
+    idx.set(trackKey(rawTracks[i]), i);
+  }
+  for (let i = 0; i < rawTracks.length; i++) {
+    for (const k of aliasKeys(rawTracks[i])) {
       if (!idx.has(k)) idx.set(k, i);
     }
   }
   return idx;
 }
 
-function buildPlayWindows(scrobbleRows) {
+/* Windowed counts per *track*, not per key. Each scrobble is resolved through
+   the shared index to exactly one track — the same one-scrobble-one-track rule
+   app.metrics._lookup() applies — so a key two rows both claim (one owns the
+   name, the other lists it as an alias) is credited once, to the row the index
+   picked. Accumulating per key and then summing every key a track claims
+   double-counted those plays into both rows. */
+function buildPlayWindows(scrobbleRows, idx) {
   computeAnchor(scrobbleRows);
   const map = new Map();
   for (const s of scrobbleRows) {
-    const k = trackKey(s);
-    let e = map.get(k);
-    if (!e) { e = { py: {}, tm: 0, lm: 0, tw: 0, lw: 0, ts: 0, ls: 0 }; map.set(k, e); }
+    const ti = idx.get(trackKey(s));
+    if (ti === undefined) continue;
+    let e = map.get(ti);
+    if (!e) { e = { py: {}, tm: 0, lm: 0, tw: 0, lw: 0, ts: 0, ls: 0 }; map.set(ti, e); }
     if (s.year != null) e.py[s.year] = (e.py[s.year] || 0) + 1;
     const stamp = s.scrobbled_at || "";
     if (!stamp) continue;
@@ -212,25 +227,15 @@ function buildPlayWindows(scrobbleRows) {
 }
 function attachWindows(rawTracks, scrobbleRows) {
   if (!scrobbleRows || !scrobbleRows.length) return rawTracks;
-  const win = buildPlayWindows(scrobbleRows);
-  for (const t of rawTracks) {
-    // A track's window entries can be split across several keys — one per
-    // name it was scrobbled under — so every alias key must be summed, not
-    // just the primary one.
-    let merged = null;
-    for (const k of trackKeys(t)) {
-      const e = win.get(k);
-      if (!e) continue;
-      if (!merged) merged = { py: {}, tm: 0, lm: 0, tw: 0, lw: 0, ts: 0, ls: 0 };
-      for (const y in e.py) merged.py[y] = (merged.py[y] || 0) + e.py[y];
-      merged.tm += e.tm; merged.lm += e.lm;
-      merged.tw += e.tw; merged.lw += e.lw;
-      merged.ts += e.ts; merged.ls += e.ls;
-    }
-    if (merged) {
-      t.py = merged.py; t.tm = merged.tm; t.lm = merged.lm;
-      t.tw = merged.tw; t.lw = merged.lw; t.ts = merged.ts; t.ls = merged.ls;
-    }
+  // Plays logged under a historical credit resolve through the track's alias
+  // keys, so they land on the row that absorbed that credit.
+  const win = buildPlayWindows(scrobbleRows, buildTrackIndex(rawTracks));
+  for (let i = 0; i < rawTracks.length; i++) {
+    const e = win.get(i);
+    if (!e) continue;
+    const t = rawTracks[i];
+    t.py = e.py; t.tm = e.tm; t.lm = e.lm;
+    t.tw = e.tw; t.lw = e.lw; t.ts = e.ts; t.ls = e.ls;
   }
   return rawTracks;
 }
@@ -240,17 +245,14 @@ function attachWindows(rawTracks, scrobbleRows) {
    Seasonal Favorites page. Computed once at load from the in-memory rows. */
 function buildDrill(rawTracks, scrobbleRows) {
   if (!rawTracks || !scrobbleRows || !scrobbleRows.length) return null;
-  const info = new Map();
-  for (const t of rawTracks) {
-    const entry = {
-      genres: Array.isArray(t.genres) ? t.genres : [],
-      moods: Array.isArray(t.mood_tags) ? t.mood_tags : (Array.isArray(t.moods) ? t.moods : []),
-      label: `${t.artist || "Unknown"} — ${t.track || "Untitled"}`,
-    };
-    for (const k of trackKeys(t)) {
-      if (!info.has(k)) info.set(k, entry);
-    }
-  }
+  // Same index, same arbitration as the windows and the cube, so a scrobble
+  // can never be attributed to one track here and a different one there.
+  const idx = buildTrackIndex(rawTracks);
+  const info = rawTracks.map((t) => ({
+    genres: Array.isArray(t.genres) ? t.genres : [],
+    moods: Array.isArray(t.mood_tags) ? t.mood_tags : (Array.isArray(t.moods) ? t.moods : []),
+    label: `${t.artist || "Unknown"} — ${t.track || "Untitled"}`,
+  }));
   const mk = () => ({ genres: {}, moods: {}, tracks: {}, total: 0 });
   const season = {}, hour = {}, dow = {};
   for (const s of SEASONS_LIST) { season[s] = mk(); season[s].byHour = new Array(24).fill(0); }
@@ -263,8 +265,9 @@ function buildDrill(rawTracks, scrobbleRows) {
     bucket.tracks[gi.label] = (bucket.tracks[gi.label] || 0) + 1;
   };
   for (const sc of scrobbleRows) {
-    const gi = info.get(trackKey(sc));
-    if (!gi) continue;
+    const ti = idx.get(trackKey(sc));
+    if (ti === undefined) continue;
+    const gi = info[ti];
     const se = sc.season || (sc.month ? SEASON_BY_MONTH[sc.month] : null);
     if (se && season[se]) { bump(season[se], gi); if (sc.hour != null) season[se].byHour[sc.hour]++; }
     if (sc.hour != null && hour[sc.hour]) bump(hour[sc.hour], gi);

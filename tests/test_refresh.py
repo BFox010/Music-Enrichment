@@ -286,6 +286,61 @@ class TestApiReloadAndSyncReturn409WhenBusy:
         assert "already running" in r.json()["detail"]
 
 
+class TestApiReloadDoesNotBlockTheEventLoop:
+    """``/api/reload`` had to become a coroutine to hold the async mutation
+    lock, which took it out of the threadpool FastAPI runs ``def`` handlers in.
+    ``data.reload()`` re-parses both JSONL files synchronously, so calling it
+    directly from the coroutine stalls the event loop — and with it every other
+    in-flight request — for the whole parse. It has to be handed to a worker
+    thread.
+    """
+
+    @pytest.fixture
+    def client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracks = Path(tmp) / "tracks.jsonl"
+            scrobbles = Path(tmp) / "scrobbles.jsonl"
+            tracks.write_text("")
+            scrobbles.write_text("")
+            import app.data as data_mod
+            with data_mod.use_paths(tracks, scrobbles):
+                from app.main import app
+                yield TestClient(app)
+
+    @staticmethod
+    def _auth():
+        from app.main import DASHBOARD_TOKEN
+        return {"X-Dashboard-Token": DASHBOARD_TOKEN}
+
+    def test_reload_runs_off_the_event_loop_thread(self, client):
+        observed = {}
+
+        def fake_reload():
+            # An event loop is only "running" in the thread that drives it, so
+            # its absence here is exactly the property under test.
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                observed["on_event_loop"] = False
+            else:
+                observed["on_event_loop"] = True
+            return {"tracks": 0, "scrobbles": 0,
+                    "skipped": {"tracks": 0, "scrobbles": 0}}
+
+        with patch("app.data.reload", new=fake_reload):
+            r = client.post("/api/reload", headers=self._auth())
+
+        assert r.status_code == 200
+        assert observed["on_event_loop"] is False
+
+    def test_reload_still_returns_the_counts(self, client):
+        r = client.post("/api/reload", headers=self._auth())
+        assert r.status_code == 200
+        body = r.json()
+        assert body["tracks"] == 0
+        assert body["scrobbles"] == 0
+
+
 # ── API: POST /api/refresh ──
 
 class TestApiRefresh:

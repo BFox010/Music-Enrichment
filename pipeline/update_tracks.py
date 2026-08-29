@@ -19,6 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from pipeline.config import (
+    MOOD_CURATED_MIN_RANK,
     MOOD_SOURCE_RANK,
     REPO_ROOT,
     TRACKS_PATH,
@@ -200,11 +201,14 @@ def _enrichment_sources(row: dict) -> list[str]:
 # MBID may fill a blank but must not displace a dedicated lookup's answer.
 _FILL_ONLY_FIELDS: frozenset[str] = frozenset({"musicbrainz_id", "artist_mbid", "isrc"})
 
-# An explicit null here means "no value", not "this file lacked the field" —
-# Phase 6 sets all of them on every row it touches, so null is a verdict.
-_AUTHORITATIVE_NULL_FIELDS: frozenset[str] = frozenset(
-    {"mood_tags", "mood_source", "mood_confidence", "mood_distance"}
+# Phase 6 writes all four on every row it touches, so they move as one bundle:
+# tags, the source that produced them, and that source's confidence/distance
+# must never be mixed across sources. An explicit null in any of them means
+# "no value", not "this file lacked the field" — i.e. a verdict.
+_MOOD_BUNDLE_FIELDS: tuple[str, ...] = (
+    "mood_tags", "mood_source", "mood_confidence", "mood_distance",
 )
+_AUTHORITATIVE_NULL_FIELDS: frozenset[str] = frozenset(_MOOD_BUNDLE_FIELDS)
 
 
 def _merge_with_existing(new: dict, existing: dict | None) -> dict:
@@ -245,13 +249,30 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     # MOOD_SOURCE_RANK (pipeline/config.py) is the single trust order both this
     # module and classify_moods consult; a tie favors the fresh row, matching
     # the "new wins by default" rule the loop above already applies.
-    existing_source = existing.get("mood_source")
-    new_source = new.get("mood_source")
-    if MOOD_SOURCE_RANK.get(existing_source, 0) > MOOD_SOURCE_RANK.get(new_source, 0):
-        merged["mood_tags"] = existing.get("mood_tags")
-        merged["mood_source"] = existing_source
-        merged["mood_confidence"] = existing.get("mood_confidence")
-        merged["mood_distance"] = existing.get("mood_distance")
+    #
+    # Only arbitrate when the new row actually carries the bundle. An
+    # intermediate that never went through Phase 6 omits these keys entirely,
+    # and that absence is not a claim about mood.
+    if not _AUTHORITATIVE_NULL_FIELDS.isdisjoint(new):
+        existing_source = existing.get("mood_source")
+        new_source = new.get("mood_source")
+        if new_source is None:
+            # Phase 6 declined to label this row. That verdict outranks a stale
+            # machine guess, so it stands — but ranking alone would let *any*
+            # ranked existing source beat rank-0 None and resurrect exactly the
+            # guess the classifier just withdrew. Only a curated label survives
+            # a decline.
+            existing_wins = (
+                MOOD_SOURCE_RANK.get(existing_source, 0) >= MOOD_CURATED_MIN_RANK
+            )
+        else:
+            existing_wins = (
+                MOOD_SOURCE_RANK.get(existing_source, 0)
+                > MOOD_SOURCE_RANK.get(new_source, 0)
+            )
+        if existing_wins:
+            for field in _MOOD_BUNDLE_FIELDS:
+                merged[field] = existing.get(field)
 
     # playlists is derived from taste_profile.md by Phase 7, not hand-edited, so the
     # latest output always wins — preserving it strands tracks in sections the

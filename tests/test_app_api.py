@@ -15,6 +15,7 @@ from fastapi.testclient import TestClient
 
 import app.data as data
 from app.main import DASHBOARD_TOKEN, app
+from app.query import project_min_track
 
 # Mutating endpoints (reload/refresh/sync) require this header; the SPA reads the
 # token from GET /api/config. Tests send it directly.
@@ -460,6 +461,57 @@ class TestTracksMinJsonl:
         etag = client.get("/tracks.min.jsonl").headers["etag"]
         r = client.get("/tracks.min.jsonl", headers={"If-None-Match": etag})
         assert r.status_code == 304
+
+
+class TestProjectedIdentityAliases:
+    """``identity_aliases`` is in the slim payload so the browser can resolve a
+    scrobble logged under a historical credit the way the server does (F-03).
+    Phase 4e writes a self-alias on every row, though, so shipping the field
+    verbatim put a second copy of each track's own identity into the payload
+    every client downloads on first paint — for no resolution difference, since
+    ``buildTrackIndex()`` registers the primary key itself and at higher
+    precedence than any alias.
+    """
+
+    def test_alias_equal_to_the_rows_own_key_is_dropped(self) -> None:
+        row = {
+            "artist_normalized": "portishead", "track_normalized": "roads",
+            "identity_aliases": [["portishead", "roads"]],
+        }
+        assert "identity_aliases" not in project_min_track(row)
+
+    def test_a_real_alias_still_ships(self) -> None:
+        row = {
+            "artist_normalized": "clipse, pharrell williams",
+            "track_normalized": "so far ahead",
+            "identity_aliases": [
+                ["clipse, pharrell williams", "so far ahead"],
+                ["clipse", "so far ahead"],
+            ],
+        }
+        assert project_min_track(row)["identity_aliases"] == [["clipse", "so far ahead"]]
+
+    def test_repeats_and_malformed_entries_are_dropped(self) -> None:
+        row = {
+            "artist_normalized": "a", "track_normalized": "song",
+            "identity_aliases": [
+                ["b", "song"], ["b", "song"], ["only-one"], "not-a-list", None,
+            ],
+        }
+        assert project_min_track(row)["identity_aliases"] == [["b", "song"]]
+
+    def test_aliases_are_normalized_the_way_the_client_keys_them(self) -> None:
+        """The browser lowercases and trims before keying, so shipping the
+        pre-normalized pair keeps both sides looking at the same string."""
+        row = {
+            "artist_normalized": "a", "track_normalized": "song",
+            "identity_aliases": [["  Clipse ", "So Far Ahead"]],
+        }
+        assert project_min_track(row)["identity_aliases"] == [["clipse", "so far ahead"]]
+
+    def test_missing_field_stays_missing(self) -> None:
+        row = {"artist_normalized": "a", "track_normalized": "song"}
+        assert "identity_aliases" not in project_min_track(row)
 
 
 class TestStaticCaching:

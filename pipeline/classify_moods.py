@@ -35,6 +35,7 @@ from pipeline.config import (
     INPUT_CLAUDE_MOOD_RESULTS,
     INPUT_EXISTING_AUDIT,
     INPUTS_DIR,
+    MOOD_AUDIT_FILENAME,
     MOOD_CATEGORIES,
     REPO_ROOT,
     TRACKS_PATH,
@@ -432,7 +433,11 @@ def classify(
     log.info("=== Phase 6: mood classification ===")
 
     if audit_path is None:
-        audit_path = REPO_ROOT / "mood_audit.csv"
+        # Resolved against the module's REPO_ROOT rather than importing the
+        # ready-made MOOD_AUDIT_PATH, so tests that redirect REPO_ROOT to a
+        # tmpdir redirect the audit file with it. MOOD_AUDIT_FILENAME keeps the
+        # name itself defined once.
+        audit_path = REPO_ROOT / MOOD_AUDIT_FILENAME
 
     # DEEPEST intermediate wins, so every upstream field survives (5b features,
     # 5 availability, 4b discogs_styles, ...). tracks.jsonl is the last resort:

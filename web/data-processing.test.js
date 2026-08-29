@@ -51,20 +51,24 @@ function scrobble(artist, trackName, stamp, extra) {
   );
 }
 
-test("trackKeys returns the primary key plus every distinct alias key", () => {
+test("aliasKeys returns every distinct alias key, normalized", () => {
   const t = track("Clipse, Pharrell Williams", "So Far Ahead", [
-    ["clipse", "so far ahead"],
-    ["clipse, pharrell williams", "so far ahead"], // duplicate of the primary
+    ["Clipse", " So Far Ahead "],
+    ["clipse", "so far ahead"], // same key once normalized
   ]);
-  const keys = trackKeys(t);
-  assert.equal(keys.length, 2);
-  assert.ok(keys.includes("clipse, pharrell williams\x00so far ahead"));
-  assert.ok(keys.includes("clipse\x00so far ahead"));
+  assert.deepEqual(aliasKeys(t), ["clipse\x00so far ahead"]);
 });
 
-test("trackKeys ignores malformed alias entries", () => {
+test("aliasKeys ignores malformed alias entries", () => {
   const t = track("A", "song", [["only-one-element"], "not-an-array", null, [1, 2, 3]]);
-  assert.deepEqual(trackKeys(t), ["a\x00song"]);
+  assert.deepEqual(aliasKeys(t), []);
+});
+
+test("aliasKeys is empty when the field is missing entirely", () => {
+  // The slim payload omits identity_aliases for rows with nothing to say.
+  const t = track("A", "song", []);
+  delete t.identity_aliases;
+  assert.deepEqual(aliasKeys(t), []);
 });
 
 test("buildTrackIndex resolves a scrobble that only matches through an alias", () => {
@@ -124,4 +128,105 @@ test("buildCube marks an unmatched scrobble with no track index", () => {
   const scrobbles = [scrobble("Nobody", "Nothing", "2025-01-01", { hour: 5, day_of_week: 1 })];
   const cube = buildCube([t], scrobbles);
   assert.equal(cube.track[0], -1);
+});
+
+// ── Server/client arbitration parity ──
+//
+// Being alias-aware is not enough: both sides must resolve a contested key to
+// the *same* track. app.metrics._track_index() assigns primary keys
+// unconditionally and only setdefaults aliases, so owning a name outright
+// always beats another row claiming it as an alias. Mirroring that with
+// first-writer-wins for both — as the first pass at F-03 did — makes the
+// winner depend on row order, and the dashboard then contradicts the API it
+// was built to agree with.
+
+test("buildTrackIndex gives a name's owner precedence regardless of row order", () => {
+  const real = track("A", "song", []);
+  const merged = track("A B", "song", [["a", "song"], ["a b", "song"]]);
+
+  for (const rows of [[real, merged], [merged, real]]) {
+    const idx = buildTrackIndex(rows);
+    assert.equal(rows[idx.get("a\x00song")], real, "owner must win either order");
+    assert.equal(rows[idx.get("a b\x00song")], merged);
+  }
+});
+
+test("buildTrackIndex keeps the first claimant of a key nobody owns", () => {
+  const first = track("X", "one", [["ghost", "song"]]);
+  const second = track("Y", "two", [["ghost", "song"]]);
+  const rows = [first, second];
+  const idx = buildTrackIndex(rows);
+  assert.equal(rows[idx.get("ghost\x00song")], first);
+});
+
+// ── One scrobble counts once ──
+//
+// Summing every key a track claims credited a play on a contested key to both
+// the row that owns the name and the row listing it as an alias, inflating
+// totals rather than merely misattributing them. Each scrobble resolves
+// through the index to exactly one track, as app.metrics._lookup() does.
+
+test("attachWindows credits a contested key to one track only", () => {
+  const real = track("A", "song", []);
+  const merged = track("A B", "song", [["a", "song"]]);
+  const scrobbles = [scrobble("A", "song", "2020-01-01")];
+
+  attachWindows([real, merged], scrobbles);
+
+  const plays = (t) => Object.values(t.py || {}).reduce((a, b) => a + b, 0);
+  assert.equal(plays(real) + plays(merged), 1);
+  assert.equal(plays(real), 1, "the row owning the name takes the play");
+  assert.equal(merged.py, undefined);
+});
+
+test("attachWindows totals still match the scrobble count across alias splits", () => {
+  const t = track("Clipse, Pharrell Williams", "So Far Ahead", [["clipse", "so far ahead"]]);
+  const scrobbles = [
+    scrobble("Clipse", "So Far Ahead", "2020-01-01"),
+    scrobble("Clipse", "So Far Ahead", "2020-02-01"),
+    scrobble("Clipse, Pharrell Williams", "So Far Ahead", "2020-03-01"),
+  ];
+
+  attachWindows([t], scrobbles);
+
+  assert.equal(Object.values(t.py).reduce((a, b) => a + b, 0), scrobbles.length);
+});
+
+test("buildDrill counts a contested scrobble once, against the name's owner", () => {
+  const scrobbles = [
+    scrobble("A", "song", "2020-01-01", { season: "winter", hour: 3, day_of_week: 1 }),
+  ];
+
+  // Both orders: the answer must come from who owns the name, not who is first.
+  for (const reversed of [false, true]) {
+    const real = track("A", "song", []);
+    real.genres = ["Rock"];
+    const merged = track("A B", "song", [["a", "song"]]);
+    merged.genres = ["Jazz"];
+
+    const drill = buildDrill(reversed ? [merged, real] : [real, merged], scrobbles);
+
+    assert.equal(drill.season.winter.total, 1);
+    assert.equal(drill.season.winter.genres.Rock, 1);
+    assert.equal(drill.season.winter.genres.Jazz, undefined);
+  }
+});
+
+test("buildDrill and buildCube agree with attachWindows on the same fixture", () => {
+  const real = track("A", "song", []);
+  const merged = track("A B", "song", [["a", "song"]]);
+  const rows = [real, merged];
+  const scrobbles = [
+    scrobble("A", "song", "2020-01-01", { season: "winter", hour: 3, day_of_week: 1 }),
+    scrobble("A B", "song", "2020-01-02", { season: "winter", hour: 3, day_of_week: 1 }),
+  ];
+
+  const cube = buildCube(rows, scrobbles);
+  const drill = buildDrill(rows, scrobbles);
+  attachWindows(rows, scrobbles);
+
+  assert.deepEqual(Array.from(cube.track), [0, 1]);
+  assert.equal(drill.season.winter.total, 2);
+  const plays = (t) => Object.values(t.py || {}).reduce((a, b) => a + b, 0);
+  assert.equal(plays(real) + plays(merged), scrobbles.length);
 });

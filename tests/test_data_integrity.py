@@ -16,10 +16,8 @@ from pathlib import Path
 import pytest
 
 from pipeline.classify_moods import _identity_keys, load_audit
-from pipeline.config import MOOD_CATEGORIES, REPO_ROOT, TRACKS_PATH
+from pipeline.config import MOOD_AUDIT_PATH, MOOD_CATEGORIES, TRACKS_PATH
 from pipeline.schema import read_jsonl
-
-AUDIT_PATH = REPO_ROOT / "mood_audit.csv"
 
 # Audit rows naming a recording the library does not contain. 43 of them name an
 # artist absent from the library entirely — the audit was made against a wider
@@ -32,9 +30,9 @@ MAX_UNMATCHED_AUDIT_ROWS = 88
 
 
 def _load() -> tuple[list[dict], list[dict]]:
-    if not AUDIT_PATH.exists() or not TRACKS_PATH.exists():
+    if not MOOD_AUDIT_PATH.exists() or not TRACKS_PATH.exists():
         pytest.skip("committed mood_audit.csv / tracks.jsonl not present")
-    return load_audit(AUDIT_PATH), read_jsonl(TRACKS_PATH)
+    return load_audit(MOOD_AUDIT_PATH), read_jsonl(TRACKS_PATH)
 
 
 def _resolve() -> list[tuple[dict, dict]]:

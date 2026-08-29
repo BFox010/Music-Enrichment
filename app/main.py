@@ -5,6 +5,7 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 ``html=True`` so ``index.html`` is the SPA fallback.
 """
 
+import asyncio
 import os
 import secrets
 from pathlib import Path
@@ -176,7 +177,12 @@ async def api_reload():
     from app.refresh import RefreshInProgress, _exclusive
     try:
         async with _exclusive("reload"):
-            return data.reload()
+            # data.reload() re-parses both JSONL files synchronously. This
+            # endpoint had to become a coroutine to hold the async lock, which
+            # took it out of the threadpool FastAPI runs `def` handlers in — so
+            # without to_thread the parse would block the event loop and stall
+            # every concurrent request for its duration.
+            return await asyncio.to_thread(data.reload)
     except RefreshInProgress as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 

@@ -85,6 +85,9 @@ class TestMoodSourceRankPrecedence:
     """
 
     SOURCES = ["manual", "audit", "claude_batch", "centroid", "inherited", None]
+    # Spelled out rather than derived from MOOD_CURATED_MIN_RANK so that moving
+    # the threshold has to be a deliberate edit here too.
+    CURATED_SOURCES = frozenset({"manual", "audit", "claude_batch"})
 
     def _row(self, source, tags, confidence="high", distance=0.1):
         return {
@@ -107,7 +110,16 @@ class TestMoodSourceRankPrecedence:
         existing_rank = MOOD_SOURCE_RANK.get(existing_source, 0)
         new_rank = MOOD_SOURCE_RANK.get(new_source, 0)
 
-        if existing_rank > new_rank:
+        if new_source is None:
+            # A row arriving with no source is Phase 6 declining to label it.
+            # Rank alone would hand the row back to any ranked existing source;
+            # only a curated one may override a decline. See
+            # TestNullMoodVerdict for the case that matters in practice.
+            existing_wins = existing_source in self.CURATED_SOURCES
+        else:
+            existing_wins = existing_rank > new_rank
+
+        if existing_wins:
             winner, tags = existing, ["Existing"]
         else:
             # Ties and new-wins both resolve to the fresh row — ties are
@@ -146,6 +158,75 @@ class TestMoodSourceRankPrecedence:
         merged = _merge_with_existing(new, existing)
         assert merged["genres"] == ["jazz"]
         assert merged["mood_source"] == "audit"
+
+
+class TestNullMoodVerdict:
+    """A null mood from Phase 6 is a verdict, not a gap (CLAUDE.md): the
+    classifier declines where audio features can't support a label, and that
+    blank must survive the Phase 8 merge.
+
+    Ranking the sources alone reopened the hole `_AUTHORITATIVE_NULL_FIELDS`
+    exists to close — every ranked source outranks a rank-0 ``None``, so a
+    stale ``centroid`` guess was written straight back over the withdrawal.
+    A decline has to clear machine guesses while still losing to the owner's
+    own labelling.
+    """
+
+    def _declined(self) -> dict:
+        """What classify_moods emits for a row it won't label: the whole
+        bundle explicitly nulled."""
+        return {
+            "artist": "x", "track": "y",
+            "mood_tags": None, "mood_source": None,
+            "mood_confidence": None, "mood_distance": None,
+        }
+
+    def _labelled(self, source: str) -> dict:
+        return {
+            "artist": "x", "track": "y",
+            "mood_tags": ["Sad", "Slow"], "mood_source": source,
+            "mood_confidence": "high", "mood_distance": 0.05,
+        }
+
+    @pytest.mark.parametrize("existing_source", ["centroid", "inherited"])
+    def test_decline_clears_a_machine_guess(self, existing_source: str) -> None:
+        merged = _merge_with_existing(self._declined(), self._labelled(existing_source))
+
+        assert merged["mood_tags"] is None
+        assert merged["mood_source"] is None
+        assert merged["mood_confidence"] is None
+        assert merged["mood_distance"] is None
+
+    @pytest.mark.parametrize("existing_source", ["manual", "audit", "claude_batch"])
+    def test_decline_never_erases_a_curated_label(self, existing_source: str) -> None:
+        merged = _merge_with_existing(self._declined(), self._labelled(existing_source))
+
+        assert merged["mood_tags"] == ["Sad", "Slow"]
+        assert merged["mood_source"] == existing_source
+        assert merged["mood_confidence"] == "high"
+        assert merged["mood_distance"] == 0.05
+
+    def test_decline_over_a_decline_stays_null(self) -> None:
+        merged = _merge_with_existing(self._declined(), self._declined())
+        assert merged["mood_tags"] is None
+        assert merged["mood_source"] is None
+
+    @pytest.mark.parametrize("existing_source", ["audit", "centroid"])
+    def test_intermediate_without_the_bundle_leaves_mood_alone(
+        self, existing_source: str
+    ) -> None:
+        """An intermediate that never ran through Phase 6 omits the mood keys
+        entirely. Absence is not a decline — it says nothing about mood, so the
+        existing bundle must survive untouched whatever produced it."""
+        new = {"artist": "x", "track": "y", "genres": ["jazz"]}
+
+        merged = _merge_with_existing(new, self._labelled(existing_source))
+
+        assert merged["mood_tags"] == ["Sad", "Slow"]
+        assert merged["mood_source"] == existing_source
+        assert merged["mood_confidence"] == "high"
+        assert merged["mood_distance"] == 0.05
+        assert merged["genres"] == ["jazz"]
 
 
 class TestEnrichmentSources:

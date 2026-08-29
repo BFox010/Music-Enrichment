@@ -34,7 +34,8 @@ TASTE_PROFILE_PATH: Path = REPO_ROOT / "taste_profile.md"
 # ── Canonical mood training labels (#66) — git-tracked, always the default for
 # Phase 6. inputs/existing_audit.csv (below) is a gitignored legacy copy that is
 # never authoritative; where the two disagree, this file wins.
-MOOD_AUDIT_PATH: Path = REPO_ROOT / "mood_audit.csv"
+MOOD_AUDIT_FILENAME: str = "mood_audit.csv"
+MOOD_AUDIT_PATH: Path = REPO_ROOT / MOOD_AUDIT_FILENAME
 
 # ── Directories ──
 RUNS_DIR: Path = REPO_ROOT / "runs"
@@ -87,6 +88,13 @@ MOOD_SOURCE_RANK: dict[str | None, int] = {
     "manual": 5, "audit": 4, "claude_batch": 3, "centroid": 2,
     "inherited": 1, None: 0,
 }
+# Sources at or above this rank are curated judgements — a person's, or an LLM
+# pass a person commissioned and reviewed. Below it are machine guesses derived
+# from audio features. The split matters because Phase 6 declining to label a
+# row (mood_source None) is itself a machine verdict: it must clear a stale
+# machine guess but never erase a curated label. See
+# update_tracks._merge_with_existing.
+MOOD_CURATED_MIN_RANK: int = MOOD_SOURCE_RANK["claude_batch"]
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
 AUDIO_FEATURE_SOURCES: tuple[str, ...] = ("exportify", "reccobeats")

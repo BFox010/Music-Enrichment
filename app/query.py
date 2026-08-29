@@ -32,7 +32,8 @@ MIN_TRACK_FIELDS: tuple[str, ...] = (
     "apple_music_available", "enrichment_sources", "saturation_tier", "playlists",
     # join keys for the client-side scrobble cross-join — identity_aliases lets
     # the browser join a scrobble logged under a historical artist credit the
-    # same way app.metrics._track_index() does server-side (F-03).
+    # same way app.metrics._track_index() does server-side (F-03). Pruned by
+    # _projected_aliases() before it ships.
     "artist_normalized", "track_normalized", "identity_aliases",
 )
 
@@ -43,6 +44,36 @@ _MIN_AUDIO_FEATURES: tuple[str, ...] = (
 )
 
 
+def _projected_aliases(row: dict) -> list[list[str]]:
+    """``identity_aliases`` minus the entries the browser cannot learn anything
+    from: any pair equal to the row's own normalized key, and any repeat.
+
+    Phase 4e writes a self-alias on every row, so shipping the field verbatim
+    put a second copy of each track's own identity into the payload every client
+    downloads on first paint — nearly the entire cost of the field, for zero
+    resolution difference: buildTrackIndex() registers the primary key itself,
+    and at higher precedence than any alias.
+    """
+    own = (
+        str(row.get("artist_normalized") or "").lower().strip(),
+        str(row.get("track_normalized") or "").lower().strip(),
+    )
+    seen = {own}
+    out: list[list[str]] = []
+    for alias in row.get("identity_aliases") or []:
+        if not isinstance(alias, (list, tuple)) or len(alias) != 2:
+            continue
+        key = (
+            str(alias[0] or "").lower().strip(),
+            str(alias[1] or "").lower().strip(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append([key[0], key[1]])
+    return out
+
+
 def project_min_track(row: dict) -> dict:
     """Project a full track row down to the fields the browser renders.
 
@@ -51,6 +82,13 @@ def project_min_track(row: dict) -> dict:
     drops the long id strings from the payload.
     """
     out: dict[str, Any] = {k: row[k] for k in MIN_TRACK_FIELDS if k in row}
+    # Omitted entirely when nothing survives the prune — true for most rows, and
+    # the client treats a missing field exactly like an empty list.
+    aliases = _projected_aliases(row)
+    if aliases:
+        out["identity_aliases"] = aliases
+    else:
+        out.pop("identity_aliases", None)
     af = row.get("audio_features")
     if isinstance(af, dict):
         out["audio_features"] = {
