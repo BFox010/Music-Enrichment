@@ -354,25 +354,28 @@ def derive_genres_for_track(track: dict) -> list[str]:
 
 
 def _pick_input() -> Path:
-    """Deepest existing input, skipping one left behind by an earlier run.
+    """Deepest existing input, skipping a Discogs file an earlier run left behind.
 
-    Phase 4b writes its output from the same Phase 4 file this phase falls back
-    to, so if the Discogs file is older than the metadata file, 4b did not run
-    this time — reading it would re-derive genres from tags fetched days ago and
-    drop every track ingested since.
+    The staleness check is deliberately limited to the 4b/4 pair. 4b writes its
+    output from the same Phase 4 file this phase falls back to, so a Discogs file
+    older than the metadata file means 4b did not run this time and reading it
+    would re-derive genres from tags fetched days ago, dropping every track
+    ingested since. Generalizing the rule to "newest wins" would be worse than
+    the bug: re-running phases 1-2 and resuming here makes the *skeleton* the
+    newest file, and deriving genres from it would see no tags at all.
     """
     existing = [p for p in _INPUT_PRIORITY if p.exists()]
     if not existing:
         return DEFAULT_INPUT
     chosen = existing[0]
-    freshest = max(p.stat().st_mtime for p in existing)
-    if chosen.stat().st_mtime < freshest:
-        newer = next(p for p in existing if p.stat().st_mtime == freshest)
-        log.warning(
-            "%s is older than %s — an earlier run left it behind. Using %s.",
-            chosen.name, newer.name, newer.name,
-        )
-        chosen = newer
+    if chosen == TRACKS_WITH_DISCOGS_PATH and TRACKS_WITH_METADATA_PATH.exists():
+        if chosen.stat().st_mtime < TRACKS_WITH_METADATA_PATH.stat().st_mtime:
+            log.warning(
+                "%s is older than %s — Phase 4b did not run this time. Using %s.",
+                chosen.name, TRACKS_WITH_METADATA_PATH.name,
+                TRACKS_WITH_METADATA_PATH.name,
+            )
+            chosen = TRACKS_WITH_METADATA_PATH
     return chosen
 
 

@@ -110,3 +110,37 @@ class TestCommittedAudit:
             key = (a["artist_normalized"], a["track_normalized"])
             seen[key] = seen.get(key, 0) + 1
         assert [k for k, n in seen.items() if n > 1] == []
+
+
+class TestIdentifierNormalization:
+    """Identifiers are compared as plain strings everywhere — 4e clusters on
+    them, `compute_canonical_track_id` keys on them, Phase 5b looks a provider's
+    upper-cased answer back up by them. A code that differs only in case is a
+    second identity for one recording, and nothing errors: the row just fails to
+    cluster and never resolves audio features.
+
+    Seven rows in the committed library carried a lower-case ISRC when this was
+    written; they were repaired in the same change.
+    """
+
+    def test_every_isrc_is_upper_case_and_stripped(self) -> None:
+        if not TRACKS_PATH.exists():
+            pytest.skip("committed tracks.jsonl not present")
+        offenders = [
+            (t["artist"], t["track"], t["isrc"])
+            for t in read_jsonl(TRACKS_PATH)
+            if isinstance(t.get("isrc"), str) and t["isrc"] != t["isrc"].strip().upper()
+        ]
+        assert offenders == [], f"{len(offenders)} unnormalized ISRCs: {offenders[:5]}"
+
+    def test_no_two_rows_share_an_isrc(self) -> None:
+        """One ISRC is one recording. Two rows holding it means 4e failed to
+        cluster them, and their plays are split across both."""
+        if not TRACKS_PATH.exists():
+            pytest.skip("committed tracks.jsonl not present")
+        seen: dict[str, list[str]] = {}
+        for t in read_jsonl(TRACKS_PATH):
+            if t.get("isrc"):
+                seen.setdefault(t["isrc"], []).append(f"{t['artist']} — {t['track']}")
+        shared = {k: v for k, v in seen.items() if len(v) > 1}
+        assert shared == {}, f"{len(shared)} ISRCs held by more than one row"

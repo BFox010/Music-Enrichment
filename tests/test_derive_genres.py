@@ -190,11 +190,14 @@ class TestInputSelection:
     def _redirect(self, monkeypatch, tmp: Path) -> None:
         import pipeline.derive_genres as dg
 
+        discogs = tmp / "tracks_with_discogs.jsonl"
+        metadata = tmp / "tracks_with_metadata.jsonl"
         monkeypatch.setattr(dg, "_INPUT_PRIORITY", [
-            tmp / "tracks_with_discogs.jsonl",
-            tmp / "tracks_with_metadata.jsonl",
+            discogs, metadata, tmp / "tracks_skeleton.jsonl",
         ])
-        monkeypatch.setattr(dg, "DEFAULT_INPUT", tmp / "tracks_with_discogs.jsonl")
+        monkeypatch.setattr(dg, "DEFAULT_INPUT", discogs)
+        monkeypatch.setattr(dg, "TRACKS_WITH_DISCOGS_PATH", discogs)
+        monkeypatch.setattr(dg, "TRACKS_WITH_METADATA_PATH", metadata)
 
     def test_falls_back_to_metadata_when_discogs_is_absent(
         self, monkeypatch, tmp_path
@@ -233,3 +236,19 @@ class TestInputSelection:
         derive(input_path=chosen, output_path=out)
         row = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
         assert row["genres"] == ["Jazz"]
+
+    def test_a_fresher_skeleton_never_wins(self, monkeypatch, tmp_path) -> None:
+        """Re-running phases 1-2 and resuming here makes the skeleton the newest
+        file. Deriving genres from it would see no tags at all — the staleness
+        rule is scoped to the 4b/4 pair precisely so it cannot do that."""
+        self._redirect(monkeypatch, tmp_path)
+        self._write(tmp_path / "tracks_with_metadata.jsonl",
+                    [{"artist": "A", "track": "T", "lastfm_tags": ["rap"]}])
+        self._write(tmp_path / "tracks_skeleton.jsonl",
+                    [{"artist": "A", "track": "T"}])
+        os.utime(tmp_path / "tracks_with_metadata.jsonl",
+                 (1_600_000_000, 1_600_000_000))
+
+        out = tmp_path / "out.jsonl"
+        stats = derive(output_path=out)
+        assert stats["with_genres"] == 1, "fell through to the tag-less skeleton"
