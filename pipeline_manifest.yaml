@@ -164,6 +164,10 @@ phases:
     module: pipeline.derive_genres
     callable: derive
     inputs:
+      # 4b is optional (it needs a DISCOGS_TOKEN); this phase is not. When 4b
+      # drops out, derive() falls back through tracks_with_metadata.jsonl the
+      # way its sibling phases do, and skips a discogs file an earlier run left
+      # behind rather than re-deriving from stale tags.
       - tracks_with_discogs.jsonl
     outputs:
       - tracks_with_genres.jsonl

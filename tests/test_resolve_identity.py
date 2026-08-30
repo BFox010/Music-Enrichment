@@ -531,3 +531,37 @@ class TestCommittedLibraryHasNoResidualSplits:
                 else:
                     seen[key] = row.get("track")
         assert not dupes, f"{len(dupes)} unresolved credit-variant split(s): {dupes[:5]}"
+
+
+class TestMergedRowKeepsProvenance:
+    """A gap filled from another row in the cluster must bring its provenance.
+
+    An ISRC that arrives without its ``isrc_source`` reads as unknown
+    provenance on the next run — which ``_isrc_vetoes_merge`` treats as
+    decisive, so the merge this run made gets vetoed next run and the cluster
+    splits back apart, taking the summed play count with it.
+    """
+
+    def _cluster(self):
+        loud = _row("gorillaz", "DARE", play_count=100)
+        quiet = _row("gorillaz", "DARE (feat. Shaun Ryder)", play_count=5,
+                     isrc="GBAAA0000001", isrc_source="deezer",
+                     isrc_retrieved_at="2026-08-01")
+        return merge_cluster([loud, quiet])
+
+    def test_isrc_source_travels_with_the_isrc(self):
+        merged = self._cluster()
+        assert merged["isrc"] == "GBAAA0000001"
+        assert merged["isrc_source"] == "deezer"
+        assert merged["isrc_retrieved_at"] == "2026-08-01"
+
+    def test_mood_distance_follows_the_winning_mood(self):
+        loud = _row("artist", "song", play_count=100, mood_tags=["Fast"],
+                    mood_source="centroid", mood_confidence="medium",
+                    mood_distance=1.42)
+        quiet = _row("artist", "song (feat. someone)", play_count=5,
+                     mood_tags=["Sad"], mood_source="audit",
+                     mood_confidence="high", mood_distance=None)
+        merged = merge_cluster([loud, quiet])
+        assert merged["mood_source"] == "audit"
+        assert merged["mood_distance"] is None

@@ -149,6 +149,11 @@ def enrich(
         t for t in tracks
         if t.get("isrc") and (force != FORCE_OFF or not t.get("audio_features"))
     ]
+    # ReccoBeats echoes ISRCs upper-cased, and the resolve map is keyed that way;
+    # a row carrying a lower-case code (Exportify's CSV column, pre-#37) matched
+    # nothing and silently never got features.
+    for t in candidates:
+        t["isrc"] = t["isrc"].strip().upper()
     client.warn_if_forced(len(candidates))
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

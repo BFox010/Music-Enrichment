@@ -269,3 +269,24 @@ class TestMerge:
             assert stats["total"] == 3
             assert stats["matched"] == 1
             assert stats["match_rate"] == pytest.approx(33.33, rel=1e-2)
+
+
+class TestIsrcCasing:
+    """An ISRC is case-insensitive, but every consumer compares it as a string:
+    4e clusters on it, compute_canonical_track_id keys on it, and Phase 5b looks
+    ReccoBeats' upper-cased answer back up by it. A lower-case CSV value became a
+    second identity for the same recording."""
+
+    def test_lowercase_isrc_is_upper_cased(self) -> None:
+        block = parse_exportify_row({
+            "Track Name": "Roads",
+            "Artist Name(s)": "Portishead",
+            "ISRC": " gbabc9412345 ",
+        })
+        assert block["isrc"] == "GBABC9412345"
+
+    def test_missing_isrc_stays_none(self) -> None:
+        block = parse_exportify_row({
+            "Track Name": "Roads", "Artist Name(s)": "Portishead", "ISRC": "",
+        })
+        assert block["isrc"] is None

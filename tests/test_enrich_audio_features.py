@@ -191,3 +191,22 @@ class TestEnrichPersistsFeatures:
             features_by_id={"rb1": {"danceability": 0.5}},
         )
         assert "reccobeats" in rows["B"]["enrichment_sources"]
+
+
+class TestIsrcCaseIsNormalized:
+    """ReccoBeats echoes ISRCs upper-cased and the resolve map is keyed that way.
+
+    A row carrying a lower-case code — Exportify's CSV column before #37 — looked
+    up nothing and silently never got features.
+    """
+
+    def test_lowercase_row_isrc_still_resolves(self, monkeypatch, tmp_path) -> None:
+        stats, rows = TestEnrichPersistsFeatures._run(
+            monkeypatch, tmp_path,
+            [{"artist": "A", "track": "B", "isrc": "usabc1234567"}],
+            track_ids={"USABC1234567": "rb1"},
+            features_by_id={"rb1": {"danceability": 0.5}},
+        )
+        assert stats["resolved"] == 1
+        assert rows["B"]["audio_features"]["danceability"] == 0.5
+        assert rows["B"]["isrc"] == "USABC1234567"

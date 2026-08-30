@@ -592,6 +592,7 @@ def classify(
             track["mood_tags"] = audit_index[audit_hit]
             track["mood_source"] = "audit"
             track["mood_confidence"] = "high"
+            track["mood_distance"] = None
             matched_audit_keys.add(audit_hit)
             stats_out["audit_direct"] += 1
             continue
@@ -602,6 +603,7 @@ def classify(
             track["mood_tags"] = claude_tags
             track["mood_source"] = "claude_batch"
             track["mood_confidence"] = "high"
+            track["mood_distance"] = None
             stats_out["claude_overrides"] += 1
             continue
 
@@ -612,6 +614,7 @@ def classify(
             track["mood_tags"] = label["mood_tags"]
             track["mood_source"] = label["mood_source"]
             track["mood_confidence"] = label["mood_confidence"]
+            track["mood_distance"] = None
             stats_out["owner_preserved"] += 1
             continue
 
@@ -621,6 +624,7 @@ def classify(
             track["mood_tags"] = None
             track["mood_source"] = None
             track["mood_confidence"] = None
+            track["mood_distance"] = None
             stats_out["no_match"] += 1
             batch_for_claude.append(track)
             continue
@@ -635,12 +639,16 @@ def classify(
             track["mood_source"] = "centroid"
             track["mood_confidence"] = "medium"
             # Nearest-centroid distance, so the dashboard can show fit, not just presence.
+            # Every other branch clears it: it describes a centroid's fit, and a
+            # row relabelled from the audit would otherwise keep the distance an
+            # earlier centroid run measured for a guess that no longer stands.
             track["mood_distance"] = round(nearest, 4) if nearest is not None else None
             stats_out["classified_centroid"] += 1
         else:
             track["mood_tags"] = None
             track["mood_source"] = None
             track["mood_confidence"] = None
+            track["mood_distance"] = None
             stats_out["no_match"] += 1
             if af:  # no features ⇒ Claude can't classify it either
                 batch_for_claude.append(track)

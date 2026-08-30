@@ -104,3 +104,65 @@ def test_thin_page_is_not_actionable() -> None:
     })
     _fields, _resp, label = _lookup_with_variations(client, "key", track, frozenset())
     assert label == "strip_feat"
+
+
+# An MBID with no tags — the case #75 is about. Actionable under the old rule,
+# so it ended the cascade on exactly the rows whose tags were missing.
+MBID_ONLY = {"track": {"mbid": "mbid-123", "toptags": {"tag": []},
+                       "artist": {"mbid": "artist-1"}}}
+# Tags but no MBID.
+TAGS_ONLY = {"track": {"mbid": "", "toptags": {"tag": [{"name": "soul"}]}}}
+
+
+class TestAnMbidNoLongerSuppressesTheTagSearch:
+    """#75: retries continue while the tags are empty, whatever the MBID says.
+
+    Tags are what Phase 4c derives genres from, so a suppressed tag search shows
+    up as a genre gap, not just a tag gap.
+    """
+
+    def test_tags_from_a_variation_join_the_mbid_from_the_original(self) -> None:
+        track = _track("A$AP Rocky", "1 Train (feat. Many People)")
+        client = FakeClient({
+            ("A$AP Rocky", "1 Train (feat. Many People)"): MBID_ONLY,
+            ("A$AP Rocky", "1 Train"): TAGS_ONLY,
+        })
+        fields, _resp, label = _lookup_with_variations(client, "key", track, frozenset())
+
+        assert fields["musicbrainz_id"] == "mbid-123", "the original's MBID is kept"
+        assert fields["lastfm_tags"] == ["soul"], "the variation's tags are picked up"
+        assert label == "strip_feat"
+
+    def test_stops_as_soon_as_tags_land(self) -> None:
+        """Cost stays bounded: a row that already has tags does no extra lookups."""
+        track = _track("A$AP Rocky", "1 Train (feat. Many People)")
+        client = FakeClient({
+            ("A$AP Rocky", "1 Train (feat. Many People)"): TAGS_ONLY,
+        })
+        _fields, _resp, label = _lookup_with_variations(client, "key", track, frozenset())
+
+        assert label == "original"
+        assert len(client.calls) == 1
+
+    def test_mbid_only_everywhere_still_counts_as_a_match(self) -> None:
+        track = _track("A$AP Rocky", "1 Train (feat. Many People)")
+        client = FakeClient({
+            ("A$AP Rocky", "1 Train (feat. Many People)"): MBID_ONLY,
+        })
+        fields, resp, label = _lookup_with_variations(client, "key", track, frozenset())
+
+        assert fields["musicbrainz_id"] == "mbid-123"
+        assert fields["lastfm_tags"] == []
+        # Every variation was tried before giving up on the tags.
+        assert len(client.calls) > 1
+        assert label == "original"
+        assert resp == MBID_ONLY, "the original response classifies the outcome"
+
+    def test_an_mbid_recovered_by_a_variation_survives(self) -> None:
+        """The original answered nothing; a later query supplied the MBID."""
+        track = _track("A$AP Rocky", "1 Train (feat. Many People)")
+        client = FakeClient({("A$AP Rocky", "1 Train"): MBID_ONLY})
+        fields, _resp, _label = _lookup_with_variations(client, "key", track, frozenset())
+
+        assert fields["musicbrainz_id"] == "mbid-123"
+        assert fields["artist_mbid"] == "artist-1"

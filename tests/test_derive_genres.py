@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 from pathlib import Path
 
@@ -170,3 +171,84 @@ class TestDerivePhase:
             row = json.loads(out.read_text().splitlines()[0])
             assert "Rock" in row["genres"]
             assert "stale" not in row["genres"]
+
+
+class TestInputSelection:
+    """Phase 4c is required but its predecessor (4b Discogs) is optional.
+
+    Pinning the input to 4b's output halted every run made without a
+    DISCOGS_TOKEN, and — worse, where an old tracks_with_discogs.jsonl was still
+    lying around — silently re-derived genres from a stale file, dropping the
+    tags Phase 4 had just fetched and every track ingested since.
+    """
+
+    def _write(self, path: Path, rows: list[dict]) -> None:
+        path.write_text(
+            "".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8"
+        )
+
+    def _redirect(self, monkeypatch, tmp: Path) -> None:
+        import pipeline.derive_genres as dg
+
+        discogs = tmp / "tracks_with_discogs.jsonl"
+        metadata = tmp / "tracks_with_metadata.jsonl"
+        monkeypatch.setattr(dg, "_INPUT_PRIORITY", [
+            discogs, metadata, tmp / "tracks_skeleton.jsonl",
+        ])
+        monkeypatch.setattr(dg, "DEFAULT_INPUT", discogs)
+        monkeypatch.setattr(dg, "TRACKS_WITH_DISCOGS_PATH", discogs)
+        monkeypatch.setattr(dg, "TRACKS_WITH_METADATA_PATH", metadata)
+
+    def test_falls_back_to_metadata_when_discogs_is_absent(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        self._redirect(monkeypatch, tmp_path)
+        self._write(tmp_path / "tracks_with_metadata.jsonl",
+                    [{"artist": "A", "track": "T", "lastfm_tags": ["rap"]}])
+        out = tmp_path / "out.jsonl"
+        stats = derive(output_path=out)
+        assert stats["with_genres"] == 1
+        row = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+        assert row["genres"] == ["Hip-Hop / Rap"]
+
+    def test_stale_discogs_file_loses_to_a_fresher_metadata_file(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        stale = tmp_path / "tracks_with_discogs.jsonl"
+        fresh = tmp_path / "tracks_with_metadata.jsonl"
+        self._redirect(monkeypatch, tmp_path)
+        self._write(stale, [{"artist": "A", "track": "Old", "lastfm_tags": ["rock"]}])
+        self._write(fresh, [
+            {"artist": "A", "track": "Old", "lastfm_tags": ["rock"]},
+            {"artist": "A", "track": "New", "lastfm_tags": ["rap"]},
+        ])
+        os.utime(stale, (1_600_000_000, 1_600_000_000))
+
+        out = tmp_path / "out.jsonl"
+        stats = derive(output_path=out)
+        assert stats["total"] == 2, "the track ingested since the stale run was dropped"
+
+    def test_explicit_input_path_still_wins(self, monkeypatch, tmp_path) -> None:
+        self._redirect(monkeypatch, tmp_path)
+        chosen = tmp_path / "explicit.jsonl"
+        self._write(chosen, [{"artist": "A", "track": "T", "lastfm_tags": ["jazz"]}])
+        out = tmp_path / "out.jsonl"
+        derive(input_path=chosen, output_path=out)
+        row = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+        assert row["genres"] == ["Jazz"]
+
+    def test_a_fresher_skeleton_never_wins(self, monkeypatch, tmp_path) -> None:
+        """Re-running phases 1-2 and resuming here makes the skeleton the newest
+        file. Deriving genres from it would see no tags at all — the staleness
+        rule is scoped to the 4b/4 pair precisely so it cannot do that."""
+        self._redirect(monkeypatch, tmp_path)
+        self._write(tmp_path / "tracks_with_metadata.jsonl",
+                    [{"artist": "A", "track": "T", "lastfm_tags": ["rap"]}])
+        self._write(tmp_path / "tracks_skeleton.jsonl",
+                    [{"artist": "A", "track": "T"}])
+        os.utime(tmp_path / "tracks_with_metadata.jsonl",
+                 (1_600_000_000, 1_600_000_000))
+
+        out = tmp_path / "out.jsonl"
+        stats = derive(output_path=out)
+        assert stats["with_genres"] == 1, "fell through to the tag-less skeleton"
