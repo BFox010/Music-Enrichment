@@ -35,9 +35,14 @@ Two things look like playlist machinery but are not:
 2. **Markdown is truth for human judgement.** `taste_profile.md` is hand-edited
    and never written by the pipeline; JSONL is the derived index, regenerated
    each run.
-3. **Phase 1 is additive.** The owner's export is a partial pull ("today back to
-   the last pull"), so ingest merges and dedupes rather than overwriting. A write
-   that would leave fewer rows than are on disk is refused.
+3. **Phases 1 and 8 are additive.** The owner's export is a partial pull ("today
+   back to the last pull"), so ingest merges and dedupes rather than overwriting.
+   A write that would leave fewer rows than are on disk is refused
+   (`ScrobbleShrinkError`). Phase 8 has the same guard (`TrackShrinkError`): its
+   merge walks the *source* rows only, so a partial intermediate — the output of
+   a phase called with `limit=` — would otherwise rewrite `tracks.jsonl` short
+   and take every curated field on the dropped rows with it. Both take
+   `allow_shrink=True` for a deliberate shrink.
 4. **`canonical_track_id` is preserved by every phase.** No phase may drop or
    overwrite it. Identity priority: MusicBrainz recording MBID → ISRC →
    normalized artist+track → fallback hash. **Phase 4e sets it** — on every
@@ -136,9 +141,24 @@ under `npm test` (which CI runs) — add new ones to the `test` script in
 Every phase that touches an external API:
 
 - Caches every response — **successes and failures** — to `.cache/<api>.json`.
-- Expires negative entries: genuine `not_found` after 30 days, transient
-  (`max_retries`, `invalid_json`) after 6 hours. A network blip heals itself
-  instead of freezing a track's enrichment permanently.
+- Expires negative entries: stable negatives (`not_found`, `bad_request`)
+  after 30 days, transient ones (`auth_error`, `max_retries`, `invalid_json`)
+  after 6 hours. A network blip heals itself instead of freezing a track's
+  enrichment permanently. `auth_error` is transient on purpose: it is never
+  retried *within* a run, but the operator fixing the credential must take
+  effect on the next one, not in a month.
+- Fails fast on a deterministic 4xx. Only 429/408/425 and 5xx go round the
+  backoff ladder; a 400/401/403 is a property of the request or the credential,
+  so retrying it spends ~10 s per cache key to reach the same refusal. A 401/403
+  is logged once at ERROR — the useful signal is "the credential is dead".
+- Classifies **in-band** errors via `RateLimitedClient.get(..., classify=)`.
+  Deezer answers a rate-limited request with HTTP 200 and
+  `{"error": {"code": 4}}`, Last.fm with `{"error": 29}`. Cached on status alone
+  those bodies were stored as successes — which never expire — so one quota
+  burst froze the affected tracks until `--force`, and the caller read it as a
+  clean miss. `classify_lastfm` lives in `_http.py`; Deezer's is
+  `resolve_isrcs._classify_deezer`. **An API that signals failure in the body
+  needs a classifier, or its failures become permanent.**
 - Flushes its cache from a `finally`, so an interrupted run keeps every response
   it already paid for at the rate limit.
 - Honours `--force-errors` (re-fetch cached failures only) and `--force` (bypass
@@ -212,6 +232,24 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   `/api/lastfm/sync`, `/api/reload` need `X-Dashboard-Token`. The SPA fetches it
   from same-origin `GET /api/config`. Set `DASHBOARD_TOKEN` to keep it stable
   across restarts.
+- **`/tracks.min.jsonl` is served from memory, so its ETag comes from the
+  snapshot generation** — never from `tracks.jsonl`'s mtime+size. Deriving it
+  from the file let the two diverge: a CLI pipeline run with the server up moved
+  the file but not the snapshot, so a client got a fresh ETag with the stale
+  body and cached it, and the `/api/reload` that finally refreshed the snapshot
+  left the file untouched, so the revalidation 304'd. `/tracks.jsonl` is a
+  `FileResponse`, where ETag and body both come from disk, and is fine as is.
+- **The mutating routes are coroutines, so every blocking call inside them needs
+  `asyncio.to_thread`.** They had to become `async def` to hold the mutation
+  lock, which took them out of the threadpool FastAPI runs `def` handlers in —
+  so `data.reload()`, `ingest_from_records()` and `export_pending()` each stall
+  the whole event loop for their duration (~0.1-0.6 s on the committed data),
+  including the SPA's own `/api/lastfm/status` polling.
+- **Pin any new HTTP client's logger in `configure_logging`.** Root is set to
+  DEBUG with a FileHandler, Last.fm takes its API key as a *query parameter*,
+  and both `urllib3` and `httpx` log full request URLs. The first `/api/refresh`
+  installs this config in the uvicorn process, so an unpinned client writes the
+  key into `runs/*.log` from then on.
 - **No CORS middleware, deliberately.** The dashboard is same-origin; allowing
   all origins would let any site read the full listening history over the tunnel.
 - **An ECharts `force.repulsion` array is a `[min, max]` range, not per-node

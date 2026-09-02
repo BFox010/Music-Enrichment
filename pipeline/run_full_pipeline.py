@@ -298,7 +298,9 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = _parse_args(sys.argv[1:])
-    if args.start_from in ("1", "1") and not INPUT_LASTFM_EXPORT.exists():
+    # argparse always hands back a string, so the guard is a plain equality;
+    # it used to be `in ("1", "1")`, a two-slot tuple holding one value.
+    if args.start_from == "1" and not INPUT_LASTFM_EXPORT.exists():
         log.error("Last.fm export not found at %s — cannot start from Phase 1.",
                   INPUT_LASTFM_EXPORT)
         sys.exit(1)

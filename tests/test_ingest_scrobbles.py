@@ -478,3 +478,49 @@ class TestIntegrityAfterPartialExport:
             assert report["in_sync"], report["worst"]
             assert report["actual_total"] == 11
             assert report["unmatched_scrobbles"] == 0
+
+
+class TestReplaceModeDedupesWithinTheExport:
+    """The append branch drops a play the export repeats, via its ``seen`` set —
+    but that set only existed there. Under ``--replace`` the repeat was written
+    twice, and being on disk it then survived every later additive run.
+    """
+
+    def _write_and_read(self, tmp: Path, records: list[dict], mode: str) -> list[dict]:
+        out = tmp / "scrobbles.jsonl"
+        ingest_from_records(records, output_path=out, mode=mode)
+        return [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l.strip()]
+
+    def test_a_repeated_play_is_written_once(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            record = _make_record()
+            rows = self._write_and_read(Path(tmp), [record, dict(record)], "replace")
+            assert len(rows) == 1
+
+    def test_append_mode_is_unchanged(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            record = _make_record()
+            rows = self._write_and_read(Path(tmp), [record, dict(record)], "append")
+            assert len(rows) == 1
+
+    def test_distinct_plays_of_the_same_track_are_both_kept(self) -> None:
+        """Two genuine listens differ by timestamp — the key includes it, so
+        they must not collapse into one."""
+        with tempfile.TemporaryDirectory() as tmp:
+            rows = self._write_and_read(
+                Path(tmp),
+                [_make_record(uts="1730606040"), _make_record(uts="1705320000")],
+                "replace",
+            )
+            assert len(rows) == 2
+
+    def test_the_duplicate_does_not_outlive_a_later_append(self) -> None:
+        """The consequence that made this worth fixing: a duplicate written by a
+        --replace run is indistinguishable from history afterwards."""
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "scrobbles.jsonl"
+            record = _make_record()
+            ingest_from_records([record, dict(record)], output_path=out, mode="replace")
+            ingest_from_records([dict(record)], output_path=out, mode="append")
+            rows = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
+            assert len(rows) == 1

@@ -51,7 +51,7 @@ class FakeClient:
     def __init__(self, *_args, **_kwargs) -> None:
         pass
 
-    def get(self, _url: str, _params: dict, cache_key: str) -> dict:
+    def get(self, _url: str, _params: dict, cache_key: str, *, classify=None) -> dict:
         FakeClient.all_calls.append(cache_key)
         return FakeClient.responses.get(cache_key, NOT_FOUND)
 

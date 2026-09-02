@@ -166,9 +166,27 @@ def configure_logging(
 
     Closes any existing FileHandlers first so repeated calls (e.g. in tests)
     don't leak open handles on Windows.  Returns the path of the log file used.
+
+    With ``run_log_path=None`` an already-installed file handler is *kept* and
+    its path returned, rather than a fresh log being opened. Every phase entry
+    point calls this with its own ``None`` default, so under the orchestrator
+    the old behaviour tore down the full-run log the orchestrator had just
+    opened and replaced it once per phase: ``runs/full_run_<ts>.log`` ended up
+    holding only the header, each phase landed in a separate file, and the
+    summary block went to whichever file the last phase happened to open. In
+    the uvicorn process it also meant every /api/refresh reinstalled root
+    logging and leaked the previous handler until the next one. An explicit
+    path still reconfigures unconditionally, which is what tests rely on.
     """
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     if run_log_path is None:
+        existing = next(
+            (h for h in logging.getLogger().handlers
+             if isinstance(h, logging.FileHandler) and h.baseFilename),
+            None,
+        )
+        if existing is not None:
+            return Path(existing.baseFilename)
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d_%H%M%S")
         run_log_path = RUNS_DIR / f"{ts}.log"
 
@@ -210,6 +228,15 @@ def configure_logging(
                 # of times per run. Pinning it to INFO drops those lines and
                 # leaves the pipeline's own DEBUG output untouched.
                 "urllib3": {"level": "INFO"},
+                # Same leak, second transport. app/lastfm_sync.py talks to
+                # Last.fm over httpx, which logs "HTTP Request: GET <full url>"
+                # at INFO — key and all. The pipeline never used httpx, so the
+                # urllib3 pin above did not cover it; the app does, and the
+                # first /api/refresh installs this config (root=DEBUG + a
+                # FileHandler) in the *server* process, so every later sync
+                # wrote the key into runs/*.log and the console.
+                "httpx": {"level": "WARNING"},
+                "httpcore": {"level": "WARNING"},
             },
             "root": {"level": "DEBUG", "handlers": ["file", "console"]},
         }

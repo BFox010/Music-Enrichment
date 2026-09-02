@@ -39,7 +39,7 @@ _refresh_lock = asyncio.Lock()
 
 
 @contextlib.asynccontextmanager
-async def _exclusive(op_name: str) -> AsyncIterator[None]:
+async def exclusive_mutation(op_name: str) -> AsyncIterator[None]:
     """Fail fast with ``RefreshInProgress`` if another guarded operation holds
     the lock, instead of queuing behind it — a queued sync silently running
     minutes after the click that requested it would be more confusing than an
@@ -57,7 +57,7 @@ async def refresh() -> dict:
     ``RuntimeError`` if a phase genuinely fails — the cache is left untouched
     and nothing is exported, so a broken run can never masquerade as success.
     """
-    async with _exclusive("refresh"):
+    async with exclusive_mutation("refresh"):
         sync_stats = await lastfm_sync.sync(SCROBBLES_PATH)
 
         pipeline_results = await asyncio.to_thread(
@@ -72,8 +72,12 @@ async def refresh() -> dict:
             # Never export or reload off a broken run.
             raise RuntimeError("pipeline phases failed: " + ", ".join(failed))
 
-        pending_count = export_tunemymusic.export_pending()
-        cache_stats = data.reload()
+        # Both re-read multi-MB files from disk. refresh() is a coroutine, so
+        # calling them directly ran that I/O on the event loop and stalled every
+        # concurrent dashboard request for its duration — the same problem
+        # api_reload already solved with to_thread.
+        pending_count = await asyncio.to_thread(export_tunemymusic.export_pending)
+        cache_stats = await asyncio.to_thread(data.reload)
 
     return {
         "sync": sync_stats,

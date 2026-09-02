@@ -11,9 +11,10 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter, defaultdict
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from app.data import Snapshot, get_scrobbles, get_snapshot, get_tracks
+from pipeline.config import SEASON_BY_MONTH
 
 _COVERAGE_FIELDS: list[tuple[str, str]] = [
     ("genres", "genres"),
@@ -40,14 +41,6 @@ _YEAR_RE = re.compile(r"^\d{4}$")
 _MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 _SEASON_RE = re.compile(r"^(\d{4})-(winter|spring|summer|fall)$")
 _RANGE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}:\d{4}-\d{2}-\d{2}$")
-
-_SEASON_BY_MONTH: dict[int, str] = {
-    12: "winter", 1: "winter", 2: "winter",
-    3: "spring", 4: "spring", 5: "spring",
-    6: "summer", 7: "summer", 8: "summer",
-    9: "fall", 10: "fall", 11: "fall",
-}
-
 
 def _name_key(row: dict) -> tuple[str, str]:
     """Normalized artist/track pair — the join both files always share."""
@@ -107,34 +100,55 @@ def _lookup(index: dict[tuple[str, str], dict], scrobble: dict) -> Optional[dict
     return index.get(_name_key(scrobble))
 
 
-def in_window(scrobble: dict, window: Optional[str]) -> bool:
-    """Does a scrobble fall inside ``window``?
+def window_predicate(window: Optional[str]) -> Callable[[dict], bool]:
+    """Compile ``window`` once into a "does this scrobble fall inside it?" test.
 
     Forms: ``None``/``"all"``, ``"2025"``, ``"2025-03"``, ``"2025-summer"``,
     ``"2025-03-01:2025-06-30"``. Anything unrecognized matches everything, so a
     bad query degrades to "all time" rather than to an empty dashboard the reader
     would misread as "you listened to nothing".
+
+    Parsing up front rather than per scrobble: the callers below walk all 16.5k
+    scrobbles, and re-running up to four regex matches against the same constant
+    string on each of them cost ~10 ms of the 12-20 ms of ``tag_mass()`` — paid
+    twice per dashboard tab (/api/genres and /api/moods). The regexes are a
+    property of the *query*, not of the row.
     """
     if not window or window == "all":
-        return True
-    stamp = scrobble.get("scrobbled_at") or ""
+        return lambda s: True
 
     if _RANGE_RE.match(window):
         start, _, end = window.partition(":")
-        return bool(stamp) and start <= stamp[:10] <= end
+
+        def _range(s: dict) -> bool:
+            stamp = s.get("scrobbled_at") or ""
+            return bool(stamp) and start <= stamp[:10] <= end
+        return _range
+
     season = _SEASON_RE.match(window)
     if season:
-        month = scrobble.get("month")
-        return (
-            str(scrobble.get("year")) == season.group(1)
-            and month is not None
-            and _SEASON_BY_MONTH.get(month) == season.group(2)
-        )
+        year, name = season.group(1), season.group(2)
+
+        def _season(s: dict) -> bool:
+            month = s.get("month")
+            return (
+                str(s.get("year")) == year
+                and month is not None
+                and SEASON_BY_MONTH.get(month) == name
+            )
+        return _season
+
     if _MONTH_RE.match(window):
-        return stamp[:7] == window
+        return lambda s: (s.get("scrobbled_at") or "")[:7] == window
     if _YEAR_RE.match(window):
-        return str(scrobble.get("year")) == window
-    return True   # unrecognized ⇒ all time; see docstring
+        return lambda s: str(s.get("year")) == window
+    return lambda s: True   # unrecognized ⇒ all time; see docstring
+
+
+def in_window(scrobble: dict, window: Optional[str]) -> bool:
+    """One-shot form of ``window_predicate``. Fine for a single check; use the
+    predicate directly when testing many scrobbles against one window."""
+    return window_predicate(window)(scrobble)
 
 
 def tag_mass(
@@ -157,11 +171,12 @@ def tag_mass(
     """
     snap = get_snapshot()
     index = _track_index(snap)
+    matches = window_predicate(window)
     mass: Counter = Counter()
     plays = 0
     tagged = 0
     for s in snap.scrobbles:
-        if not in_window(s, window):
+        if not matches(s):
             continue
         plays += 1
         track = _lookup(index, s)
@@ -367,9 +382,11 @@ def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
     )
     for t in get_tracks():
         album = (t.get("album") or "").strip()
-        artist = t.get("artist")
+        artist = (t.get("artist") or "").strip()
         if not album or not artist:
             continue
+        # Both sides stripped: the album was, the artist was not, so a stray
+        # trailing space on one row's artist split its album in two.
         key = (artist.lower(), album.lower())
         plays = int(t.get("play_count") or 0)
         rec = by_album[key]
@@ -629,11 +646,12 @@ def tag_graph(
     # because it spans many tracks each heard once.
     snap = get_snapshot()
     index = _track_index(snap)
+    matches = window_predicate(window)
     tag_counts: Counter[str] = Counter()
     co_occur: Counter[tuple[str, str]] = Counter()
 
     for s in snap.scrobbles:
-        if not in_window(s, window):
+        if not matches(s):
             continue
         track = _lookup(index, s)
         if not track:
