@@ -721,7 +721,13 @@ function App() {
 
         {/* ── PAGE: Tag Constellation ─────────────────────────────── */}
         <div style={{ display: page === "constellation" ? "" : "none" }}>
-          {TagConstellation && <TagConstellation active={page === "constellation"} />}
+          {TagConstellation && (
+            <TagConstellation
+              active={page === "constellation"}
+              refreshVersion={refreshVersion}
+              onExplore={(kind, val) => { setFilterValue(kind, val); goPage("explorer"); }}
+            />
+          )}
         </div>
 
         {/* ── PAGE: Genre & Moods ─────────────────────────────────── */}

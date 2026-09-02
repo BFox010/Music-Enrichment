@@ -124,10 +124,12 @@ npm run dev                           # same, watch mode
 `web/app.bundle.js`.** There is no in-browser transpile — an un-rebuilt bundle
 means your change simply does not appear.
 
-`web/data-processing.js` and `web/data-worker.js` are **not** part of the bundle.
-They are plain JS holding the pure transforms, loaded as globals before the
-bundle so a Web Worker can `importScripts` the same code. Edit directly; no
-rebuild needed.
+`web/data-processing.js`, `web/graph-layout.js` and `web/data-worker.js` are
+**not** part of the bundle. They are plain JS holding the pure transforms,
+loaded as globals before the bundle so a Web Worker can `importScripts` the
+same code. Edit directly; no rebuild needed. Their `node --test` suites run
+under `npm test` (which CI runs) — add new ones to the `test` script in
+`package.json`, it names each file.
 
 ## Enrichment phase contract
 
@@ -212,6 +214,27 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   across restarts.
 - **No CORS middleware, deliberately.** The dashboard is same-origin; allowing
   all origins would let any site read the full listening history over the tunnel.
+- **An ECharts `force.repulsion` array is a `[min, max]` range, not per-node
+  values.** `forceLayout.js` does `isArray(repulsion) ? repulsion : [r, r]` and
+  then `linearMap(value, extent, arr)`, reading only elements 0 and 1. Passing
+  one entry per node silently turns into the range `[first, second]` — the Tag
+  Constellation used to pass 105 of them and got an inverted, near-uniform
+  repulsion across the whole graph. Same for `edgeLength`.
+- **Any `setOption` on a live `layout: "force"` graph restarts the physics.**
+  ECharts rebuilds the force instance on every layout pass and re-reads
+  `friction` from the option, so a camera patch, a restyle, or a highlight all
+  re-heat a settled graph for another ~7s. This is why the constellation
+  settles in `graph-layout.js` and renders frozen with `layout: "none"`; don't
+  reintroduce a running force layout to get motion (there is a Shake button).
+- **A `layout: "none"` graph is already fitted by ECharts, at 80% scale.**
+  `chart/graph/createView.js` maps the bounding box of the nodes' own x/y onto
+  an aspect-matched rect inside the card, and `getLayoutRect` sizes that rect
+  at 80% of the binding dimension when it derives one from an aspect. So
+  `zoom: 1` is a fit with a wide margin, and computing a canvas-relative zoom
+  as well multiplies the two together — that drew the whole graph at a quarter
+  size in the middle of an empty card. `fitCamera()` returns framing only.
+  Note also that graph symbols scale by `(zoom-1) * nodeScaleRatio + 1`, not by
+  zoom, so changing the framing changes how big the nodes look.
 
 ## Open audits
 

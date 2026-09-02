@@ -787,160 +787,469 @@ function AlbumsPage({ active, tracks }) {
   );
 }
 
-/* ── Tag Constellation (force graph) ── */
-function TagConstellation({ active }) {
+/* ── Tag Constellation (settled graph) ──
+
+   The layout is computed to convergence up front by web/graph-layout.js and
+   the chart then renders it frozen: `layout: "none"` with an explicit x/y on
+   every node, framed in the same setOption as the data.
+
+   It used to run ECharts' force layout live and indefinitely. Live physics is
+   what produced all three of the complaints against this view:
+
+   - It rendered at zoom 1 while the springs pushed the cluster to about twice
+     the canvas width, so the first second showed the middle of a cloud until a
+     deferred fit snapped to ~0.27 — the "pop". Worse, that fit was itself a
+     setOption, which rebuilds the force instance and resets friction, so the
+     fit restarted a seven-second settle.
+   - ECharts springs are positional constraints that close 40% of their length
+     error every step, while repulsion at edge distance is ~75x weaker. With
+     715 edges over 105 nodes the graph was an over-constrained truss whose
+     only anchor was gravity to the centre, so it could rotate for free:
+     dragging one node moved the median other node 152px, non-neighbours
+     included. And every drag called warmUp(), re-heating the whole graph for
+     another seven seconds and pulling the dragged node back into the truss.
+   - Any selection styling has to go through setOption, which re-heated the
+     simulation, so a sticky highlight could not hold still.
+
+   Frozen, a drag moves exactly one node and its own edges, a restyle is only a
+   restyle, and the first painted frame is already framed. The bounce is now
+   the "Shake" button, which is the only place physics still runs. */
+
+const CONSTELLATION_FIELDS = [
+  ["discogs_styles", "Styles"],
+  ["mood_tags",      "Moods"],
+  ["lastfm_tags",    "Genres"],
+];
+
+/* min_count is a play-count floor, so one number means very different
+   densities per field — 15 plays keeps 105 Discogs styles but 229 Last.fm
+   tags, and the dense end of Genres is where the settle starts to cost real
+   time. Per-field presets rather than the single hardcoded cut-off. */
+const CONSTELLATION_DENSITY = {
+  discogs_styles: { sparse: 30, normal: 15, dense: 8 },
+  lastfm_tags:    { sparse: 40, normal: 20, dense: 12 },
+  mood_tags:      { sparse: 1,  normal: 1,  dense: 1 },
+};
+const CONSTELLATION_LEVELS = [["sparse", "Sparse"], ["normal", "Normal"], ["dense", "Dense"]];
+
+/* The explorer's `tag` filter matches a track's Last.fm tags OR its Discogs
+   styles (dashboard.jsx), so both of those fields can hand it a filter. */
+const CONSTELLATION_FILTER_KIND = { discogs_styles: "tag", lastfm_tags: "tag", mood_tags: "mood" };
+
+/* Nodes labelled by play count when nothing is selected. A selection labels
+   itself and its neighbours instead. */
+const CONSTELLATION_LABELS = 30;
+
+/* The page is hidden with display:none rather than unmounted, but the fetch
+   and settle still repeated on every visit — throwing away any arrangement the
+   owner had untangled. Cached per `${field}:${minCount}`, and dropped when a
+   refresh rewrites the scrobbles underneath it, like Timeline/Trajectory. */
+const __constellationState = { ver: 0, byKey: {} };
+
+const constNum = (x) => (x || 0).toLocaleString();
+
+/* Settle off the main thread when we can: data-worker.js importScripts the
+   same graph-layout.js, so the worker runs the identical deterministic
+   settle. The inline path is the fallback where Worker is unavailable or the
+   worker errors. Returns a cancel function. */
+function settleGraph(nodes, edges, size, done) {
+  const opts = { width: size.width, height: size.height };
+  let cancelled = false;
+  let worker = null;
+  const inline = () => { if (!cancelled) done(settleLayout(nodes, edges, opts)); };
+  const cancel = () => { cancelled = true; if (worker) worker.terminate(); };
+  if (typeof Worker === "undefined") { inline(); return cancel; }
+  try {
+    worker = new Worker("data-worker.js");
+  } catch (e) {
+    inline();
+    return cancel;
+  }
+  worker.onmessage = (e) => {
+    worker.terminate();
+    if (cancelled) return;
+    const m = e.data || {};
+    if (m.ok && m.positions) done(new Map(m.positions));
+    else inline();
+  };
+  worker.onerror = () => { worker.terminate(); inline(); };
+  worker.postMessage({ kind: "graph-layout", nodes, edges, opts });
+  return cancel;
+}
+
+/* Neighbours of the selected tag, heaviest shared play count first. */
+function ConstellationPanel({ view, field, selected, onSelect, onExplore }) {
+  if (!view || !view.nodes.length) return null;
+  const links = selected ? (view.adj.get(selected) || []) : null;
+  if (!links) {
+    return (
+      <aside className="tag-panel">
+        <p className="tag-panel-hint">Click a tag to see what it travels with. Drag to rearrange — nodes stay where you put them.</p>
+      </aside>
+    );
+  }
+  const top = links.slice(0, 14);
+  const max = top[0] ? top[0].weight : 1;
+  const kind = CONSTELLATION_FILTER_KIND[field];
+  return (
+    <aside className="tag-panel">
+      <div className="tag-panel-head">
+        <h4>{selected}</h4>
+        <span>{constNum(view.counts.get(selected))} plays · {links.length} link{links.length === 1 ? "" : "s"}</span>
+      </div>
+      {top.length ? (
+        <ol className="tag-nbrs">
+          {top.map((n) => (
+            <li key={n.tag}>
+              <button type="button" onClick={() => onSelect(n.tag)} title={`${n.tag} — ${constNum(n.weight)} shared plays`}>
+                <span className="tag-nbr-bar" style={{ width: `${Math.max(4, (n.weight / max) * 100)}%` }} />
+                <span className="tag-nbr-name">{n.tag}</span>
+                <span className="tag-nbr-val">{constNum(n.weight)}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="tag-panel-hint">Nothing else was heard alongside this one.</p>
+      )}
+      {onExplore && kind && (
+        <button type="button" className="icon-btn tag-panel-filter" onClick={() => onExplore(kind, selected)}>
+          Filter library by this tag
+        </button>
+      )}
+    </aside>
+  );
+}
+
+function TagConstellation({ active, refreshVersion = 0, onExplore }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [field, setField] = useState("discogs_styles");
-  const [loading, setLoading] = useState(true);
+  const [level, setLevel] = useState("normal");
+  const [showWeak, setShowWeak] = useState(true);
+  const [selected, setSelected] = useState(null);
+  const [view, setView] = useState(null);
+  const [busy, setBusy] = useState(true);
+  const [shaking, setShaking] = useState(false);
 
-  const FIELDS = [
-    ["discogs_styles", "Styles"],
-    ["mood_tags",      "Moods"],
-    ["lastfm_tags",    "Genres"],
-  ];
+  const minCount = CONSTELLATION_DENSITY[field][level];
+  const cacheKey = `${field}:${minCount}`;
 
+  // Chart event handlers outlive the render that registered them, so they read
+  // the live view and selection through refs rather than a stale closure.
+  const viewRef = useRef(null);
+  viewRef.current = view;
+  const selRef = useRef(null);
+  selRef.current = selected;
+  const weakRef = useRef(showWeak);
+  weakRef.current = showWeak;
+  // Once the owner has panned or zoomed, a window resize must not yank the
+  // camera back to the fit.
+  const roamedRef = useRef(false);
+  const shakeTimer = useRef(null);
+
+  const canvasSize = useCallback(() => {
+    const inst = chart.current;
+    const w = inst ? inst.getWidth() : 0;
+    const h = inst ? inst.getHeight() : 0;
+    // The card reports 0x0 while its page is display:none; the defaults match
+    // .echart-wrap.tall so a settle started then is still framed sensibly.
+    return (w > 10 && h > 10) ? { width: w, height: h } : { width: 1100, height: 620 };
+  }, [chart]);
+
+  /* Read every node's current position out of the chart — after a drag, and
+     after the shake's physics pass. ECharts exposes no chart-level dragend
+     (graphroam covers pan/zoom only), so a mouseup over a node is the signal.
+     Without this, the next restyle would re-send the pre-drag coordinates and
+     snap the node back. */
+  const snapshot = useCallback(() => {
+    const inst = chart.current;
+    const v = viewRef.current;
+    if (!inst || !v || !v.positions) return;
+    const gdata = inst.getModel().getSeriesByIndex(0)?.getData();
+    if (!gdata) return;
+    gdata.each((i) => {
+      const p = gdata.getItemLayout(i);
+      if (p && isFinite(p[0]) && isFinite(p[1])) v.positions.set(gdata.getName(i), [p[0], p[1]]);
+    });
+  }, [chart]);
+
+  /* One option builder for every path: the first paint, a selection restyle, a
+     weak-link toggle, and the shake's physics pass. `camera` frames the view
+     and is omitted on a merge so the owner's own pan and zoom survive a
+     restyle. `physics` is the shake, and the only time a force layout runs. */
+  const optionFor = useCallback((v, sel, weak, camera, physics) => {
+    const c = themeVars();
+    const maxCount = (v.nodes[0] && v.nodes[0].count) || 1;
+    const maxWeight = v.edges.reduce((m, e) => Math.max(m, e.weight), 1);
+    const near = sel ? new Set([sel, ...(v.adj.get(sel) || []).map((x) => x.tag)]) : null;
+
+    const nodeData = v.nodes.map((d, i) => {
+      const p = v.positions.get(d.tag) || [0, 0];
+      const isSel = d.tag === sel;
+      const lit = !near || near.has(d.tag);
+      const item = {
+        name: d.tag,
+        value: d.count,
+        x: p[0],
+        y: p[1],
+        symbolSize: Math.max(8, Math.sqrt(d.count / maxCount) * 40),
+        itemStyle: {
+          color: `hsl(${Math.round((i / Math.max(v.nodes.length - 1, 1)) * 260 + 200)}, 58%, 50%)`,
+          opacity: lit ? 1 : 0.12,
+        },
+        // With a selection, everything still lit is worth naming; without one,
+        // only the biggest, or the labels bury the graph.
+        label: {
+          show: lit && (!!sel || i < CONSTELLATION_LABELS),
+          fontSize: isSel ? 13 : 11,
+          fontWeight: isSel ? 600 : "normal",
+          color: lit ? c.text : c.muted,
+        },
+      };
+      if (isSel) {
+        item.itemStyle.borderColor = c.accent;
+        item.itemStyle.borderWidth = 3;
+      }
+      return item;
+    });
+
+    const edgeData = [];
+    for (const e of v.edges) {
+      const strong = v.backbone.has(e);
+      if (!strong && !weak) continue;
+      const base = Math.max(0.5, Math.log2(e.weight + 1) * 0.9);
+      let width = strong ? base : 0.5;
+      let opacity = strong ? 0.18 + (e.weight / maxWeight) * 0.32 : 0.06;
+      if (sel) {
+        if (e.source === sel || e.target === sel) {
+          width = base * 1.5;
+          opacity = 0.85;
+        } else {
+          opacity = 0.03;
+        }
+      }
+      edgeData.push({
+        source: e.source,
+        target: e.target,
+        value: e.weight,
+        // Only read during the shake, and only to keep the haze out of the
+        // physics — the same backbone the settle ran on.
+        ignoreForceLayout: !strong,
+        lineStyle: { width, opacity, color: "source", curveness: 0 },
+      });
+    }
+
+    const series = {
+      type: "graph",
+      layout: physics ? "force" : "none",
+      draggable: true,
+      roam: "move",
+      label: { show: false, formatter: "{b}" },
+      emphasis: {
+        scale: true,
+        focus: "adjacency",
+        label: { show: true, fontSize: 12, color: c.text },
+        lineStyle: { opacity: 0.85, width: 2 },
+      },
+      data: nodeData,
+      edges: edgeData,
+    };
+    if (physics) {
+      // Real two-element ranges. A per-node array here would not give per-node
+      // forces: forceLayout.js reads only elements 0 and 1 and treats them as
+      // the range, which is how the old code ended up with an inverted,
+      // near-uniform repulsion across the whole graph.
+      series.force = {
+        repulsion: GRAPH_LAYOUT_DEFAULTS.repulsion,
+        edgeLength: GRAPH_LAYOUT_DEFAULTS.edgeLength,
+        gravity: GRAPH_LAYOUT_DEFAULTS.gravity,
+        friction: GRAPH_LAYOUT_DEFAULTS.friction,
+        layoutAnimation: true,
+      };
+    }
+    if (camera) {
+      series.zoom = camera.zoom;
+      series.center = camera.center;
+      // Relative to the framed zoom, which is a margin rather than a scale
+      // (fitCamera): out to a third of the framing, in to eight times it.
+      series.scaleLimit = { min: camera.zoom / 3, max: camera.zoom * 8 };
+    }
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        // richText, not HTML: these strings are third-party tag names.
+        renderMode: "richText",
+        formatter: (p) => (p.dataType === "edge"
+          ? `${p.data.source} ↔ ${p.data.target}\n${constNum(p.data.value)} shared plays`
+          : `${p.data.name}\n${constNum(p.data.value)} plays`),
+        backgroundColor: c.panel,
+        borderColor: c.line,
+        textStyle: { color: c.text },
+      },
+      series: [series],
+    };
+  }, []);
+
+  /* Re-frame. Sends the current coordinates along with the camera because
+     ECharts derives a layout:"none" graph's own fit from the x/y in the
+     option, and a drag only writes to the item layout — without this the
+     framing would be computed from where the nodes used to be. */
+  const fitNow = useCallback(() => {
+    const inst = chart.current;
+    const v = viewRef.current;
+    if (!inst || !v || !v.nodes.length) return;
+    snapshot();
+    inst.setOption(optionFor(v, selRef.current, weakRef.current, fitCamera(v.positions)));
+    roamedRef.current = false;
+  }, [chart, optionFor, snapshot]);
+
+  /* Fetch, prune, settle. */
   useEffect(() => {
     if (!active) return;
-    setLoading(true);
-    let fitTimer = null;
-    let onWinResize = null;
-    let rafA = 0, rafB = 0;
-    let fitted = false;
-
-    // Read settled node positions and patch the view (zoom + center) so the
-    // bounding box of the cluster fills the canvas with margin. Layout stays
-    // "force" — physics keeps running, only the camera moves.
-    const fitView = () => {
-      const inst = chart.current;
-      if (!inst) return;
-      const cw = inst.getWidth(), ch = inst.getHeight();
-      if (cw < 10 || ch < 10) return;  // canvas not laid out yet — skip
-      const gdata = inst.getModel().getSeriesByIndex(0)?.getData();
-      if (!gdata || gdata.count() === 0) return;
-      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-      let ok = true;
-      gdata.each((idx) => {
-        const p = gdata.getItemLayout(idx);
-        if (!p || !isFinite(p[0]) || !isFinite(p[1])) { ok = false; return; }
-        if (p[0] < xMin) xMin = p[0]; if (p[0] > xMax) xMax = p[0];
-        if (p[1] < yMin) yMin = p[1]; if (p[1] > yMax) yMax = p[1];
-      });
-      if (!ok || !isFinite(xMin)) return;
-      const bw = xMax - xMin, bh = yMax - yMin;
-      if (bw <= 0 || bh <= 0) return;
-      const cxData = (xMin + xMax) / 2, cyData = (yMin + yMax) / 2;
-      const margin = 1.2;
-      const zoom = Math.min(cw / (bw * margin), ch / (bh * margin));
-      if (!isFinite(zoom) || zoom <= 0) return;
-      inst.setOption({ series: [{ zoom, center: [cxData, cyData] }] });
-      fitted = true;
-    };
-
-    const setupChart = (nodes, edges) => {
-      if (!chart.current) return;
-      chart.current.resize();
-      const c = themeVars();
-      const maxCount  = nodes[0]?.count || 1;
-      const maxWeight = edges.reduce((m, e) => Math.max(m, e.weight), 1);
-      const nodeColor = (i, n) =>
-        `hsl(${Math.round((i / Math.max(n - 1, 1)) * 260 + 200)}, 58%, 50%)`;
-      // Seed each node on a circle so the force sim starts from a 2-D spread
-      // instead of all-zero coords (which whip them across the screen). Radius
-      // is generous so the seeded ring already approximates the equilibrium
-      // spread the sim will produce. Centered on (0,0) because ECharts force
-      // gravity pulls nodes toward the origin regardless of where we seed them —
-      // matching that center keeps the initial view aligned with where the
-      // nodes will actually settle.
-      const cw = chart.current.getWidth(), ch = chart.current.getHeight();
-      const R = Math.min(cw, ch) * 0.46;
-
-      const symSize = (d) => Math.max(14, Math.sqrt(d.count / maxCount) * 72);
-      const nodeData = nodes.map((d, i) => {
-        const x = R * Math.cos((2 * Math.PI * i) / nodes.length);
-        const y = R * Math.sin((2 * Math.PI * i) / nodes.length);
-        return {
-          name: d.tag, value: d.count, x, y,
-          symbolSize: symSize(d),
-          itemStyle: { color: nodeColor(i, nodes.length) },
-          label: { show: d.count >= maxCount * 0.08, fontSize: 11, color: c.text },
-        };
-      });
-      const edgeData = edges.map((e) => ({
-        source: e.source, target: e.target, value: e.weight,
-        lineStyle: {
-          width: Math.max(0.5, Math.log2(e.weight + 1) * 0.9),
-          opacity: 0.18 + (e.weight / maxWeight) * 0.32,
-          color: "source", curveness: 0,
-        },
-      }));
-      chart.current.setOption({
-        backgroundColor: "transparent",
-        tooltip: {
-          formatter(p) {
-            if (p.dataType === "edge") return `<b>${p.data.source}</b> ↔ <b>${p.data.target}</b><br>${p.data.value} shared tracks`;
-            return `<b>${p.data.name}</b><br>${p.data.value} tracks`;
-          },
-          backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
-        },
-        series: [{
-          type: "graph", layout: "force",
-          center: [0, 0],  // align initial view with the (0,0) gravity well
-          // Per-node repulsion scaled with symbol area so big circles push
-          // harder than small ones — keeps the large hub nodes from sliding
-          // under each other while still letting small nodes pack in close.
-          force: {
-            // Per-node repulsion scales with symbol area so big circles push
-            // much harder than small ones — keeps the large hub nodes from
-            // sliding under each other while small nodes can still pack in.
-            repulsion: nodeData.map((n) => Math.min(4000, Math.max(420, n.symbolSize * n.symbolSize / 1.4))),
-            // edgeLength min larger than the biggest-pair diameter (~72) so
-            // even strongly connected hub pairs sit edge-to-edge, not overlapping.
-            gravity: 0.13, edgeLength: [150, 240],
-            layoutAnimation: true, friction: 0.4,
-          },
-          roam: true, draggable: true,
-          label: { show: false, formatter: "{b}" },
-          emphasis: { scale: true, focus: "adjacency",
-            label: { show: true, fontSize: 12, color: c.text },
-            lineStyle: { opacity: 0.85, width: 2 } },
-          data: nodeData,
-          edges: edgeData,
-        }],
-      }, true);
-
-      // One fit ~1.5s in, after the force sim has roughly settled. Layout stays
-      // "force", so nodes keep bouncing — only the camera moves.
-      fitTimer = setTimeout(fitView, 1500);
-      // Re-fit on window resize so framing follows the new canvas size.
-      onWinResize = () => { if (fitted) fitView(); };
-      window.addEventListener("resize", onWinResize);
-    };
-
-    const minCount = field === "mood_tags" ? 1 : 15;
+    if (__constellationState.ver !== refreshVersion) {
+      __constellationState.ver = refreshVersion;
+      __constellationState.byKey = {};
+    }
+    setSelected(null);
+    const cached = __constellationState.byKey[cacheKey];
+    if (cached) { setView(cached); setBusy(false); return; }
+    setView(null);
+    setBusy(true);
+    let stale = false;
+    let cancelSettle = null;
     fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then(({ nodes, edges }) => {
-        setLoading(false);
-        if (!chart.current || !nodes?.length) return;
-        // setLoading(false) flips the wrap from display:none to block, but the
-        // DOM update is async (React hasn't painted yet). Wait two animation
-        // frames so the wrap has real dimensions before we seed the layout —
-        // otherwise every node spawns at (0,0) and the view computes against
-        // a 0×0 canvas, producing zoom=0 and a blank chart.
-        rafA = requestAnimationFrame(() => {
-          rafB = requestAnimationFrame(() => setupChart(nodes, edges));
+        if (stale) return;
+        if (!nodes || !nodes.length) { setView({ nodes: [], edges: [] }); setBusy(false); return; }
+        // The physics backbone: every tag's strongest few links plus the
+        // heaviest tenth overall. The full edge set is a rigid truss — see the
+        // header — and three quarters of it is haze anyway.
+        const keepAbove = edgePercentile(edges, 0.9);
+        const backbone = pruneEdges(edges, { perNode: 3, keepAbove });
+        cancelSettle = settleGraph(nodes, backbone, canvasSize(), (positions) => {
+          if (stale) return;
+          const built = {
+            nodes, edges, positions,
+            adj: adjacency(nodes, edges),
+            backbone: new Set(backbone),
+            counts: new Map(nodes.map((d) => [d.tag, d.count])),
+          };
+          __constellationState.byKey[cacheKey] = built;
+          setView(built);
+          setBusy(false);
         });
       })
-      .catch(() => setLoading(false));
+      .catch(() => { if (!stale) { setView(null); setBusy(false); } });
+    return () => { stale = true; if (cancelSettle) cancelSettle(); };
+  }, [active, cacheKey, refreshVersion, field, minCount, canvasSize]);
+
+  /* Render frozen and framed, and wire the interactions. Listing chart.current
+     among the dependencies is what covers the cold load: useEChart bumps state
+     when ECharts finally arrives, so this runs again against a live instance
+     instead of having bailed out silently. */
+  useEffect(() => {
+    const inst = chart.current;
+    if (!active || !inst || !view || !view.nodes.length) return;
+    inst.resize();
+    const camera = fitCamera(view.positions);
+    inst.setOption(optionFor(view, selRef.current, weakRef.current, camera), true);
+    roamedRef.current = false;
+
+    const onClick = (p) => {
+      if (p.dataType === "node") {
+        setSelected((cur) => (cur === p.data.name ? null : p.data.name));
+      } else if (p.dataType === "edge") {
+        const v = viewRef.current;
+        const a = v.counts.get(p.data.source) || 0;
+        const b = v.counts.get(p.data.target) || 0;
+        setSelected(a >= b ? p.data.source : p.data.target);
+      }
+    };
+    const onMouseUp = (p) => { if (p.dataType === "node") snapshot(); };
+    const onRoam = () => { roamedRef.current = true; };
+    inst.on("click", onClick);
+    inst.on("mouseup", onMouseUp);
+    inst.on("graphroam", onRoam);
+
+    const zr = inst.getZr();
+    // A click that hit nothing clears the selection; a double-click that hit
+    // nothing re-frames. Node clicks reach here too, with a target set.
+    const onBlank = (e) => { if (!e.target) setSelected(null); };
+    const onBlankDbl = (e) => { if (!e.target) fitNow(); };
+    zr.on("click", onBlank);
+    zr.on("dblclick", onBlankDbl);
+
+    const onResize = () => { if (!roamedRef.current) fitNow(); };
+    window.addEventListener("resize", onResize);
 
     return () => {
-      if (fitTimer) clearTimeout(fitTimer);
-      if (rafA) cancelAnimationFrame(rafA);
-      if (rafB) cancelAnimationFrame(rafB);
-      if (onWinResize) window.removeEventListener("resize", onWinResize);
+      inst.off("click", onClick);
+      inst.off("mouseup", onMouseUp);
+      inst.off("graphroam", onRoam);
+      zr.off("click", onBlank);
+      zr.off("dblclick", onBlankDbl);
+      window.removeEventListener("resize", onResize);
     };
-  }, [active, field]);
+  }, [active, view, chart.current, optionFor, fitNow, snapshot]);
+
+  /* Selection and the weak-link toggle are a plain restyle: no camera, so the
+     merge leaves the owner's pan and zoom alone, and no layout pass, so
+     nothing moves. */
+  useEffect(() => {
+    const inst = chart.current;
+    if (!active || !inst || !view || !view.nodes.length) return;
+    inst.setOption(optionFor(view, selected, showWeak, null));
+  }, [active, view, selected, showWeak, chart.current, optionFor]);
+
+  useEffect(() => {
+    if (!active || !selected) return;
+    const onKey = (e) => { if (e.key === "Escape") setSelected(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, selected]);
+
+  useEffect(() => () => clearTimeout(shakeTimer.current), []);
+
+  const pickNeighbour = useCallback((tag) => {
+    setSelected(tag);
+    const inst = chart.current;
+    const v = viewRef.current;
+    const p = v && v.positions.get(tag);
+    if (inst && p) {
+      inst.setOption({ series: [{ center: [p[0], p[1]] }] });
+      roamedRef.current = true;
+    }
+  }, [chart]);
+
+  /* Hand the graph back to ECharts' force layout for a moment, then read the
+     result and refreeze. notMerge on the way in matters: a force pass leaves
+     `preservedPoints` on the series model, and a second shake would seed from
+     those rather than from where the nodes (and any drag since) actually are.
+     Rebuilding the series drops them, so the pass always starts from the
+     coordinates on screen. */
+  const shake = useCallback(() => {
+    const inst = chart.current;
+    const v = viewRef.current;
+    if (!inst || !v || !v.nodes.length || shakeTimer.current) return;
+    const opt = inst.getOption();
+    const cam = { zoom: opt.series[0].zoom, center: opt.series[0].center };
+    setShaking(true);
+    inst.setOption(optionFor(v, selRef.current, weakRef.current, cam, true), true);
+    shakeTimer.current = setTimeout(() => {
+      shakeTimer.current = null;
+      setShaking(false);
+      const live = chart.current;
+      if (!live) return;
+      snapshot();
+      const camera = fitCamera(v.positions);
+      live.setOption(optionFor(v, selRef.current, weakRef.current, camera), true);
+      roamedRef.current = false;
+    }, 1600);
+  }, [chart, optionFor, snapshot, canvasSize]);
+
+  const empty = !busy && (!view || !view.nodes.length);
 
   return (
     <section className="block">
@@ -949,16 +1258,48 @@ function TagConstellation({ active }) {
           <h3 className="card-title">Tag constellation</h3>
           <div style={cardTools}>
             <div className="seg" role="group">
-              {FIELDS.map(([v, l]) => (
+              {CONSTELLATION_FIELDS.map(([v, l]) => (
                 <button key={v} aria-pressed={field === v} onClick={() => setField(v)}>{l}</button>
               ))}
             </div>
-            <span className="card-meta">force graph</span>
+            <span className="card-meta">{view && view.nodes.length ? `${view.nodes.length} tags · ${view.edges.length} links` : "co-occurrence"}</span>
           </div>
         </div>
-        <p style={cardDesc}>Each node is a tag, sized by how many tracks carry it; links connect tags that share tracks. Drag nodes to untangle, scroll to zoom.</p>
-        <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
-        {loading && <ChartLoading height={560} />}
+        <p style={cardDesc}>Each node is a tag, sized by how many plays carry it; links connect tags heard on the same track. Click one to hold its connections, drag to rearrange — nodes stay where you put them.</p>
+        <div className="constellation-tools">
+          {field !== "mood_tags" && (
+            <div className="seg seg-sm" role="group" aria-label="Density">
+              {CONSTELLATION_LEVELS.map(([v, l]) => (
+                <button key={v} aria-pressed={level === v} onClick={() => setLevel(v)}>{l}</button>
+              ))}
+            </div>
+          )}
+          <button type="button" className="icon-btn" aria-pressed={showWeak} onClick={() => setShowWeak((w) => !w)}>
+            {showWeak ? "Hide weak links" : "Show weak links"}
+          </button>
+          <button type="button" className="icon-btn" onClick={fitNow}>Fit</button>
+          <button type="button" className="icon-btn" onClick={shake} disabled={shaking || busy}>
+            {shaking ? "Shaking…" : "Shake"}
+          </button>
+          {selected && <button type="button" className="icon-btn" onClick={() => setSelected(null)}>Clear selection</button>}
+        </div>
+        {empty ? (
+          <div className="empty"><div className="big">No tags yet</div><div>Nothing in the library carries enough plays at this density.</div></div>
+        ) : (
+          <div className="constellation">
+            <div className="constellation-stage">
+              <div className="echart-wrap tall" ref={elRef} />
+              {busy && <div className="constellation-busy">Settling…</div>}
+            </div>
+            <ConstellationPanel
+              view={view}
+              field={field}
+              selected={selected}
+              onSelect={pickNeighbour}
+              onExplore={onExplore}
+            />
+          </div>
+        )}
       </div>
     </section>
   );

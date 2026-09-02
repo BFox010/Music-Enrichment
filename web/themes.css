@@ -177,6 +177,49 @@ a { color: inherit; }
 }
 @keyframes pulse-load { 0%,100% { opacity: .4; } 50% { opacity: 1; } }
 
+/* ── Tag constellation ──────────────────────────────────────────────────── */
+.constellation-tools { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 12px; }
+.constellation-tools .icon-btn[aria-pressed="true"] { color: var(--text); border-color: var(--faint); }
+.constellation-tools .icon-btn[disabled] { opacity: .45; cursor: default; }
+/* Chart beside the neighbour panel; the panel drops under it on narrow
+   screens. minmax(0,1fr) rather than 1fr so the canvas can shrink — a grid
+   track defaults to min-content and ECharts would otherwise never give the
+   width back after a resize. */
+.constellation { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 18px; align-items: start; }
+.constellation-stage { position: relative; min-width: 0; }
+/* Overlaid rather than swapped in, so the wrap keeps real dimensions from the
+   first render: the settle needs the canvas size, and the chart is framed
+   before it is ever visible. */
+.constellation-busy {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--panel); color: var(--faint);
+  font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase;
+  animation: pulse-load 1.8s ease-in-out infinite;
+}
+.tag-panel { border: var(--card-border); border-radius: var(--radius-sm); background: var(--panel); padding: 14px; }
+.tag-panel-hint { margin: 0; font-size: 12.5px; line-height: 1.55; color: var(--muted-s); }
+.tag-panel-head { margin-bottom: 12px; }
+.tag-panel-head h4 { margin: 0 0 3px; font-size: 15px; color: var(--text); overflow-wrap: anywhere; }
+.tag-panel-head span { font-family: var(--font-mono); font-size: 11px; color: var(--muted-s); }
+.tag-nbrs { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.tag-nbrs button {
+  position: relative; display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border: 0; border-radius: var(--radius-sm); background: transparent;
+  color: var(--text-2); font: inherit; font-size: 12.5px; text-align: left; cursor: pointer;
+}
+.tag-nbrs button:hover { color: var(--text); }
+.tag-nbr-bar {
+  position: absolute; left: 0; top: 0; bottom: 0; border-radius: var(--radius-sm);
+  background: var(--accent); opacity: .16; pointer-events: none;
+}
+.tag-nbrs button:hover .tag-nbr-bar { opacity: .3; }
+.tag-nbr-name { position: relative; flex: 1 1 auto; overflow-wrap: anywhere; }
+.tag-nbr-val { position: relative; font-family: var(--font-mono); font-size: 11px; color: var(--muted-s); }
+.tag-panel-filter { margin-top: 12px; width: 100%; justify-content: center; }
+@media (max-width: 900px) {
+  .constellation { grid-template-columns: minmax(0, 1fr); }
+}
+
 /* ── Scrobble sync (Data page) ──────────────────────────────────────────── */
 .sync-card { max-width: 560px; }
 .sync-stat { font-family: var(--kpi-family); font-size: 32px; color: var(--text);

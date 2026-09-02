@@ -6,7 +6,7 @@
   "scripts": {
     "build": "node scripts/build_frontend.mjs",
     "dev": "node scripts/build_frontend.mjs --watch",
-    "test": "node --test web/data-processing.test.js"
+    "test": "node --test web/data-processing.test.js web/graph-layout.test.js"
   },
   "devDependencies": {
     "esbuild": "^0.25.0"

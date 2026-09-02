@@ -78,6 +78,12 @@
        can importScripts the same code off the main thread. -->
   <script defer src="data-processing.js"></script>
 
+  <!-- Tag Constellation force-layout helpers: pure, no React/DOM/ECharts.
+       Loaded before app.bundle.js so its functions are globals the bundle
+       uses, and so web/data-worker.js can importScripts the same code to
+       settle a graph off the main thread. Not part of the bundle. -->
+  <script defer src="graph-layout.js"></script>
+
   <!-- motion layer: the shared pointer loop (card spotlight + magnetic
        controls), the FLIP helpers the ranked lists use to re-rank, and the
        View Transitions wrapper for page switches. Framework-free; the JSX
