@@ -180,7 +180,7 @@ class _StubClient:
         self._by_query = by_query
         self.queries: list[str] = []
 
-    def get(self, url, params, cache_key):
+    def get(self, url, params, cache_key, **_kw):
         q = params["q"]
         self.queries.append(q)
         return self._by_query.get(q, _search())

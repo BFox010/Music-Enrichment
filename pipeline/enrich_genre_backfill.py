@@ -34,7 +34,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from pipeline._http import FORCE_OFF, RateLimitedClient
+from pipeline._http import FORCE_OFF, RateLimitedClient, classify_lastfm
 from pipeline.config import (
     LASTFM_API_ROOT,
     LASTFM_CACHE,
@@ -98,7 +98,10 @@ def _fetch_lastfm_artist_tags(client: RateLimitedClient, api_key: str, artist: s
         "format": "json",
         "autocorrect": "1",
     }
-    resp = client.get(LASTFM_API_ROOT, params, f"artisttags|{artist_norm}")
+    resp = client.get(
+        LASTFM_API_ROOT, params, f"artisttags|{artist_norm}",
+        classify=classify_lastfm,
+    )
     return _names_from_lastfm_toptags(resp)
 
 

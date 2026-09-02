@@ -20,6 +20,7 @@ import json
 import sys
 import time
 from datetime import datetime, timedelta, timezone
+import os
 from pathlib import Path
 from typing import Any
 
@@ -134,7 +135,10 @@ def check(
     client = RateLimitedClient(
         APPLE_MUSIC_CACHE,
         rate_per_second=ITUNES_RATE_LIMIT,
-        user_agent="MusicEnrichment/1.0 (q9nf44tycd@privaterelay.appleid.com)",
+        # MusicBrainz requires a contact in the UA; enrich_discogs and
+        # enrich_genre_backfill already take it from the environment, so
+        # the address is not hardcoded into the repo here either.
+        user_agent=os.getenv("MUSICBRAINZ_USER_AGENT") or "MusicEnrichment/1.0",
         flush_every=50,
         force=force,
     )

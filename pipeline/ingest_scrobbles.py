@@ -143,6 +143,23 @@ def ingest_from_records(
 
     log.info("Parsed: %d  |  Skipped (nowplaying/malformed): %d", len(parsed), skipped)
 
+    # An export can repeat a play. The append branch below already drops those
+    # via its `seen` set, but that set only exists there — so under --replace
+    # the repeat was written twice, and the duplicate then survived every later
+    # additive run because it was on disk before them.
+    deduped: list[dict] = []
+    within: set[tuple[str, str, str]] = set()
+    for row in parsed:
+        key = (row["scrobbled_at"], row["artist_normalized"], row["track_normalized"])
+        if key in within:
+            continue
+        within.add(key)
+        deduped.append(row)
+    if len(deduped) != len(parsed):
+        log.info("Dropped %d duplicate plays repeated within the export itself",
+                 len(parsed) - len(deduped))
+    parsed = deduped
+
     if mode == "append" and output_path.exists():
         existing: list[dict] = []
         with open(output_path, "r", encoding="utf-8") as fh:
@@ -185,7 +202,7 @@ def ingest_from_records(
             key = (row["scrobbled_at"], row["artist_normalized"], row["track_normalized"])
             if key in seen:
                 continue
-            seen.add(key)   # the export itself can repeat a play
+            seen.add(key)
             new_only.append(row)
         log.info(
             "Existing: %d  |  New: %d  |  Duplicates dropped: %d",

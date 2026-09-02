@@ -36,10 +36,16 @@ import argparse
 import sys
 import time
 from datetime import datetime, timezone
+import os
 from pathlib import Path
 from typing import Any
 
-from pipeline._http import FORCE_OFF, RateLimitedClient
+from pipeline._http import (
+    FORCE_OFF,
+    KIND_NOT_FOUND,
+    KIND_TRANSIENT,
+    RateLimitedClient,
+)
 from pipeline.config import (
     DEEZER_API_ROOT,
     DEEZER_CACHE,
@@ -103,6 +109,28 @@ def _resolve_musicbrainz(client: RateLimitedClient, mbid: str) -> str | None:
 # ── Deezer: name search → track → ISRC ──
 
 
+# Deezer signals failure in band: a rate-limited request comes back HTTP 200
+# with {"error": {"code": 4, "message": "Quota limit exceeded"}}, and an
+# unknown id with code 800. Classified as successes those bodies never expire,
+# so one quota burst during this phase would mark every affected track "no
+# ISRC" permanently — and _best_deezer_match, seeing no "data" list, would
+# report it as a clean miss rather than an error. Quota/throttle codes get the
+# 6 h transient TTL; anything else Deezer calls an error is treated as a stable
+# no-match on the 30 d TTL.
+_DEEZER_QUOTA_CODES = {4, 700}
+
+
+def _classify_deezer(body: Any) -> str | None:
+    if not isinstance(body, dict):
+        return None
+    error = body.get("error")
+    if not error:
+        return None
+    code = error.get("code") if isinstance(error, dict) else None
+    return KIND_TRANSIENT if code in _DEEZER_QUOTA_CODES else KIND_NOT_FOUND
+
+
+
 def _best_deezer_match(
     response: Any, artist_norm: str, track_norm: str
 ) -> dict[str, Any] | None:
@@ -140,12 +168,15 @@ def _resolve_deezer(client: RateLimitedClient, artist: str, track: str) -> str |
         if label != "original":
             cache_key += f"#{label}"
         query = f'artist:"{var_artist}" track:"{var_track}"'
-        response = client.get(search_url, {"q": query}, cache_key)
+        response = client.get(
+            search_url, {"q": query}, cache_key, classify=_classify_deezer
+        )
         match = _best_deezer_match(response, artist_norm, track_norm)
         if not match or not match.get("id"):
             continue
         track_response = client.get(
-            f"{DEEZER_API_ROOT}track/{match['id']}", {}, f"track:{match['id']}"
+            f"{DEEZER_API_ROOT}track/{match['id']}", {}, f"track:{match['id']}",
+            classify=_classify_deezer,
         )
         isrc = _isrc_from_deezer_track(track_response)
         if isrc:
@@ -181,7 +212,10 @@ def enrich(
     mb_client = RateLimitedClient(
         MUSICBRAINZ_CACHE,
         rate_per_second=MUSICBRAINZ_RATE_LIMIT,
-        user_agent="MusicEnrichment/1.0 (q9nf44tycd@privaterelay.appleid.com)",
+        # MusicBrainz requires a contact in the UA; enrich_discogs and
+        # enrich_genre_backfill already take it from the environment, so
+        # the address is not hardcoded into the repo here either.
+        user_agent=os.getenv("MUSICBRAINZ_USER_AGENT") or "MusicEnrichment/1.0",
         flush_every=50,
         force=force,
     )

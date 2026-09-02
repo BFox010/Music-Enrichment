@@ -328,9 +328,7 @@ def fill_defaults(row: dict[str, Any]) -> dict[str, Any]:
         if key in row and row[key] is not None:
             out[key] = row[key]
         elif key in row:
-            out[key] = row[key] if default is not False else default
-            if default is False and row[key] is None:
-                out[key] = False
+            out[key] = row[key]
         else:
             if isinstance(default, list):
                 out[key] = []

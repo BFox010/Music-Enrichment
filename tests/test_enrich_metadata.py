@@ -143,7 +143,7 @@ class _InterruptingClient:
         self.stats: dict = {}
         self.calls = 0
 
-    def get(self, _url, _params, cache_key):
+    def get(self, _url, _params, cache_key, **_kw):
         self.calls += 1
         if self.calls > self.fail_after:
             raise KeyboardInterrupt("simulated Ctrl-C")
@@ -199,7 +199,7 @@ class _FakeClient:
         self.cache: dict = {}
         self.stats: dict = {}
 
-    def get(self, _url, _params, cache_key):
+    def get(self, _url, _params, cache_key, **_kw):
         self.cache[cache_key] = self.response
         return self.response
 

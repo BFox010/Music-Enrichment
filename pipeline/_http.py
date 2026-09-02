@@ -14,7 +14,7 @@ import json
 import random
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import requests
 
@@ -40,17 +40,34 @@ FORCE_MODES = (FORCE_OFF, FORCE_ERRORS, FORCE_ALL)
 KIND_NOT_FOUND = "not_found"
 KIND_TRANSIENT = "transient"
 
+# ``_error`` values that are as stable as a 404 and so share its long TTL. A
+# 400 describes the request itself, which will not answer differently tomorrow.
+#
+# ``auth_error`` is deliberately NOT here. It is deterministic *within a run*,
+# so it is never retried there (see ``get``) — but the whole point of surfacing
+# it is that the operator goes and fixes the credential, and a 30-day entry
+# would then keep serving the refusal long after the key works again. The 6 h
+# transient TTL fails fast now and heals on the next day's run.
+_STABLE_ERRORS = frozenset({"not_found", "bad_request"})
+
+# Statuses worth retrying. Everything else 4xx is deterministic — retrying it
+# spends the full ~8-11s backoff ladder per cache key to arrive at the same
+# refusal, which is how a single expired Discogs token turned a run into hours
+# of doing nothing.
+_RETRYABLE_STATUSES = frozenset({408, 425, 429})
+
 
 def _error_kind(entry: Any) -> str | None:
-    """``None`` for a success, else the error kind. ``not_found`` is a stable
-    negative; everything else (``max_retries``, ``invalid_json``) is transient.
+    """``None`` for a success, else the error kind. ``not_found`` and
+    ``bad_request`` are stable negatives; everything else (``auth_error``,
+    ``max_retries``, ``invalid_json``) is transient.
     """
     if not isinstance(entry, dict):
         return None
     error = entry.get("_error")
     if not error:
         return None
-    return KIND_NOT_FOUND if error == "not_found" else KIND_TRANSIENT
+    return KIND_NOT_FOUND if error in _STABLE_ERRORS else KIND_TRANSIENT
 
 
 def _is_expired(
@@ -75,6 +92,32 @@ def _is_expired(
         return True
     ttl = negative_ttl if kind == KIND_NOT_FOUND else transient_ttl
     return (now - cached_at) > ttl
+
+
+# Last.fm answers an error in the body rather than (only) the status line:
+# {"error": 6, "message": "Track not found"} for a genuine miss, {"error": 29}
+# for a rate limit, {"error": 4/10/26} for a failed, invalid or suspended key.
+# Cached as successes, the throttle and key cases never expire, so one burst of
+# 29s freezes those tracks' enrichment until --force.
+#
+# Split on what would have to change for the answer to change. These describe
+# the *request* — 2 invalid service, 3 invalid method, 5 invalid format,
+# 6 invalid parameters (the "no such track" case, and the common one),
+# 7 invalid resource — so they are stable no-matches on the 30 d TTL.
+# Everything else (4/9/10/26 key and session, 8/11/16 service, 29 rate limit)
+# is transient: the operator fixes the key or the service recovers, and the
+# next run must see that rather than a month-old refusal.
+LASTFM_STABLE_ERROR_CODES = frozenset({2, 3, 5, 6, 7})
+
+
+def classify_lastfm(body: Any) -> str | None:
+    """``classify`` hook for the Last.fm API. See ``RateLimitedClient.get``."""
+    if not isinstance(body, dict):
+        return None
+    code = body.get("error")
+    if code is None:
+        return None
+    return KIND_NOT_FOUND if code in LASTFM_STABLE_ERROR_CODES else KIND_TRANSIENT
 
 
 class RateLimitedClient:
@@ -226,12 +269,24 @@ class RateLimitedClient:
         cache_key: str,
         *,
         timeout: float = 15.0,
+        classify: Callable[[Any], str | None] | None = None,
     ) -> Any:
         """GET ``url`` with ``params``, caching the JSON response under ``cache_key``.
 
-        On 404 or max-retries-exceeded, caches and returns
-        ``{"_error": "<reason>", "_cached_at": <epoch>}`` so callers can
-        short-circuit and so the entry expires on a later run.
+        On a failure, caches and returns ``{"_error": "<reason>",
+        "_cached_at": <epoch>}`` so callers can short-circuit and so the entry
+        expires on a later run.
+
+        ``classify`` inspects a 200 body and returns an error kind for it, or
+        ``None`` if the body is a genuine success. Several APIs here signal
+        failure *in band*: Deezer answers a rate-limited request with HTTP 200
+        and ``{"error": {"code": 4, "message": "Quota limit exceeded"}}``, and
+        Last.fm can do the same with ``{"error": 29}``. Without this hook those
+        bodies were stored as successes -- and successes never expire, so a
+        burst of quota errors during Phase 5a marked every affected track "no
+        ISRC" permanently while the caller saw a clean miss rather than a
+        failure. Return ``"transient"`` for a quota/rate error (6 h TTL) or
+        ``"not_found"`` for a real no-such-record (30 d).
         """
         if not self._should_refetch(cache_key):
             return self.cache[cache_key]
@@ -248,16 +303,39 @@ class RateLimitedClient:
                 self._last_request = time.monotonic()
                 if r.status_code == 200:
                     try:
-                        result = r.json()
+                        body = r.json()
                     except ValueError:
                         result = {"_error": f"invalid_json: {r.text[:200]}"}
+                        break
+                    kind = classify(body) if classify is not None else None
+                    if kind is None:
+                        result = body
+                    else:
+                        # Stored as a failure, not a success, so that it
+                        # expires -- an in-band error cached as a success is
+                        # permanent.
+                        result = {"_error": kind, "_detail": repr(body)[:200]}
+                        log.debug("in-band %s for %s", kind, cache_key)
                     break
                 if r.status_code == 404:
                     result = {"_error": "not_found"}
                     break
+                if r.status_code in (401, 403):
+                    # Deterministic and operator-actionable. Logged at ERROR
+                    # because the useful signal is "your credential is dead",
+                    # not 3,000 individual misses at DEBUG.
+                    log.error("HTTP %s for %s — credential rejected; not retrying",
+                              r.status_code, cache_key)
+                    result = {"_error": "auth_error", "_status": r.status_code}
+                    break
+                if 400 <= r.status_code < 500 and r.status_code not in _RETRYABLE_STATUSES:
+                    log.debug("HTTP %s for %s — deterministic; not retrying",
+                              r.status_code, cache_key)
+                    result = {"_error": "bad_request", "_status": r.status_code}
+                    break
                 if r.status_code == 429:
                     log.warning("429 rate-limited; backing off")
-                # 5xx, 429, etc. → backoff and retry
+                # 5xx and the retryable 4xx → backoff and retry
                 if attempt == HTTP_MAX_RETRIES - 1:
                     continue
                 wait = min(HTTP_BACKOFF_BASE * (2 ** attempt) + random.random(),

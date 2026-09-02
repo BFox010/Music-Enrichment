@@ -160,7 +160,7 @@ def enrich(
         "with_styles": 0,
         "no_styles": 0,
         "errors": 0,
-        "from_cache": len(client.cache),
+        "cache_entries": len(client.cache),
     }
     t0 = time.monotonic()
     enriched: list[dict] = []

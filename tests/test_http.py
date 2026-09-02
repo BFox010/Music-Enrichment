@@ -15,11 +15,14 @@ import pytest
 
 from pipeline._http import (
     FORCE_ALL,
+    KIND_NOT_FOUND,
+    KIND_TRANSIENT,
     FORCE_ERRORS,
     FORCE_OFF,
     RateLimitedClient,
     _error_kind,
     _is_expired,
+    classify_lastfm,
 )
 
 URL = "https://example.test/api"
@@ -428,3 +431,119 @@ class TestFlushThresholdGrowth:
         # Sanity: the fixed-cadence baseline really is roughly quadratic-ish
         # for this run — otherwise the comparison above is meaningless.
         assert fixed_cadence_bytes > n * entry_bytes * (n / flush_every) / 4
+
+
+# ── Regressions from the 2026-09-02 backend audit ──
+
+class TestInBandErrorsAreNotCachedAsSuccesses:
+    """Several APIs here answer a failed request with HTTP 200 and an error in
+    the body — Deezer's quota error is ``{"error": {"code": 4, ...}}``, Last.fm's
+    is ``{"error": 29}``. Classifying on status alone stored those as successes,
+    and successes never expire, so one quota burst during Phase 5a marked every
+    affected track permanently unresolvable while the caller read it as a clean
+    miss.
+    """
+
+    QUOTA = {"error": {"code": 4, "message": "Quota limit exceeded"}}
+
+    def test_without_a_classifier_the_body_is_still_a_success(self) -> None:
+        """Documents the unchanged default: only an API that opts in is affected."""
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(200, self.QUOTA)])
+            assert c.get(URL, {}, "k") == self.QUOTA
+            assert _error_kind(c.cache["k"]) is None
+
+    def test_classified_transient_is_stored_as_a_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(200, self.QUOTA)])
+            out = c.get(URL, {}, "k", classify=lambda b: "transient")
+            assert out["_error"] == "transient"
+            assert _error_kind(c.cache["k"]) == "transient"
+
+    def test_a_classified_failure_expires_on_the_transient_ttl(self) -> None:
+        """The whole point: it must be re-fetched, not frozen forever."""
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(200, self.QUOTA)])
+            c.get(URL, {}, "k", classify=lambda b: "transient")
+            c.cache["k"]["_cached_at"] = time.time() - 11.0   # transient_ttl is 10
+            c.flush()
+            # A fresh client, because within one run `_refetched` deliberately
+            # serves the key it just stored. The expiry that matters is the
+            # *next* run's.
+            later = _client(tmp, responses=[_FakeResponse(200, OK_BODY)])
+            assert later.get(URL, {}, "k", classify=lambda b: None) == OK_BODY
+
+    def test_a_clean_body_passes_straight_through(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(200, OK_BODY)])
+            assert c.get(URL, {}, "k", classify=lambda b: None) == OK_BODY
+            assert _error_kind(c.cache["k"]) is None
+
+
+class TestDeterministic4xxIsNotRetried:
+    """A 400/401/403 is a property of the request or the credential, so the full
+    backoff ladder (~8-11 s per cache key) only bought the same refusal. Phase 4
+    against a dead key crawled for hours instead of failing in the first second.
+    """
+
+    @pytest.mark.parametrize("status,kind", [(401, "auth_error"), (403, "auth_error"), (400, "bad_request")])
+    def test_single_attempt(self, status, kind) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(status, {})])
+            out = c.get(URL, {}, "k")
+            assert out["_error"] == kind
+            assert c.session.calls == 1
+
+    def test_a_bad_request_is_a_stable_negative(self) -> None:
+        """A 400 describes the request, which will not answer differently
+        tomorrow — the long TTL is right."""
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(400, {})])
+            c.get(URL, {}, "k")
+            assert _error_kind(c.cache["k"]) == KIND_NOT_FOUND
+
+    def test_an_auth_error_stays_transient_so_a_fixed_key_heals(self) -> None:
+        """Deterministic within the run (hence one attempt), but the point of
+        surfacing it is that the operator fixes the credential — a 30-day entry
+        would keep serving the refusal long after the key works again."""
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(401, {})])
+            c.get(URL, {}, "k")
+            assert _error_kind(c.cache["k"]) == KIND_TRANSIENT
+            c.cache["k"]["_cached_at"] = time.time() - 11.0   # transient_ttl is 10
+            c.flush()
+            healed = _client(tmp, responses=[_FakeResponse(200, OK_BODY)])
+            assert healed.get(URL, {}, "k") == OK_BODY
+
+    @pytest.mark.parametrize("status", [429, 500, 503])
+    def test_retryable_statuses_still_retry(self, status, monkeypatch) -> None:
+        monkeypatch.setattr("pipeline._http.time.sleep", lambda _s: None)
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(
+                tmp,
+                responses=[_FakeResponse(status, {}) for _ in range(4)] + [_FakeResponse(200, OK_BODY)],
+            )
+            assert c.get(URL, {}, "k") == OK_BODY
+            assert c.session.calls == 5
+
+
+class TestLastfmClassifier:
+    @pytest.mark.parametrize("code", [2, 3, 5, 6, 7])
+    def test_request_level_errors_are_stable(self, code) -> None:
+        """6 is "invalid parameters" — Last.fm's no-such-track, and the common
+        one. Nothing but a different request changes these."""
+        assert classify_lastfm({"error": code}) == KIND_NOT_FOUND
+
+    @pytest.mark.parametrize("code", [29, 8, 11, 16])
+    def test_service_errors_are_transient(self, code) -> None:
+        assert classify_lastfm({"error": code}) == KIND_TRANSIENT
+
+    @pytest.mark.parametrize("code", [4, 9, 10, 26])
+    def test_key_and_session_errors_are_transient_so_a_fix_takes_effect(self, code) -> None:
+        """The operator fixes the key; the next run must see that rather than a
+        month-old refusal."""
+        assert classify_lastfm({"error": code}) == KIND_TRANSIENT
+
+    def test_a_good_body_is_not_an_error(self) -> None:
+        assert classify_lastfm(OK_BODY) is None
+        assert classify_lastfm("not a dict") is None
