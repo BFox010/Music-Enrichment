@@ -12,6 +12,7 @@ from pipeline.config import MOOD_SOURCE_RANK
 from pipeline.update_tracks import (
     _enrichment_sources,
     _merge_with_existing,
+    TrackShrinkError,
     update,
 )
 
@@ -527,3 +528,82 @@ class TestPlaylistsAbsenceIsNotAVerdict:
         existing = {"artist": "x", "track": "y", "playlists": ["night_drive"]}
         merged = _merge_with_existing(new, existing)
         assert merged["playlists"] == []
+
+
+class TestPhase8ShrinkGuard:
+    """Phase 8 iterates the *source* rows only, so an existing tracks.jsonl row
+    with no counterpart is silently dropped along with everything human about
+    it. Invariant 3 already refuses this for scrobbles.jsonl; tracks.jsonl holds
+    the curated fields, so it has more to lose.
+    """
+
+    def _write(self, path: Path, rows: list[dict]) -> None:
+        with open(path, "w", encoding="utf-8") as fh:
+            for row in rows:
+                fh.write(json.dumps(row) + "\n")
+
+    def _rows(self, n: int) -> list[dict]:
+        return [
+            {"artist": f"Artist {i}", "track": f"Track {i}",
+             "artist_normalized": f"artist {i}", "track_normalized": f"track {i}",
+             "play_count": i}
+            for i in range(n)
+        ]
+
+    def test_a_partial_source_is_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "tracks.jsonl"
+            self._write(inp, self._rows(5))
+            update(input_path=inp, output_path=out)
+
+            # What `enrich_metadata(limit=2)` followed by update_tracks() does.
+            self._write(inp, self._rows(2))
+            with pytest.raises(TrackShrinkError):
+                update(input_path=inp, output_path=out)
+
+    def test_the_refusal_leaves_the_file_untouched(self) -> None:
+        """A guard that raised *after* writing would be no guard at all."""
+        with tempfile.TemporaryDirectory() as tmp:
+            inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "tracks.jsonl"
+            self._write(inp, self._rows(5))
+            update(input_path=inp, output_path=out)
+            before = out.read_text(encoding="utf-8")
+
+            self._write(inp, self._rows(2))
+            with pytest.raises(TrackShrinkError):
+                update(input_path=inp, output_path=out)
+            assert out.read_text(encoding="utf-8") == before
+
+    def test_curated_fields_survive_the_refusal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "tracks.jsonl"
+            self._write(inp, self._rows(5))
+            update(input_path=inp, output_path=out)
+            rows = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
+            for row in rows:
+                row["curation_state"] = "locked"
+            self._write(out, rows)
+
+            self._write(inp, self._rows(2))
+            with pytest.raises(TrackShrinkError):
+                update(input_path=inp, output_path=out)
+            after = [json.loads(l) for l in out.read_text().splitlines() if l.strip()]
+            assert len(after) == 5
+            assert all(r["curation_state"] == "locked" for r in after)
+
+    def test_allow_shrink_is_the_deliberate_escape_hatch(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "tracks.jsonl"
+            self._write(inp, self._rows(5))
+            update(input_path=inp, output_path=out)
+            self._write(inp, self._rows(2))
+            assert update(input_path=inp, output_path=out, allow_shrink=True)["total"] == 2
+
+    def test_same_size_and_growth_are_unaffected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "tracks.jsonl"
+            self._write(inp, self._rows(3))
+            update(input_path=inp, output_path=out)
+            assert update(input_path=inp, output_path=out)["total"] == 3
+            self._write(inp, self._rows(6))
+            assert update(input_path=inp, output_path=out)["total"] == 6

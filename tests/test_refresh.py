@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import json
 import tempfile
 from pathlib import Path
@@ -176,23 +177,23 @@ class TestMutationLockSharedAcrossOperations:
         return asyncio.run(coro)
 
     def test_direct_sync_cannot_run_while_refresh_holds_the_lock(self):
-        from app.refresh import _exclusive, _refresh_lock, RefreshInProgress
+        from app.refresh import exclusive_mutation, _refresh_lock, RefreshInProgress
 
         async def scenario():
             async with _refresh_lock:  # simulate an in-flight refresh
                 with pytest.raises(RefreshInProgress):
-                    async with _exclusive("sync"):
+                    async with exclusive_mutation("sync"):
                         pytest.fail("must not enter the sync section")
 
         self._run(scenario())
 
     def test_reload_cannot_run_while_refresh_holds_the_lock(self):
-        from app.refresh import _exclusive, _refresh_lock, RefreshInProgress
+        from app.refresh import exclusive_mutation, _refresh_lock, RefreshInProgress
 
         async def scenario():
             async with _refresh_lock:  # simulate an in-flight refresh
                 with pytest.raises(RefreshInProgress):
-                    async with _exclusive("reload"):
+                    async with exclusive_mutation("reload"):
                         pytest.fail("must not enter the reload section")
 
         self._run(scenario())
@@ -208,12 +209,12 @@ class TestMutationLockSharedAcrossOperations:
         self._run(scenario())
 
     def test_reload_cannot_run_while_a_direct_sync_holds_the_lock(self):
-        from app.refresh import _exclusive, _refresh_lock, RefreshInProgress
+        from app.refresh import exclusive_mutation, _refresh_lock, RefreshInProgress
 
         async def scenario():
             async with _refresh_lock:  # simulate an in-flight direct sync
                 with pytest.raises(RefreshInProgress):
-                    async with _exclusive("reload"):
+                    async with exclusive_mutation("reload"):
                         pytest.fail("must not enter the reload section")
 
         self._run(scenario())
@@ -221,13 +222,13 @@ class TestMutationLockSharedAcrossOperations:
     def test_lock_releases_after_use_so_a_later_operation_can_proceed(self):
         """Guards the other half: contention only blocks while an operation
         is actually in flight, not forever once one has run."""
-        from app.refresh import _exclusive
+        from app.refresh import exclusive_mutation
 
         async def scenario():
-            async with _exclusive("sync"):
+            async with exclusive_mutation("sync"):
                 pass
             # Would raise RefreshInProgress here if the first guard leaked.
-            async with _exclusive("reload"):
+            async with exclusive_mutation("reload"):
                 pass
 
         self._run(scenario())
@@ -257,7 +258,7 @@ class TestApiReloadAndSyncReturn409WhenBusy:
 
     @staticmethod
     def _busy_guard():
-        """Stand-in for app.refresh._exclusive that always reports another
+        """Stand-in for app.refresh.exclusive_mutation that always reports another
         operation is already running, without touching the real lock."""
         from app.refresh import RefreshInProgress
 
@@ -274,13 +275,13 @@ class TestApiReloadAndSyncReturn409WhenBusy:
         return _Busy
 
     def test_reload_returns_409_when_another_operation_is_running(self, client):
-        with patch("app.refresh._exclusive", new=self._busy_guard()):
+        with patch("app.refresh.exclusive_mutation", new=self._busy_guard()):
             r = client.post("/api/reload", headers=self._auth())
         assert r.status_code == 409
         assert "already running" in r.json()["detail"]
 
     def test_sync_returns_409_when_another_operation_is_running(self, client):
-        with patch("app.refresh._exclusive", new=self._busy_guard()):
+        with patch("app.refresh.exclusive_mutation", new=self._busy_guard()):
             r = client.post("/api/lastfm/sync", headers=self._auth())
         assert r.status_code == 409
         assert "already running" in r.json()["detail"]
@@ -452,3 +453,96 @@ class TestExportPending:
                 output_path=Path(tmp) / "out.csv",
             )
         assert n == 0
+
+
+class TestTheOtherMutationPathsAlsoStayOffTheEventLoop:
+    """``/api/reload`` was fixed with ``to_thread`` and a test; the same
+    synchronous, disk-heavy calls were left inline on the two other mutation
+    paths. Measured on the committed data: ``data.reload()`` ~0.2-0.6 s,
+    ``ingest_from_records`` ~0.5 s, ``export_pending()`` ~0.1 s — each of which
+    stalls every concurrent request, including the SPA's own polling of
+    /api/lastfm/status.
+    """
+
+    @staticmethod
+    def _records_a_thread(observed: dict, key: str, ret):
+        """A stand-in that records whether it ran on the event loop thread."""
+        def _fn(*_a, **_kw):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                observed[key] = False
+            else:
+                observed[key] = True
+            return ret
+        return _fn
+
+    @pytest.fixture
+    def client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tracks = Path(tmp) / "tracks.jsonl"
+            scrobbles = Path(tmp) / "scrobbles.jsonl"
+            tracks.write_text("")
+            scrobbles.write_text("")
+            import app.data as data_mod
+            with data_mod.use_paths(tracks, scrobbles):
+                from app.main import app
+                yield TestClient(app)
+
+    @staticmethod
+    def _auth():
+        from app.main import DASHBOARD_TOKEN
+        return {"X-Dashboard-Token": DASHBOARD_TOKEN}
+
+    def test_sync_route_reloads_off_the_event_loop(self, client):
+        observed: dict = {}
+        empty = {"tracks": 0, "scrobbles": 0, "skipped": {"tracks": 0, "scrobbles": 0}}
+
+        async def fake_sync(_path):
+            return {"new": 0, "fetched": 0, "total": 0, "pages_fetched": 0}
+
+        with patch("app.lastfm_sync.sync", new=fake_sync), \
+                patch("app.data.reload", new=self._records_a_thread(observed, "reload", empty)):
+            r = client.post("/api/lastfm/sync", headers=self._auth())
+
+        assert r.status_code == 200
+        assert observed["reload"] is False
+
+    def test_sync_ingests_off_the_event_loop(self):
+        """``ingest_from_records`` re-reads, re-normalizes and rewrites the whole
+        scrobbles file — the single largest inline call on this path."""
+        import app.lastfm_sync as ls
+        observed: dict = {}
+
+        async def fake_fetch(_u, _k, _since):
+            return [], 0
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scrobbles.jsonl"
+            path.write_text("")
+            with patch.dict(os.environ, {"LASTFM_USERNAME": "u", "LASTFM_API_KEY": "k"}), \
+                    patch.object(ls, "fetch_recent_scrobbles", new=fake_fetch), \
+                    patch.object(ls, "ingest_from_records",
+                                 new=self._records_a_thread(observed, "ingest", 0)):
+                asyncio.run(ls.sync(path))
+
+        assert observed["ingest"] is False
+
+    def test_refresh_exports_and_reloads_off_the_event_loop(self):
+        import app.refresh as refresh_mod
+        observed: dict = {}
+        empty = {"tracks": 0, "scrobbles": 0, "skipped": {"tracks": 0, "scrobbles": 0}}
+
+        async def fake_sync(_path):
+            return {"new": 0}
+
+        with patch.object(refresh_mod.lastfm_sync, "sync", new=fake_sync), \
+                patch.object(refresh_mod, "_pipeline_run", new=lambda **_kw: {"8": "OK"}), \
+                patch.object(refresh_mod.export_tunemymusic, "export_pending",
+                             new=self._records_a_thread(observed, "export", 0)), \
+                patch.object(refresh_mod.data, "reload",
+                             new=self._records_a_thread(observed, "reload", empty)):
+            asyncio.run(refresh_mod.refresh())
+
+        assert observed["export"] is False
+        assert observed["reload"] is False

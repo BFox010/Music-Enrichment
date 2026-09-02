@@ -54,7 +54,7 @@ class _StubResolveClient:
         self._by_batch_key = by_batch_key
         self.requests: list[dict] = []
 
-    def get(self, url, params, cache_key):
+    def get(self, url, params, cache_key, **_kw):
         self.requests.append(params)
         return self._by_batch_key.get(params.get("ids"), {"content": []})
 
@@ -95,7 +95,7 @@ class _StubFeaturesClient:
     def __init__(self, by_track_id: dict[str, dict]) -> None:
         self._by_track_id = by_track_id
 
-    def get(self, url, params, cache_key):
+    def get(self, url, params, cache_key, **_kw):
         track_id = url.rsplit("/", 2)[-2]  # .../track/<id>/audio-features
         return self._by_track_id.get(track_id, {"_error": "not_found"})
 

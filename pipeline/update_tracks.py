@@ -289,12 +289,33 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     return merged
 
 
+class TrackShrinkError(RuntimeError):
+    """Phase 8 was asked to write fewer rows than tracks.jsonl already holds.
+
+    The merge loop walks the *source* rows only, so an existing row with no
+    counterpart is simply not carried forward. That is fine when the source is
+    a full run, and destructive when it is not: ``enrich_metadata(limit=100)``
+    followed by ``update_tracks()`` rewrote the canonical file with 100 rows
+    and took every other row's ``curation_state``, ``mood_source: "audit"`` and
+    hand-edited fields with it.
+
+    Invariant 3 already refuses this for scrobbles.jsonl (``ScrobbleShrinkError``);
+    tracks.jsonl carries the human judgement, so it has more to lose, not less.
+    """
+
+
 def update(
     input_path: Path | None = None,
     output_path: Path = TRACKS_PATH,
     run_log_path: Path | None = None,
+    *,
+    allow_shrink: bool = False,
 ) -> dict[str, int]:
-    """Merge intermediate → tracks.jsonl. Returns stats dict."""
+    """Merge intermediate → tracks.jsonl. Returns stats dict.
+
+    Raises ``TrackShrinkError`` if the merge would leave fewer rows than
+    ``output_path`` already holds, unless ``allow_shrink`` is set.
+    """
     configure_logging(run_log_path)
     log.info("=== Phase 8: final merge → tracks.jsonl ===")
 
@@ -306,10 +327,12 @@ def update(
     log.info("Loaded %d source rows", len(new_rows))
 
     existing_index: dict[tuple[str, str], dict] = {}
+    existing_count = 0
     if output_path.exists():
         existing_rows = _load_jsonl(output_path)
+        existing_count = len(existing_rows)
         existing_index = _index_by_key(existing_rows)
-        log.info("Existing tracks.jsonl has %d rows — merging", len(existing_rows))
+        log.info("Existing tracks.jsonl has %d rows — merging", existing_count)
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     merged_rows: list[dict] = []
@@ -342,6 +365,17 @@ def update(
             updated_count += 1
 
     merged_rows.sort(key=lambda r: (r["artist_normalized"], r["track_normalized"]))
+
+    if len(merged_rows) < existing_count and not allow_shrink:
+        raise TrackShrinkError(
+            f"Refusing to write {len(merged_rows)} tracks over the "
+            f"{existing_count} already in {output_path} — that would drop "
+            f"{existing_count - len(merged_rows)} rows and every curated field "
+            f"on them. This usually means the source intermediate ({chosen.name}) "
+            f"is a partial run (a phase called with limit=...). Re-run the "
+            f"pipeline without a limit, or pass allow_shrink=True if you really "
+            f"do mean to shrink the library."
+        )
 
     validation = validate_dataset(merged_rows)
     if validation["invalid_count"] > 0:

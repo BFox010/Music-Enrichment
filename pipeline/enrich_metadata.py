@@ -21,7 +21,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from pipeline._http import FORCE_OFF, RateLimitedClient
+from pipeline._http import FORCE_OFF, RateLimitedClient, classify_lastfm
 from pipeline.config import (
     LASTFM_API_ROOT,
     LASTFM_CACHE,
@@ -199,7 +199,9 @@ def _lookup_with_variations(
             "format": "json",
             "autocorrect": "1",
         }
-        response = client.get(LASTFM_API_ROOT, params, cache_key)
+        response = client.get(
+            LASTFM_API_ROOT, params, cache_key, classify=classify_lastfm
+        )
         fields = _extract_lastfm_fields(response)
         # Drop noise tags (radio stations, artist names, "my …", years) before
         # they ever land in the JSONL — and before the empty-tags check below.
@@ -297,7 +299,7 @@ def enrich(
         "recovered_via_variation": 0,
         "no_match": 0,
         "errors": 0,
-        "from_cache": len(client.cache),
+        "cache_entries": len(client.cache),
     }
     variation_hits: dict[str, int] = {}
     t0 = time.monotonic()

@@ -125,7 +125,9 @@ def query_tracks(
     page: int = 1,
     per_page: int = 50,
 ) -> dict[str, Any]:
-    rows = list(get_tracks())
+    # Not a copy: every filter below rebinds `rows` to a fresh list, and when
+    # no filter is active the slice at the end copies only the page.
+    rows = get_tracks()
 
     if genre:
         needle = genre.lower()
@@ -150,10 +152,17 @@ def query_tracks(
                 return float(v) if v is not None else None
             return None
 
-        if min_energy is not None:
-            rows = [r for r in rows if (_energy(r) or -1.0) >= min_energy]
-        if max_energy is not None:
-            rows = [r for r in rows if (_energy(r) or 2.0) <= max_energy]
+        # `_energy(r) or -1.0` swapped a real 0.0 for the sentinel, so a track
+        # at exactly zero energy failed *both* bounds — excluded from
+        # min_energy=0.0 and from max_energy=0.1 alike. ReccoBeats does emit
+        # 0.0 for some features, so this is latent rather than theoretical.
+        # `is None` also lets one pass cover both bounds instead of two.
+        lo = min_energy if min_energy is not None else 0.0
+        hi = max_energy if max_energy is not None else 1.0
+        rows = [
+            r for r in rows
+            if (e := _energy(r)) is not None and lo <= e <= hi
+        ]
 
     total = len(rows)
     start = (page - 1) * per_page

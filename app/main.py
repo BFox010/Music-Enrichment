@@ -6,6 +6,7 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 """
 
 import asyncio
+import json
 import os
 import secrets
 from pathlib import Path
@@ -13,7 +14,7 @@ from typing import Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.gzip import GZipMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pipeline.config import REPO_ROOT, SCROBBLES_PATH, TRACKS_PATH
@@ -39,14 +40,29 @@ app = FastAPI(title="Music Dashboard")
 DASHBOARD_TOKEN = os.getenv("DASHBOARD_TOKEN") or secrets.token_urlsafe(32)
 
 
+# Starlette decodes header bytes as latin-1, and secrets.compare_digest raises
+# TypeError on a str carrying anything outside ASCII — so a mangled paste or a
+# scanner probing the tunnel turned a wrong token into a 500 traceback instead
+# of a 403. Comparing the encoded bytes keeps the constant-time property and
+# makes every malformed header just another failed comparison.
+_TOKEN_BYTES = DASHBOARD_TOKEN.encode("utf-8")
+
+
 def require_token(x_dashboard_token: str = Header(default="")) -> None:
-    if not secrets.compare_digest(x_dashboard_token, DASHBOARD_TOKEN):
+    supplied = x_dashboard_token.encode("utf-8", "surrogateescape")
+    if not secrets.compare_digest(supplied, _TOKEN_BYTES):
         raise HTTPException(status_code=403, detail="missing or invalid dashboard token")
 
 
 # Compresses the multi-MB JSONL endpoints and static assets — the single biggest
 # win for slow tunnelled mobile loads.
-app.add_middleware(GZipMiddleware, minimum_size=1024)
+#
+# Level 6, not Starlette's default 9. Measured on the committed files, 9 costs
+# roughly 4x the CPU of 6 (tracks.jsonl 295ms vs 73ms; scrobbles.jsonl 326ms vs
+# 96ms) to save ~4% of the bytes. A cold load pays that on every request whose
+# ETag misses, and over a tunnel the extra ~30 KB is far cheaper than the extra
+# ~450 ms of server CPU.
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
 # Load data eagerly at import time; tests override via data.use_paths().
 data.load()
@@ -56,7 +72,8 @@ data.load()
 def api_config():
     """Token the SPA echoes in ``X-Dashboard-Token`` on mutating requests. With
     CORS disabled, cross-origin pages cannot read this response."""
-    return {"token": DASHBOARD_TOKEN}
+    # no-store so the token never lands in a shared machine's on-disk HTTP cache.
+    return JSONResponse({"token": DASHBOARD_TOKEN}, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/integrity")
@@ -183,9 +200,9 @@ def api_tag_graph(
 async def api_reload():
     """Shares the refresh/sync mutation lock (F-05): a reload racing a
     full refresh could otherwise re-read tracks.jsonl mid-rewrite."""
-    from app.refresh import RefreshInProgress, _exclusive
+    from app.refresh import RefreshInProgress, exclusive_mutation
     try:
-        async with _exclusive("reload"):
+        async with exclusive_mutation("reload"):
             # data.reload() re-parses both JSONL files synchronously. This
             # endpoint had to become a coroutine to hold the async lock, which
             # took it out of the threadpool FastAPI runs `def` handlers in — so
@@ -196,16 +213,35 @@ async def api_reload():
         raise HTTPException(status_code=409, detail=str(exc))
 
 
+# (generation, count, first, last) — see _scrobble_span.
+_span_cache: tuple[int, int, Optional[str], Optional[str]] | None = None
+
+
+def _scrobble_span(snap) -> tuple[int, Optional[str], Optional[str]]:
+    """Count and first/last scrobble timestamp for ``snap``, cached by generation.
+
+    The SPA polls /api/lastfm/status, and each poll used to walk all 16.5k
+    scrobbles twice (min and max) to produce three numbers that only change on
+    reload. Cached the same way as metrics._track_index.
+    """
+    global _span_cache
+    cached = _span_cache
+    if cached is not None and cached[0] == snap.generation:
+        return cached[1], cached[2], cached[3]
+    dates = [s.get("scrobbled_at") for s in snap.scrobbles if s.get("scrobbled_at")]
+    span = (len(snap.scrobbles), min(dates) if dates else None, max(dates) if dates else None)
+    _span_cache = (snap.generation, *span)
+    return span
+
+
 @app.get("/api/lastfm/status")
 def lastfm_status():
-    scrobbles = data.get_scrobbles()
-    configured = bool(os.getenv("LASTFM_USERNAME") and os.getenv("LASTFM_API_KEY"))
-    dates = [s.get("scrobbled_at", "") for s in scrobbles if s.get("scrobbled_at")]
+    count, first, last = _scrobble_span(data.get_snapshot())
     return {
-        "scrobble_count": len(scrobbles),
-        "last_scrobbled_at": max(dates) if dates else None,
-        "first_scrobbled_at": min(dates) if dates else None,
-        "configured": configured,
+        "scrobble_count": count,
+        "last_scrobbled_at": last,
+        "first_scrobbled_at": first,
+        "configured": bool(os.getenv("LASTFM_USERNAME") and os.getenv("LASTFM_API_KEY")),
         "username": os.getenv("LASTFM_USERNAME"),
     }
 
@@ -216,11 +252,15 @@ async def lastfm_sync():
     run outside it entirely, so it could overlap a full refresh mid-rewrite
     of scrobbles.jsonl and the pipeline intermediates that read it."""
     from app.lastfm_sync import sync as _sync
-    from app.refresh import RefreshInProgress, _exclusive
+    from app.refresh import RefreshInProgress, exclusive_mutation
     try:
-        async with _exclusive("sync"):
+        async with exclusive_mutation("sync"):
             result = await _sync(SCROBBLES_PATH)
-            data.reload()
+            # Same reasoning as api_reload: this handler is a coroutine (it has
+            # to be, to hold the async lock), so a bare data.reload() re-parses
+            # both JSONL files *on the event loop* and stalls every concurrent
+            # request — including the SPA's own polling of /api/lastfm/status.
+            await asyncio.to_thread(data.reload)
             return result
     except RefreshInProgress as exc:
         raise HTTPException(status_code=409, detail=str(exc))
@@ -251,8 +291,14 @@ def _conditional_file(path, request: Request, media_type: str):
     if not path.exists():
         raise HTTPException(404, f"{path.name} not found")
     st = path.stat()
-    etag = f'W/"{int(st.st_mtime)}-{st.st_size}"'
-    cache_headers = {"ETag": etag, "Cache-Control": "public, max-age=0, must-revalidate"}
+    # Nanosecond mtime: at second granularity two writes inside the same second
+    # produce the same ETag whenever the size is unchanged, and the client keeps
+    # the older body. Phase 8 takes minutes so this is a trap rather than a live
+    # bug, but the finer field costs nothing.
+    etag = f'W/"{st.st_mtime_ns}-{st.st_size}"'
+    # "private": this is one person's listening history over a personal tunnel,
+    # so no shared cache should ever be entitled to store it.
+    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=0, must-revalidate"}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=cache_headers)
     return FileResponse(str(path), media_type=media_type, headers=cache_headers)
@@ -268,25 +314,46 @@ def serve_scrobbles_jsonl(request: Request):
     return _conditional_file(SCROBBLES_PATH, request, "application/x-ndjson")
 
 
+# (generation, body bytes) for /tracks.min.jsonl. Same invalidation model as
+# metrics._track_index: a reload() advances data's generation counter, which
+# retires this entry without anyone having to clear it.
+_min_body_cache: tuple[int, bytes] | None = None
+
+
 @app.get("/tracks.min.jsonl")
 def serve_tracks_min_jsonl(request: Request):
     """Slimmed tracks for the dashboard's first paint — only the fields the UI
     renders (see app.query.project_min_track). ~44% smaller gzipped than the full
-    /tracks.jsonl. Full data stays available there and via /api/*. ETag tracks the
-    source file's mtime+size so it 304s on repeat loads and refreshes after a sync."""
-    import json
+    /tracks.jsonl. Full data stays available there and via /api/*.
 
-    if not TRACKS_PATH.exists():
-        raise HTTPException(404, "tracks.jsonl not found")
-    st = TRACKS_PATH.stat()
-    etag = f'W/"min-{int(st.st_mtime)}-{st.st_size}"'
-    cache_headers = {"ETag": etag, "Cache-Control": "public, max-age=0, must-revalidate"}
+    Both the ETag and the body come from the in-memory snapshot's generation.
+    Deriving the ETag from tracks.jsonl's mtime+size instead — as this used to —
+    let the two diverge: the file changes on disk whenever the documented CLI
+    workflow runs the pipeline while uvicorn is up, so the client got a fresh
+    ETag with the *old* in-memory body and cached it; the subsequent /api/reload
+    refreshed the snapshot but left the file untouched, so the revalidation
+    304'd and the client kept the stale body until the file changed again.
+    """
+    global _min_body_cache
+
+    snap = data.get_snapshot()
+    etag = f'W/"min-{snap.generation}-{len(snap.tracks)}"'
+    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=0, must-revalidate"}
     if request.headers.get("if-none-match") == etag:
         return Response(status_code=304, headers=cache_headers)
-    body = "".join(
-        json.dumps(query.project_min_track(t), ensure_ascii=False) + "\n"
-        for t in data.get_tracks()
-    )
+
+    cached = _min_body_cache
+    if cached is not None and cached[0] == snap.generation:
+        body = cached[1]
+    else:
+        # ~2.6 MB of json.dumps over every row, rebuilt on each non-304 request
+        # before this cache. The projection only changes on reload, so key it on
+        # the generation and pay it once per generation instead.
+        body = "".join(
+            json.dumps(query.project_min_track(t), ensure_ascii=False) + "\n"
+            for t in snap.tracks
+        ).encode("utf-8")
+        _min_body_cache = (snap.generation, body)
     return Response(body, media_type="application/x-ndjson", headers=cache_headers)
 
 

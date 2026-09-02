@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import sys
 from collections import defaultdict
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -62,6 +63,15 @@ def _name_key(row: dict) -> tuple[str, str]:
     return (row.get("artist_normalized") or "", row.get("track_normalized") or "")
 
 
+@lru_cache(maxsize=None)
+def _identity_title_of(title: str) -> str:
+    """Memoized because ``_cluster``'s pairwise loop is O(k^2) within a title
+    bucket and ``_shape_matches`` recomputes this regex + normalization for both
+    sides of every pair. The value depends only on the raw title string, so one
+    cache entry per distinct title covers the whole run."""
+    return normalize_track(strip_feat(title))
+
+
 def _identity_title(row: dict) -> str:
     """Feat-stripped normalized title — "same recording" identity.
 
@@ -69,7 +79,7 @@ def _identity_title(row: dict) -> str:
     A guest credit that moved into the *title* ("FML" vs "FML (feat. The Weeknd)")
     leaves ``artist_normalized`` identical, so the title is the only place to strip it.
     """
-    return normalize_track(strip_feat(row.get("track") or ""))
+    return _identity_title_of(row.get("track") or "")
 
 
 class _Union:

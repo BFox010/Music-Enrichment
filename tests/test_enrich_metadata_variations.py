@@ -26,7 +26,7 @@ class FakeClient:
         self.responses = responses
         self.calls: list[dict[str, str]] = []  # {artist, track, cache_key}
 
-    def get(self, _url: str, params: dict, cache_key: str) -> Any:
+    def get(self, _url: str, params: dict, cache_key: str, *, classify=None) -> Any:
         self.calls.append({
             "artist": params["artist"],
             "track": params["track"],

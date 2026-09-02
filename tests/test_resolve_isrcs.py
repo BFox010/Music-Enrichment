@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import json
 
+from pipeline._http import KIND_NOT_FOUND, KIND_TRANSIENT
 from pipeline import resolve_isrcs as ri
 from pipeline.resolve_isrcs import (
+    _classify_deezer,
     _best_deezer_match,
     _isrc_from_deezer_track,
     _isrc_from_musicbrainz_response,
@@ -128,6 +130,12 @@ class TestIsrcFromDeezerTrack:
         assert _isrc_from_deezer_track({"_error": "not_found"}) is None
 
 
+def _apply(classify, body):
+    """What RateLimitedClient.get does with a `classify` verdict."""
+    kind = classify(body) if classify is not None else None
+    return body if kind is None else {"_error": kind}
+
+
 class _StubDeezerClient:
     """Canned responses keyed by URL suffix (search query or track id)."""
 
@@ -136,7 +144,12 @@ class _StubDeezerClient:
         self._track_by_id = track_by_id
         self.queries: list[str] = []
 
-    def get(self, url, params, cache_key):
+    def get(self, url, params, cache_key, *, classify=None):
+        # Mirrors RateLimitedClient.get: an in-band error body is stored
+        # as a failure, not handed back as a success.
+        return _apply(classify, self._get(url, params))
+
+    def _get(self, url, params):
         if url.endswith("/search"):
             q = params["q"]
             self.queries.append(q)
@@ -277,3 +290,34 @@ class TestEnrichPersistsIsrc:
         )
         assert rows["B"]["isrc"] == "USABC1234567"
         assert rows["B"]["canonical_track_id"] == "norm:a|b"
+
+
+class TestDeezerInBandErrors:
+    """Deezer answers a rate-limited request with HTTP 200 and
+    ``{"error": {"code": 4, "message": "Quota limit exceeded"}}``. Without a
+    classifier that body was cached as a *success* — and successes never expire
+    — so a quota burst during Phase 5a marked every affected track "no ISRC"
+    permanently, while ``_best_deezer_match`` (seeing no ``data`` list) reported
+    it as a clean miss rather than a failure.
+    """
+
+    def test_quota_error_is_transient_so_the_next_run_retries(self) -> None:
+        assert _classify_deezer({"error": {"code": 4, "message": "Quota limit exceeded"}}) == KIND_TRANSIENT
+
+    def test_throttle_error_is_transient(self) -> None:
+        assert _classify_deezer({"error": {"code": 700}}) == KIND_TRANSIENT
+
+    def test_no_such_record_is_a_stable_negative(self) -> None:
+        assert _classify_deezer({"error": {"code": 800, "message": "no data"}}) == KIND_NOT_FOUND
+
+    def test_a_real_response_is_not_an_error(self) -> None:
+        assert _classify_deezer(_deezer_search(_deezer_item(1, "Roads", "Portishead"))) is None
+        assert _classify_deezer({"isrc": "GBAAA9400013"}) is None
+        assert _classify_deezer("not a dict") is None
+
+    def test_the_resolver_treats_a_quota_body_as_a_miss_not_a_match(self) -> None:
+        """End to end through the stub client, which applies `classify` the way
+        RateLimitedClient does."""
+        query = 'artist:"Portishead" track:"Roads"'
+        client = _StubDeezerClient({query: {"error": {"code": 4}}}, {})
+        assert _resolve_deezer(client, "Portishead", "Roads") is None

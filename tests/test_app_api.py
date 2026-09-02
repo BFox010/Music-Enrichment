@@ -634,3 +634,153 @@ class TestDotenvLoadedAtImport:
         finally:
             monkeypatch.undo()
             importlib.reload(app.main)
+
+
+# ── Regressions from the 2026-09-02 backend audit ──
+
+def _auth() -> dict:
+    """Current token, read live.
+
+    Not the module-level ``AUTH``: ``TestDotenvIsLoaded`` above reloads
+    app.main, which re-runs ``secrets.token_urlsafe`` and leaves that constant
+    pointing at a token the app no longer accepts. Every test declared after
+    that one has to ask for the token rather than remember it.
+    """
+    import app.main
+    return {"X-Dashboard-Token": app.main.DASHBOARD_TOKEN}
+
+
+
+class TestTokenGateRejectsMalformedHeaders:
+    """``secrets.compare_digest`` raises TypeError on a str with any non-ASCII
+    character, so a mangled paste or a scanner probing the tunnel turned a wrong
+    token into a 500 traceback rather than a 403."""
+
+    # Raw bytes, because that is what actually arrives: httpx will not encode a
+    # non-ASCII str into a header at all, and Starlette decodes the bytes it
+    # receives as latin-1 — which is how a str carrying a codepoint above 0x7f
+    # reached compare_digest in the first place.
+    @pytest.mark.parametrize("bad", [b"t\xf6k\xe9n", b"\xff" * 8, b"caf\xe9", b"nope"])
+    def test_non_ascii_token_is_403_not_500(self, client, bad):
+        r = client.post("/api/reload", headers={"X-Dashboard-Token": bad})
+        assert r.status_code == 403
+
+    def test_correct_token_still_passes(self, client):
+        assert client.post("/api/reload", headers=_auth()).status_code == 200
+
+
+class TestConfigIsNotCached:
+    def test_no_store(self, client):
+        assert "no-store" in client.get("/api/config").headers["cache-control"]
+
+
+class TestListeningHistoryIsPrivatelyCached:
+    """``public`` would entitle any shared cache to store one person's full
+    listening history; nothing in the chain does today, but ``private`` is the
+    correct directive and costs nothing."""
+
+    @pytest.mark.parametrize("path", ["/tracks.jsonl", "/scrobbles.jsonl", "/tracks.min.jsonl"])
+    def test_private(self, client, path):
+        cc = client.get(path).headers["cache-control"]
+        assert cc.startswith("private"), cc
+
+
+class TestTracksMinEtagTracksTheServedBody:
+    """The ETag used to come from tracks.jsonl's mtime+size while the body came
+    from the in-memory snapshot. A pipeline run with the server up moved the
+    file but not the snapshot, so a client got a *new* ETag with the *old* body
+    and cached it — and the reload that finally refreshed the snapshot left the
+    file untouched, so the revalidation 304'd and the stale body stuck."""
+
+    def test_etag_changes_when_the_snapshot_changes_not_the_file(self, client):
+        before = client.get("/tracks.min.jsonl").headers["etag"]
+        # A reload publishes a new generation without the file having moved.
+        assert client.post("/api/reload", headers=_auth()).status_code == 200
+        after = client.get("/tracks.min.jsonl").headers["etag"]
+        assert before != after
+
+    def test_etag_does_not_move_when_only_the_file_does(self, client):
+        """The complement: touching the file must NOT hand out a fresh ETag for
+        a body that is still the old snapshot's."""
+        from pipeline.config import TRACKS_PATH  # noqa: F401  (documents intent)
+        first = client.get("/tracks.min.jsonl")
+        body_before = first.text
+        etag = first.headers["etag"]
+        data._tracks_path.touch()
+        again = client.get("/tracks.min.jsonl")
+        assert again.headers["etag"] == etag
+        assert again.text == body_before
+
+    def test_body_is_reused_within_a_generation(self, client):
+        """Second request for the same generation must not re-project 3k rows."""
+        import app.main as main
+        client.get("/tracks.min.jsonl")
+        cached = main._min_body_cache
+        assert cached is not None
+        client.get("/tracks.min.jsonl", headers={"If-None-Match": "stale"})
+        assert main._min_body_cache is cached
+
+
+class TestLastfmStatusSpanCache:
+    def test_span_is_cached_per_generation(self, client):
+        import app.main as main
+        first = client.get("/api/lastfm/status").json()
+        cached = main._span_cache
+        assert cached is not None
+        assert client.get("/api/lastfm/status").json() == first
+        assert main._span_cache is cached
+
+    def test_reload_invalidates_it(self, client):
+        import app.main as main
+        client.get("/api/lastfm/status")
+        before = main._span_cache
+        client.post("/api/reload", headers=_auth())
+        client.get("/api/lastfm/status")
+        assert main._span_cache is not before
+
+
+class TestEnergyFilterBoundary:
+    """``(_energy(r) or -1.0) >= min`` swapped a real 0.0 for the sentinel, so a
+    track at exactly zero energy failed *both* bounds — invisible under
+    ``min_energy=0.0`` and under ``max_energy=0.1`` alike. ReccoBeats does emit
+    0.0 for some features, so this was latent rather than theoretical.
+    """
+
+    def _rows(self):
+        base = {
+            "artist": "A", "track": "T", "artist_normalized": "a",
+            "track_normalized": "t", "play_count": 1,
+        }
+        return [
+            {**base, "track": "zero", "track_normalized": "zero",
+             "audio_features": {"energy": 0.0}},
+            {**base, "track": "half", "track_normalized": "half",
+             "audio_features": {"energy": 0.5}},
+            {**base, "track": "none", "track_normalized": "none"},
+        ]
+
+    @pytest.fixture
+    def energy_client(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tp, sp = Path(tmp) / "t.jsonl", Path(tmp) / "s.jsonl"
+            tp.write_text("".join(json.dumps(r) + "\n" for r in self._rows()), encoding="utf-8")
+            sp.write_text("", encoding="utf-8")
+            with data.use_paths(tp, sp):
+                yield TestClient(app)
+
+    def _names(self, client, qs):
+        return {t["track"] for t in client.get(f"/api/tracks?{qs}").json()["tracks"]}
+
+    def test_zero_energy_is_included_by_a_zero_floor(self, energy_client):
+        assert self._names(energy_client, "min_energy=0.0") == {"zero", "half"}
+
+    def test_zero_energy_is_included_by_a_low_ceiling(self, energy_client):
+        assert self._names(energy_client, "max_energy=0.1") == {"zero"}
+
+    def test_zero_energy_is_inside_a_band_containing_it(self, energy_client):
+        assert self._names(energy_client, "min_energy=0.0&max_energy=0.2") == {"zero"}
+
+    def test_a_missing_feature_is_still_excluded(self, energy_client):
+        """Unchanged: no energy means the filter can say nothing about the row."""
+        for qs in ("min_energy=0.0", "max_energy=1.0", "min_energy=0.0&max_energy=1.0"):
+            assert "none" not in self._names(energy_client, qs)

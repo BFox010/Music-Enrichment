@@ -347,3 +347,69 @@ class TestCoverageFields:
         as coverage understated completeness for every track whose artist the
         owner simply hasn't tiered."""
         assert "saturation_tier" not in dict(metrics._COVERAGE_FIELDS)
+
+
+class TestWindowPredicate:
+    """``in_window`` re-parsed the window string — up to four regex matches —
+    once per scrobble, for a value that is a property of the query and not of
+    the row. Compiling it once is a behaviour-preserving change, so these pin
+    the behaviour rather than the speed.
+    """
+
+    def _scrobble(self, stamp, year, month):
+        return {"scrobbled_at": stamp, "year": year, "month": month}
+
+    JAN = {"scrobbled_at": "2025-01-15T10:00:00Z", "year": 2025, "month": 1}
+    JUL = {"scrobbled_at": "2025-07-15T10:00:00Z", "year": 2025, "month": 7}
+    OLD = {"scrobbled_at": "2019-07-15T10:00:00Z", "year": 2019, "month": 7}
+
+    @pytest.mark.parametrize("window", [None, "", "all"])
+    def test_everything_matches_an_open_window(self, window):
+        p = metrics.window_predicate(window)
+        assert all(p(s) for s in (self.JAN, self.JUL, self.OLD))
+
+    def test_year(self):
+        p = metrics.window_predicate("2025")
+        assert p(self.JAN) and p(self.JUL) and not p(self.OLD)
+
+    def test_month(self):
+        p = metrics.window_predicate("2025-07")
+        assert p(self.JUL) and not p(self.JAN)
+
+    def test_season(self):
+        p = metrics.window_predicate("2025-summer")
+        assert p(self.JUL) and not p(self.JAN) and not p(self.OLD)
+
+    def test_winter_spans_the_year_boundary(self):
+        """December and January are both winter — the one case a naive
+        month-range check gets wrong."""
+        p = metrics.window_predicate("2025-winter")
+        assert p(self.JAN)
+        assert p(self._scrobble("2025-12-05T10:00:00Z", 2025, 12))
+
+    def test_explicit_range(self):
+        p = metrics.window_predicate("2025-01-01:2025-06-30")
+        assert p(self.JAN) and not p(self.JUL)
+
+    def test_an_unrecognized_window_degrades_to_all_time(self):
+        """Not to an empty dashboard, which a reader would misread as
+        'you listened to nothing'."""
+        p = metrics.window_predicate("last-tuesday")
+        assert all(p(s) for s in (self.JAN, self.JUL, self.OLD))
+
+    def test_a_range_needs_a_timestamp(self):
+        p = metrics.window_predicate("2025-01-01:2025-06-30")
+        assert not p({"year": 2025, "month": 1})
+
+    @pytest.mark.parametrize(
+        "window", [None, "all", "2025", "2025-07", "2025-summer", "2025-01-01:2025-06-30", "nonsense"],
+    )
+    def test_it_agrees_with_in_window(self, window):
+        """The one-shot helper and the compiled predicate must not drift."""
+        p = metrics.window_predicate(window)
+        for s in (self.JAN, self.JUL, self.OLD):
+            assert p(s) == metrics.in_window(s, window)
+
+    def test_the_season_map_is_the_one_in_config(self):
+        from pipeline.config import SEASON_BY_MONTH
+        assert metrics.SEASON_BY_MONTH is SEASON_BY_MONTH
