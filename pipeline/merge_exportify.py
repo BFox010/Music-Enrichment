@@ -26,7 +26,6 @@ from pipeline.config import (
     INPUT_EXPORTIFY_CSV,
     REPO_ROOT,
     TRACKS_WITH_AUDIO_PATH,
-    TRACKS_WITH_METADATA_PATH,
     TRACKS_WITH_SPOTIFY_PATH,
     configure_logging,
     get_logger,
