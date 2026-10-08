@@ -29,6 +29,7 @@ from pipeline.config import (
     REPO_ROOT,
     TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_METADATA_PATH,
+    TRACKS_WITH_SPOTIFY_PATH,
     configure_logging,
     get_logger,
 )
@@ -41,9 +42,12 @@ log = get_logger(__name__)
 
 # Input preference — deepest first. Prefer the Phase 3c audio output (carries
 # audio_features + spotify_id forward so the chain stays linear and every field
-# reaches Phase 8), falling back to the Phase A apple output, then the skeleton.
+# reaches Phase 8), falling back to Phase B's output, then the Phase A apple
+# output, then the skeleton. Phase B was missing, so its ISRCs and spotify_ids
+# never reached Phase 4 when 3c didn't run (#98).
 _INPUT_PRIORITY = [
     TRACKS_WITH_AUDIO_PATH,
+    TRACKS_WITH_SPOTIFY_PATH,
     TRACKS_WITH_APPLE_PATH,
     REPO_ROOT / "tracks_skeleton.jsonl",
 ]
