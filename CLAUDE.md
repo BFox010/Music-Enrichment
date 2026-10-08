@@ -230,8 +230,10 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   `/api/lastfm/sync`, `/api/reload` need `X-Dashboard-Token`. The SPA fetches it
   from same-origin `GET /api/config`. Set `DASHBOARD_TOKEN` to keep it stable
   across restarts.
-- **`/tracks.min.jsonl` is served from memory, so its ETag comes from the
-  snapshot generation** — never from `tracks.jsonl`'s mtime+size. Deriving it
+- **`/tracks.min.jsonl` is served from memory, so its ETag is a hash of the
+  served body** — never `tracks.jsonl`'s mtime+size, and not the bare snapshot
+  generation either: that counter restarts at 1 in every process, so a restart
+  over changed data handed out the old ETag (#103). Deriving it
   from the file let the two diverge: a CLI pipeline run with the server up moved
   the file but not the snapshot, so a client got a fresh ETag with the stale
   body and cached it, and the `/api/reload` that finally refreshed the snapshot

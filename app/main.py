@@ -6,6 +6,7 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 """
 
 import asyncio
+import hashlib
 import json
 import os
 import secrets
@@ -314,10 +315,10 @@ def serve_scrobbles_jsonl(request: Request):
     return _conditional_file(SCROBBLES_PATH, request, "application/x-ndjson")
 
 
-# (generation, body bytes) for /tracks.min.jsonl. Same invalidation model as
-# metrics._track_index: a reload() advances data's generation counter, which
+# (generation, body bytes, etag) for /tracks.min.jsonl. Same invalidation model
+# as metrics._track_index: a reload() advances data's generation counter, which
 # retires this entry without anyone having to clear it.
-_min_body_cache: tuple[int, bytes] | None = None
+_min_body_cache: tuple[int, bytes, str] | None = None
 
 
 @app.get("/tracks.min.jsonl")
@@ -333,27 +334,33 @@ def serve_tracks_min_jsonl(request: Request):
     ETag with the *old* in-memory body and cached it; the subsequent /api/reload
     refreshed the snapshot but left the file untouched, so the revalidation
     304'd and the client kept the stale body until the file changed again.
+
+    The ETag is a hash of the body, not the generation number: the counter
+    restarts at 1 in every process, so a restart over changed data with the
+    same row count handed out the old ETag and the browser 304'd onto its
+    stale copy (#103). A content hash can't collide across processes, and an
+    unchanged library still revalidates after a restart.
     """
     global _min_body_cache
 
     snap = data.get_snapshot()
-    etag = f'W/"min-{snap.generation}-{len(snap.tracks)}"'
-    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=0, must-revalidate"}
-    if request.headers.get("if-none-match") == etag:
-        return Response(status_code=304, headers=cache_headers)
-
     cached = _min_body_cache
     if cached is not None and cached[0] == snap.generation:
-        body = cached[1]
+        _, body, etag = cached
     else:
         # ~2.6 MB of json.dumps over every row, rebuilt on each non-304 request
         # before this cache. The projection only changes on reload, so key it on
-        # the generation and pay it once per generation instead.
+        # the generation and pay it — and the hash — once per generation instead.
         body = "".join(
             json.dumps(query.project_min_track(t), ensure_ascii=False) + "\n"
             for t in snap.tracks
         ).encode("utf-8")
-        _min_body_cache = (snap.generation, body)
+        etag = f'W/"min-{hashlib.blake2b(body, digest_size=16).hexdigest()}"'
+        _min_body_cache = (snap.generation, body, etag)
+
+    cache_headers = {"ETag": etag, "Cache-Control": "private, max-age=0, must-revalidate"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=cache_headers)
     return Response(body, media_type="application/x-ndjson", headers=cache_headers)
 
 
