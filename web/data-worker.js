@@ -1,7 +1,7 @@
 /* data-worker.js — parses + aggregates the library off the main thread so the
    app shell stays responsive during a fresh load. Receives the raw JSONL text
    for tracks + scrobbles, runs the same processLibrary() the main thread uses,
-   and posts back { nt, ns, drill, cube }. The main thread falls back to running
+   and posts back { nt, ns, drill, cube, anchor }. The main thread falls back to running
    processLibrary() inline if this worker is unavailable or errors. */
 importScripts("data-processing.js");
 
@@ -19,7 +19,9 @@ self.onmessage = (e) => {
     const transfer = cube
       ? [cube.hour.buffer, cube.dow.buffer, cube.season.buffer, cube.tf.buffer, cube.track.buffer]
       : [];
-    self.postMessage({ ok: true, nt, ns, drill, cube }, transfer);
+    // ANCHOR rides along because computeAnchor() set it in this realm only;
+    // the main thread adopts it before rendering (#102).
+    self.postMessage({ ok: true, nt, ns, drill, cube, anchor: ANCHOR }, transfer);
   } catch (err) {
     self.postMessage({ ok: false, error: String(err && err.message || err) });
   }
