@@ -40,6 +40,18 @@ def _strip_punct(text: str) -> str:
     return _WHITESPACE_RE.sub(" ", text).strip()
 
 
+def _symbol_only_fallback(raw: str) -> str:
+    """Key for a name that is nothing but punctuation or symbols ("!!!", "?").
+
+    Stripping punctuation empties it, and Phase 8 refuses a row with an empty
+    normalized name — so one such scrobble, which ingest keeps forever, failed
+    every later run at Phase 8 (#106). Keep the folded symbols instead: the key
+    stays stable and distinct, and names with any word character never get here,
+    so no existing key moves.
+    """
+    return _WHITESPACE_RE.sub(" ", _fold(raw)).strip()
+
+
 def normalize_artist(artist: str) -> str:
     """Normalize an artist name for use as a join key.
 
@@ -53,7 +65,7 @@ def normalize_artist(artist: str) -> str:
     text = _AMPERSAND_RE.sub(" and ", text)
     text = _FEAT_RE.sub("feat", text)
     text = _LEADING_THE_RE.sub("", text)
-    return _strip_punct(text)
+    return _strip_punct(text) or _symbol_only_fallback(artist)
 
 
 def normalize_track(track: str) -> str:
@@ -67,7 +79,7 @@ def normalize_track(track: str) -> str:
     text = _fold(track)
     text = _WHITESPACE_RE.sub(" ", text).strip()
     text = _FEAT_RE.sub("feat", text)
-    return _strip_punct(text)
+    return _strip_punct(text) or _symbol_only_fallback(track)
 
 
 def join_key(artist: str, track: str) -> str:
