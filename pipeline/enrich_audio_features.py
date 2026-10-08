@@ -133,9 +133,9 @@ def enrich(
         raise FileNotFoundError(input_path)
 
     tracks = read_jsonl(input_path)
-    if limit is not None:
-        tracks = tracks[:limit]
-    log.info("Tracks loaded: %d", len(tracks))
+    # `limit` caps the work, never the output — see resolve_isrcs.enrich (#99).
+    work = tracks if limit is None else tracks[:limit]
+    log.info("Tracks loaded: %d (processing %d)", len(tracks), len(work))
 
     client = RateLimitedClient(
         RECCOBEATS_CACHE,
@@ -146,7 +146,7 @@ def enrich(
     )
 
     candidates = [
-        t for t in tracks
+        t for t in work
         if t.get("isrc") and (force != FORCE_OFF or not t.get("audio_features"))
     ]
     # ReccoBeats echoes ISRCs upper-cased, and the resolve map is keyed that way;
@@ -157,7 +157,7 @@ def enrich(
     client.warn_if_forced(len(candidates))
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    stats = {"total": len(tracks), "already_had": len(tracks) - len(candidates),
+    stats = {"total": len(work), "already_had": len(work) - len(candidates),
               "resolved": 0, "unresolved": 0}
 
     try:

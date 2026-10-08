@@ -205,9 +205,11 @@ def enrich(
         raise FileNotFoundError(input_path)
 
     tracks = read_jsonl(input_path)
-    if limit is not None:
-        tracks = tracks[:limit]
-    log.info("Tracks loaded: %d", len(tracks))
+    # `limit` caps the work, never the output: scripts/backfill_audio_features.py
+    # runs this phase in place on tracks.jsonl, where writing back only the
+    # slice deleted every other row (#99).
+    work = tracks if limit is None else tracks[:limit]
+    log.info("Tracks loaded: %d (processing %d)", len(tracks), len(work))
 
     mb_client = RateLimitedClient(
         MUSICBRAINZ_CACHE,
@@ -226,20 +228,20 @@ def enrich(
         flush_every=50,
         force=force,
     )
-    mb_client.warn_if_forced(sum(1 for t in tracks if not t.get("isrc") and t.get("musicbrainz_id")))
-    dz_client.warn_if_forced(sum(1 for t in tracks if not t.get("isrc")))
+    mb_client.warn_if_forced(sum(1 for t in work if not t.get("isrc") and t.get("musicbrainz_id")))
+    dz_client.warn_if_forced(sum(1 for t in work if not t.get("isrc")))
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     stats = {
-        "total": len(tracks), "already_had": 0,
+        "total": len(work), "already_had": 0,
         "resolved_musicbrainz": 0, "resolved_deezer": 0, "unresolved": 0,
     }
     t0 = time.monotonic()
-    to_resolve = sum(1 for t in tracks if not t.get("isrc"))
+    to_resolve = sum(1 for t in work if not t.get("isrc"))
     done = 0
 
     try:
-        for track in tracks:
+        for track in work:
             if track.get("isrc"):
                 stats["already_had"] += 1
                 continue

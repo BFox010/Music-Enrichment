@@ -321,3 +321,32 @@ class TestDeezerInBandErrors:
         query = 'artist:"Portishead" track:"Roads"'
         client = _StubDeezerClient({query: {"error": {"code": 4}}}, {})
         assert _resolve_deezer(client, "Portishead", "Roads") is None
+
+
+class TestLimitCapsWorkNotOutput:
+    """#99: scripts/backfill_audio_features.py runs 5a in place on tracks.jsonl,
+    so a `limit` that sliced the output deleted every row past it."""
+
+    def test_in_place_limited_run_keeps_every_row(self, monkeypatch, tmp_path) -> None:
+        path = tmp_path / "tracks.jsonl"
+        tracks = [{"artist": "A", "track": f"T{i}"} for i in range(5)]
+        path.write_text("".join(json.dumps(t) + "\n" for t in tracks), encoding="utf-8")
+
+        monkeypatch.setattr(
+            ri, "RateLimitedClient",
+            lambda *a, **k: type("C", (), {
+                "flush": lambda self: None,
+                "warn_if_forced": lambda self, n: None,
+                "cache_summary": lambda self: "stub",
+            })(),
+        )
+        monkeypatch.setattr(ri, "_resolve_musicbrainz", lambda client, mbid: None)
+        monkeypatch.setattr(
+            ri, "_resolve_deezer", lambda client, artist, track: "GBAAA9400013",
+        )
+        stats = ri.enrich(input_path=path, output_path=path, limit=2)
+
+        rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l]
+        assert [r["track"] for r in rows] == [f"T{i}" for i in range(5)]
+        assert [bool(r.get("isrc")) for r in rows] == [True, True, False, False, False]
+        assert stats["total"] == 2
