@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 import pytest
+import requests
 
 from pipeline._http import (
     FORCE_ALL,
@@ -547,3 +548,34 @@ class TestLastfmClassifier:
     def test_a_good_body_is_not_an_error(self) -> None:
         assert classify_lastfm(OK_BODY) is None
         assert classify_lastfm("not a dict") is None
+
+
+class TestNetworkErrorsNeverLogTheQueryString:
+    """#104: requests puts the full request URL in a network error's message,
+    and Last.fm (api_key) and Discogs (token) carry their credential in the
+    query string. Logging the exception wrote the key into runs/*.log."""
+
+    SENTINEL = "SENTINEL-KEY-0123456789"
+
+    class _FailingSession:
+        headers: dict = {}
+
+        def get(self, url, params=None, timeout=None):
+            # The shape requests itself produces for a refused connection.
+            raise requests.ConnectionError(
+                f"HTTPConnectionPool(host='example.test', port=443): Max retries "
+                f"exceeded with url: /api?method=track.getInfo&api_key="
+                f"{TestNetworkErrorsNeverLogTheQueryString.SENTINEL}"
+            )
+
+    def test_sentinel_key_never_reaches_the_log(self, monkeypatch, caplog) -> None:
+        monkeypatch.setattr("pipeline._http.time.sleep", lambda s: None)
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp)
+            c.session = self._FailingSession()
+            with caplog.at_level("DEBUG", logger="pipeline._http"):
+                result = c.get(URL, {"api_key": self.SENTINEL}, "k")
+
+        assert result["_error"] == "max_retries"
+        assert any("ConnectionError" in r.getMessage() for r in caplog.records)
+        assert all(self.SENTINEL not in r.getMessage() for r in caplog.records)

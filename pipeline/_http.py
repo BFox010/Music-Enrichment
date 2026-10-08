@@ -15,6 +15,7 @@ import random
 import time
 from pathlib import Path
 from typing import Any, Callable
+from urllib.parse import urlsplit
 
 import requests
 
@@ -348,8 +349,12 @@ class RateLimitedClient:
                 if attempt == HTTP_MAX_RETRIES - 1:
                     continue
                 wait = min(HTTP_BACKOFF_BASE * (2 ** attempt), HTTP_BACKOFF_MAX)
-                log.debug("Network error %s on attempt %d/%d — waiting %.1fs",
-                          e, attempt + 1, HTTP_MAX_RETRIES, wait)
+                # Never `e` itself: requests puts the full URL in the message,
+                # query string included, and Last.fm's api_key and Discogs'
+                # token travel there — straight into runs/*.log (#104).
+                log.debug("Network error %s from %s on attempt %d/%d — waiting %.1fs",
+                          type(e).__name__, urlsplit(url).hostname,
+                          attempt + 1, HTTP_MAX_RETRIES, wait)
                 time.sleep(wait)
         else:
             result = {"_error": "max_retries"}
