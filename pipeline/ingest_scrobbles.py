@@ -160,6 +160,7 @@ def ingest_from_records(
                  len(parsed) - len(deduped))
     parsed = deduped
 
+    unchanged = False
     if mode == "append" and output_path.exists():
         existing: list[dict] = []
         with open(output_path, "r", encoding="utf-8") as fh:
@@ -209,6 +210,7 @@ def ingest_from_records(
             len(existing), len(new_only), len(parsed) - len(new_only),
         )
         parsed = sorted(existing + new_only, key=lambda r: r["scrobbled_at"])
+        unchanged = not new_only and not renormalized
 
     existing_rows = _count_existing_rows(output_path)
     if len(parsed) < existing_rows and not allow_shrink:
@@ -220,6 +222,13 @@ def ingest_from_records(
             f"shrink the history, pass allow_shrink=True (CLI: "
             f"--replace --allow-shrink)."
         )
+
+    if unchanged:
+        # Nothing new and nothing re-keyed: rewriting would produce the same
+        # rows, and an untouched file lets a caller skip its reload. A no-op
+        # Last.fm sync rewrote ~1.3 MB and made every client re-download (#105).
+        log.info("No new rows — %s left untouched (%d rows)", output_path, existing_rows)
+        return len(parsed)
 
     # Atomic: a crash mid-write would half-truncate the file — the same history
     # loss the shrink guard above exists to prevent.

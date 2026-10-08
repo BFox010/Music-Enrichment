@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import random
@@ -28,6 +29,12 @@ _PAGE_SIZE = 200
 # Safety cap so a since_ts=0 full-history fetch (or a misbehaving API reporting a
 # huge totalPages) can't loop unbounded. 250 pages × 200 = 50k scrobbles.
 _MAX_PAGES = 250
+# Re-fetch this far behind the newest stored play. Offline and batched
+# scrobblers submit plays late with their original timestamps, so a fetch
+# strictly after the newest stored play never saw them (#105). Last.fm refuses
+# scrobbles more than 14 days old, so nothing can arrive later than this;
+# ingest dedupes the overlap.
+_OVERLAP_SECONDS = 14 * 86400
 
 
 def get_last_scrobble_ts(scrobbles: list[dict]) -> int:
@@ -84,22 +91,54 @@ async def _get_page(client: httpx.AsyncClient, params: dict) -> dict:
     raise RuntimeError(f"Last.fm sync failed after {HTTP_MAX_RETRIES} attempts: {last_error}")
 
 
+def _latest_ts_on_disk(path: Path) -> int:
+    """Unix timestamp of the newest scrobble in ``path``, or 0.
+
+    Read from the file, not the server's snapshot: ``python -m app.refresh``
+    never loads one, so it fetched the entire history on every run (#105), and
+    a snapshot gone stale behind a CLI ingest would understate it too.
+    """
+    if not path.exists():
+        return 0
+    latest = ""
+    with open(path, "r", encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                stamp = json.loads(line).get("scrobbled_at") or ""
+            except (json.JSONDecodeError, AttributeError):
+                continue
+            if stamp > latest:
+                latest = stamp
+    return get_last_scrobble_ts([{"scrobbled_at": latest}]) if latest else 0
+
+
 async def fetch_recent_scrobbles(
     username: str,
     api_key: str,
     since_ts: int = 0,
-) -> tuple[list[dict], int]:
+) -> tuple[list[dict], int, bool]:
     """Fetch all pages of user.getRecentTracks since since_ts.
 
     Paginates automatically (_PAGE_SIZE records / page).
     Skips now-playing stubs (no date field).
-    Returns ``(raw Last.fm records, pages actually fetched)`` — not yet parsed
-    by parse_raw_scrobble.
+    Returns ``(raw Last.fm records, pages actually fetched, complete)`` — the
+    records not yet parsed by parse_raw_scrobble.
+
+    When the range is longer than ``_MAX_PAGES``, only the *oldest* pages are
+    fetched and ``complete`` is False. Last.fm pages newest-first, and the cap
+    used to keep pages 1..250 — the newest plays — so the next sync resumed
+    after them and the older remainder was never fetched (#105). Walking from
+    the oldest end leaves no gap: the next sync carries on from where this
+    one stopped.
     """
     all_records: list[dict] = []
     page = 1
     total_pages = 1
     pages_fetched = 0
+    complete = True
+    pages: list[int] | None = None
     interval = 1.0 / LASTFM_RATE_LIMIT
     # Freeze the upper bound before page 1. Last.fm pages newest-first, so a
     # scrobble landing mid-fetch shifts every subsequent page by one and can
@@ -108,7 +147,7 @@ async def fetch_recent_scrobbles(
     to_ts = int(time.time())
 
     async with httpx.AsyncClient(timeout=30) as client:
-        while page <= total_pages:
+        while True:
             params: dict = {
                 "method": "user.getRecentTracks",
                 "user": username,
@@ -118,7 +157,7 @@ async def fetch_recent_scrobbles(
                 "page": page,
             }
             if since_ts > 0:
-                params["from"] = since_ts + 1  # exclude the already-stored timestamp
+                params["from"] = max(since_ts - _OVERLAP_SECONDS, 0)
             params["to"] = to_ts
 
             body = await _get_page(client, params)
@@ -130,14 +169,25 @@ async def fetch_recent_scrobbles(
                 )
 
             rt = body.get("recenttracks", {})
-            attr = rt.get("@attr", {})
-            total_pages = int(attr.get("totalPages", 1))
-            if total_pages > _MAX_PAGES:
-                log.warning(
-                    "Last.fm reported %d pages; capping at %d (%d scrobbles)",
-                    total_pages, _MAX_PAGES, _MAX_PAGES * _PAGE_SIZE,
-                )
-                total_pages = _MAX_PAGES
+            if pages is None:
+                attr = rt.get("@attr", {})
+                total_pages = int(attr.get("totalPages", 1))
+                if total_pages > _MAX_PAGES:
+                    log.warning(
+                        "Last.fm reported %d pages; fetching the oldest %d (%d "
+                        "scrobbles). The history is INCOMPLETE until another sync "
+                        "fetches the rest.",
+                        total_pages, _MAX_PAGES, _MAX_PAGES * _PAGE_SIZE,
+                    )
+                    complete = False
+                    # Oldest first. Page 1's newest plays are dropped here and
+                    # picked up by the sync that continues from these.
+                    pages = list(range(total_pages, total_pages - _MAX_PAGES, -1))
+                    page = pages.pop(0)
+                    await asyncio.sleep(interval)
+                    continue
+                pages = list(range(2, total_pages + 1))
+
             tracks = rt.get("track", [])
 
             # Last.fm can return a single dict instead of a list when there's one result
@@ -147,11 +197,12 @@ async def fetch_recent_scrobbles(
             # Skip now-playing stubs (they have @attr.nowplaying and no date block)
             all_records.extend(t for t in tracks if t.get("date"))
 
-            page += 1
-            if page <= total_pages:
-                await asyncio.sleep(interval)
+            if not pages:
+                break
+            page = pages.pop(0)
+            await asyncio.sleep(interval)
 
-    return all_records, pages_fetched
+    return all_records, pages_fetched, complete
 
 
 async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
@@ -164,24 +215,27 @@ async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
         )
 
     from app.data import get_scrobbles
-    existing = get_scrobbles()
-    since_ts = get_last_scrobble_ts(existing)
-    prev_count = len(existing)
-    if since_ts == 0 and prev_count > 0:
+    prev_count = len(get_scrobbles())
+    since_ts = await asyncio.to_thread(_latest_ts_on_disk, scrobbles_path)
+    if since_ts == 0 and scrobbles_path.exists():
         log.warning(
-            "No usable latest-scrobble timestamp from %d existing rows — "
-            "fetching full history (duplicates will be de-duped on append).",
-            prev_count,
+            "No usable latest-scrobble timestamp in %s — fetching full history "
+            "(duplicates will be de-duped on append).",
+            scrobbles_path,
         )
 
-    records, pages_fetched = await fetch_recent_scrobbles(username, api_key, since_ts)
+    records, pages_fetched, complete = await fetch_recent_scrobbles(
+        username, api_key, since_ts
+    )
 
     # ingest_from_records re-reads, re-normalizes and rewrites the whole
     # scrobbles file (~540 ms on the committed history). sync() is awaited from
     # coroutine routes, so running it inline blocked the event loop for that
     # long on every sync and refresh.
+    # Imported here: app.refresh imports this module at load time.
+    from app.refresh import run_to_completion
     on_disk_before = _count_rows(scrobbles_path)
-    total = await asyncio.to_thread(
+    total = await run_to_completion(
         ingest_from_records, records, output_path=scrobbles_path, mode="append"
     )
 
@@ -194,6 +248,8 @@ async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
         "total": total,
         "pages_fetched": pages_fetched,
         "in_memory_before": prev_count,
+        # False when the fetch hit _MAX_PAGES: run another sync for the rest.
+        "complete": complete,
     }
 
 

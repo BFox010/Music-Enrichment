@@ -27,6 +27,7 @@ from dotenv import load_dotenv
 
 from pipeline._http import FORCE_OFF, RateLimitedClient
 from pipeline.config import (
+    MissingCredentialsError,
     DISCOGS_API_ROOT,
     DISCOGS_CACHE,
     DISCOGS_RATE_LIMIT,
@@ -119,7 +120,7 @@ def enrich(
     token = os.getenv("DISCOGS_TOKEN")
     if not token:
         log.error("DISCOGS_TOKEN not set in .env")
-        raise RuntimeError("DISCOGS_TOKEN missing")
+        raise MissingCredentialsError("DISCOGS_TOKEN missing")
     # Discogs requires a descriptive User-Agent; reuse the MusicBrainz one if set.
     user_agent = os.getenv("MUSICBRAINZ_USER_AGENT") or "MusicEnrichment/1.0"
 

@@ -28,6 +28,7 @@ from pipeline.config import (
     REPO_ROOT,
     RUNS_DIR,
     TRACKS_PATH,
+    MissingCredentialsError,
     configure_logging,
     get_logger,
 )
@@ -93,6 +94,12 @@ def _phase(phase_id: str, name: str, fn, *, optional: bool, outputs: list[str] =
             log.warning("Phase %s SKIPPED — missing input: %s", phase_id, e)
             return SKIPPED
         log.error("Phase %s FAILED — required input missing: %s", phase_id, e, exc_info=True)
+        return FAILED
+    except MissingCredentialsError as e:
+        if optional:
+            log.warning("Phase %s SKIPPED — no credentials: %s", phase_id, e)
+            return SKIPPED
+        log.error("Phase %s FAILED — required credentials missing: %s", phase_id, e)
         return FAILED
     except Exception as e:
         log.error("Phase %s FAILED: %s", phase_id, e, exc_info=True)
