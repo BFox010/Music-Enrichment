@@ -181,7 +181,14 @@ function App() {
     window.dispatchEvent(new CustomEvent("ml:state"));
   }, [density, accent]);
 
-  const showToast = useCallback((msg) => { setToast(msg); setTimeout(() => setToast(""), 2600); }, []);
+  // One timer for the one toast slot: an earlier toast's timer used to fire
+  // mid-way through the next one and clear it after ~0.5 s (#120).
+  const toastTimer = useRef(null);
+  const showToast = useCallback((msg) => {
+    clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(""), 2600);
+  }, []);
 
   /* Page switches go through a View Transition: the outgoing page lifts and
      fades while the incoming one settles up into place, and the sidebar's
@@ -535,7 +542,7 @@ function App() {
           <span className="appbar-logo">🎵</span>
           <h1>Music Dashboard</h1>
           <div className="appbar-meta">
-            <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {meta.scrobbleRange}</span>
+            <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {scrobbleYearRange(scrobbles.byYear) || meta.scrobbleRange}</span>
             <span className={"pill-live" + (isLoadingLive ? " loading" : meta.isSample ? "" : " real")}>{isLoadingLive ? "loading library…" : meta.isSample ? "sample data" : "live data"}</span>
           </div>
         </div>

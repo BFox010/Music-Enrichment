@@ -32,13 +32,18 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
         <div className="fb-sort">
           <span className="fb-label">Sort</span>
           <select value={sort} onChange={(e) => onSort(e.target.value)}>
+            {/* Every value a header click or Shuffle can set needs an option, or
+                the select falls back to showing "Most played" (#120). */}
             <option value="plays">Most played</option>
             <option value="plays_asc">Least played</option>
             <option value="artist">Artist A–Z</option>
+            <option value="artist_desc">Artist Z–A</option>
             <option value="track">Title A–Z</option>
+            <option value="track_desc">Title Z–A</option>
             <option value="year_desc">Newest release</option>
             <option value="year_asc">Oldest release</option>
             <option value="recent">Recently played</option>
+            <option value="shuffle">Shuffle</option>
           </select>
         </div>
       </div>

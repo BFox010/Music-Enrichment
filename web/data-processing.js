@@ -147,6 +147,16 @@ function normalizeTrack(raw, i) {
   };
 }
 
+/* "2016–2026" from aggregateScrobbles()'s byYear, or "" when there is none.
+   The app bar read meta.scrobbleRange, which only the sample library sets,
+   so live data always showed "—" (#120). */
+function scrobbleYearRange(byYear) {
+  const years = Object.keys(byYear || {}).map(Number).filter((y) => y > 0);
+  if (!years.length) return "";
+  const lo = Math.min(...years), hi = Math.max(...years);
+  return lo === hi ? String(lo) : `${lo}–${hi}`;
+}
+
 function aggregateScrobbles(rows) {
   const byHour = Array(24).fill(0), byDow = Array(7).fill(0), bySeason = { winter: 0, spring: 0, summer: 0, fall: 0 }, byYear = {};
   let total = 0;
