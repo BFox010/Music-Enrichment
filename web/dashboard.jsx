@@ -93,8 +93,9 @@ function App() {
   const [dzShow, setDzShow] = useState(false);
   const [toast, setToast] = useState("");
   const [refreshing, setRefreshing] = useState(false);
-  // Bumped after a successful refresh so API-backed pages (Albums, Forgotten
-  // Favorites, Trajectory) drop their cached response and re-fetch the updated data.
+  // Bumped whenever the server's data changes (Refresh or Scrobble Sync) so
+  // every API-backed page drops its cached response and re-fetches. Pages
+  // that only received `active` kept the pre-refresh data on screen (#112).
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [isLoadingLive, setIsLoadingLive] = useState(true);
   const fileRef = useRef(null);
@@ -140,7 +141,10 @@ function App() {
         worker.terminate();
         if (loadGenRef.current !== myGen) { resolve(null); return; }
         const m = e.data || {};
-        if (m.ok) resolve({ nt: m.nt, ns: m.ns, drill: m.drill, cube: m.cube });
+        if (m.ok) {
+          adoptAnchor(m.anchor);
+          resolve({ nt: m.nt, ns: m.ns, drill: m.drill, cube: m.cube });
+        }
         else runSync();
       };
       worker.onerror = () => { worker.terminate(); runSync(); };
@@ -177,7 +181,14 @@ function App() {
     window.dispatchEvent(new CustomEvent("ml:state"));
   }, [density, accent]);
 
-  const showToast = useCallback((msg) => { setToast(msg); setTimeout(() => setToast(""), 2600); }, []);
+  // One timer for the one toast slot: an earlier toast's timer used to fire
+  // mid-way through the next one and clear it after ~0.5 s (#120).
+  const toastTimer = useRef(null);
+  const showToast = useCallback((msg) => {
+    clearTimeout(toastTimer.current);
+    setToast(msg);
+    toastTimer.current = setTimeout(() => setToast(""), 2600);
+  }, []);
 
   /* Page switches go through a View Transition: the outgoing page lifts and
      fades while the incoming one settles up into place, and the sidebar's
@@ -192,6 +203,36 @@ function App() {
     const apply = () => ReactDOM.flushSync(() => setPage(next));
     if (window.MOTION) window.MOTION.viewTransition(apply); else apply();
   }, []);
+
+  /* Re-reads the live library after the server's data changed. Shared by
+     Refresh and Scrobble Sync: a sync used to update only its own card, so the
+     KPIs and charts kept the pre-sync plays until a full page reload (#112). */
+  const reloadLiveLibrary = useCallback(async () => {
+    try {
+      const [tr, sc] = await Promise.allSettled([
+        fetch("tracks.min.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
+        fetch("scrobbles.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
+      ]);
+      const tracksText = tr.status === "fulfilled" ? tr.value : null;
+      const scrobblesText = sc.status === "fulfilled" ? sc.value : null;
+      // Off the main thread via the shared worker helper (F-08b) — a
+      // refresh used to re-parse and re-cross-join synchronously here,
+      // ~0.5s of main-thread work on the current library size.
+      const result = await runProcessLibrary({ tracksText, scrobblesText });
+      if (result) {
+        const { nt, ns, drill: nd, cube: nc } = result;
+        if (nt || ns) {
+          setData((d) => ({
+            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
+            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
+          }));
+          if (nd) setDrill(nd);
+          if (nc) setCube(nc);
+        }
+      }
+    } catch (e) { /* live fetch optional */ }
+    setRefreshVersion((v) => v + 1);
+  }, [runProcessLibrary]);
 
   const doRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -208,36 +249,13 @@ function App() {
         ? `+${newCount} new scrobble${newCount !== 1 ? "s" : ""} · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`
         : `Up to date · ${pending} track${pending !== 1 ? "s" : ""} awaiting Exportify`;
       showToast(msg);
-      try {
-        const [tr, sc] = await Promise.allSettled([
-          fetch("tracks.min.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
-          fetch("scrobbles.jsonl").then((res) => res.ok ? res.text() : Promise.reject()),
-        ]);
-        const tracksText = tr.status === "fulfilled" ? tr.value : null;
-        const scrobblesText = sc.status === "fulfilled" ? sc.value : null;
-        // Off the main thread via the shared worker helper (F-08b) — a
-        // refresh used to re-parse and re-cross-join synchronously here,
-        // ~0.5s of main-thread work on the current library size.
-        const result = await runProcessLibrary({ tracksText, scrobblesText });
-        if (result) {
-          const { nt, ns, drill: nd, cube: nc } = result;
-          if (nt || ns) {
-            setData((d) => ({
-              meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
-              tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
-            }));
-            if (nd) setDrill(nd);
-            if (nc) setCube(nc);
-          }
-        }
-      } catch (e) { /* live fetch optional */ }
-      setRefreshVersion((v) => v + 1);
+      await reloadLiveLibrary();
     } catch (e) {
       showToast("Refresh error: " + e.message);
     } finally {
       setRefreshing(false);
     }
-  }, [showToast, runProcessLibrary]);
+  }, [showToast, reloadLiveLibrary]);
 
   /* ── file loading ── */
   const handleFiles = useCallback(async (fileList) => {
@@ -524,7 +542,7 @@ function App() {
           <span className="appbar-logo">🎵</span>
           <h1>Music Dashboard</h1>
           <div className="appbar-meta">
-            <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {meta.scrobbleRange}</span>
+            <span>{nf(tracks.length)} tracks · {nf(scrobbles.total)} scrobbles · {scrobbleYearRange(scrobbles.byYear) || meta.scrobbleRange}</span>
             <span className={"pill-live" + (isLoadingLive ? " loading" : meta.isSample ? "" : " real")}>{isLoadingLive ? "loading library…" : meta.isSample ? "sample data" : "live data"}</span>
           </div>
         </div>
@@ -626,7 +644,7 @@ function App() {
             <span className="slicer-note">
               {timeframe === "all"
                 ? "All recorded scrobbles"
-                : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b> · every chart on this page</>}
+                : <>Plays counted within <b>{TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase()}</b>{ANCHOR.stale ? <> ({anchorPeriodKey(timeframe)})</> : null} · every chart on this page</>}
               {ANCHOR.stale && ANCHOR.dataEnd
                 ? <> · data through <b>{ANCHOR.dataEnd}</b></>
                 : null}
@@ -691,12 +709,12 @@ function App() {
 
         {/* ── PAGE: Listening Map ─────────────────────────────────── */}
         <div style={{ display: page === "map" ? "" : "none" }}>
-          {ListeningMap && <ListeningMap active={page === "map"} />}
+          {ListeningMap && <ListeningMap active={page === "map"} refreshVersion={refreshVersion} />}
         </div>
 
         {/* ── PAGE: Audio Features ────────────────────────────────── */}
         <div style={{ display: page === "audio" ? "" : "none" }}>
-          {AudioFeaturesChart && <AudioFeaturesChart active={page === "audio"} />}
+          {AudioFeaturesChart && <AudioFeaturesChart active={page === "audio"} refreshVersion={refreshVersion} />}
           <AudioFeatureExtremes tracks={tracks} />
         </div>
 
@@ -721,7 +739,7 @@ function App() {
 
         {/* ── PAGE: Tag Constellation ─────────────────────────────── */}
         <div style={{ display: page === "constellation" ? "" : "none" }}>
-          {TagConstellation && <TagConstellation active={page === "constellation"} />}
+          {TagConstellation && <TagConstellation active={page === "constellation"} refreshVersion={refreshVersion} />}
         </div>
 
         {/* ── PAGE: Genre & Moods ─────────────────────────────────── */}
@@ -755,7 +773,7 @@ function App() {
             </div>
           </section>
           <section className="block">
-            {SaturationChart && <SaturationChart active={page === "coverage"} />}
+            {SaturationChart && <SaturationChart active={page === "coverage"} refreshVersion={refreshVersion} />}
           </section>
         </div>
 
@@ -785,7 +803,7 @@ function App() {
 
         {/* ── PAGE: Scrobble Sync ─────────────────────────────────── */}
         <div style={{ display: page === "sync" ? "" : "none" }}>
-          <ScrobbleSync />
+          <ScrobbleSync onSynced={reloadLiveLibrary} />
         </div>
 
         {/* ── Persistent overlays ─────────────────────────────────── */}
@@ -862,7 +880,7 @@ function App() {
   );
 }
 
-function ScrobbleSync() {
+function ScrobbleSync({ onSynced }) {
   const [status, setStatus] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState(null);
@@ -888,7 +906,9 @@ function ScrobbleSync() {
         setError(d.detail || "Sync failed");
       } else {
         setResult(d);
-        await fetchStatus();
+        // A sync that wrote nothing leaves the library as it was; skip the
+        // ~0.5 s re-process rather than redo it for no change.
+        await Promise.all([fetchStatus(), onSynced && d.new !== 0 ? onSynced() : null]);
       }
     } catch (e) {
       setError("Network error: " + e.message);

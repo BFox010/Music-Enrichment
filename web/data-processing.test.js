@@ -230,3 +230,12 @@ test("buildDrill and buildCube agree with attachWindows on the same fixture", ()
   const plays = (t) => Object.values(t.py || {}).reduce((a, b) => a + b, 0);
   assert.equal(plays(real) + plays(merged), scrobbles.length);
 });
+
+// #120: the app bar read meta.scrobbleRange, which only the sample library
+// sets, so live data always showed "—".
+test("scrobbleYearRange spans the years present", () => {
+  assert.equal(scrobbleYearRange({ 2019: 4, 2016: 1, 2026: 9 }), "2016–2026");
+  assert.equal(scrobbleYearRange({ 2024: 3 }), "2024");
+  assert.equal(scrobbleYearRange({}), "");
+  assert.equal(scrobbleYearRange(undefined), "");
+});

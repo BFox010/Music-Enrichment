@@ -406,7 +406,7 @@ function TrajectoryPage({ active, refreshVersion = 0 }) {
 }
 
 /* ── Listening Map: calendar heatmap (per year) + hour×day grid ── */
-function ListeningMap({ active }) {
+function ListeningMap({ active, refreshVersion = 0 }) {
   const calRef  = useRef(null);
   const hwRef   = useRef(null);
   const calChart = useEChart(calRef);
@@ -429,6 +429,9 @@ function ListeningMap({ active }) {
           else setLoading(false);
           return;
         }
+        // Every response carries the year list, so a year a sync just added
+        // appears without a separate request.
+        if (data.years && data.years.length) setYears(data.years);
         setLoading(false);
         const c = themeVars();
         const colorScale = ["#191527", "#4c2f95", "#7c4ddb", c.accent];
@@ -482,7 +485,7 @@ function ListeningMap({ active }) {
         }
       })
       .catch(() => setLoading(false));
-  }, [active, year]);
+  }, [active, year, refreshVersion]);
 
   return (
     <section className="block">
@@ -515,7 +518,7 @@ function ListeningMap({ active }) {
 }
 
 /* ── Audio Features: scatter + histograms ── */
-function AudioFeaturesChart({ active }) {
+function AudioFeaturesChart({ active, refreshVersion = 0 }) {
   const scRef   = useRef(null);
   const histRef = useRef(null);
   const scChart   = useEChart(scRef);
@@ -601,7 +604,7 @@ function AudioFeaturesChart({ active }) {
         }
       })
       .catch(() => setLoading(false));
-  }, [active]);
+  }, [active, refreshVersion]);
 
   return (
     <section className="block">
@@ -623,7 +626,7 @@ function AudioFeaturesChart({ active }) {
 }
 
 /* ── Saturation donut (folded into the Coverage page) ── */
-function SaturationChart({ active }) {
+function SaturationChart({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [data, setData] = useState(null);
@@ -638,7 +641,7 @@ function SaturationChart({ active }) {
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((d) => { setLoading(false); setData(d); })
       .catch(() => setLoading(false));
-  }, [active]);
+  }, [active, refreshVersion]);
 
   useEffect(() => {
     if (!active || !chart.current || !data || !data.length) return;
@@ -788,7 +791,7 @@ function AlbumsPage({ active, tracks }) {
 }
 
 /* ── Tag Constellation (force graph) ── */
-function TagConstellation({ active }) {
+function TagConstellation({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
   const chart = useEChart(elRef);
   const [field, setField] = useState("discogs_styles");
@@ -940,7 +943,7 @@ function TagConstellation({ active }) {
       if (rafB) cancelAnimationFrame(rafB);
       if (onWinResize) window.removeEventListener("resize", onWinResize);
     };
-  }, [active, field]);
+  }, [active, field, refreshVersion]);
 
   return (
     <section className="block">

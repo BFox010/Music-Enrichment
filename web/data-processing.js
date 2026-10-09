@@ -82,6 +82,37 @@ function computeAnchor(scrobbleRows) {
   return ANCHOR;
 }
 
+/* computeAnchor() runs wherever processLibrary() runs, which is normally the
+   worker — a separate realm with its own ANCHOR. The main thread reads ANCHOR
+   for the year KPIs, the filter bar and the "data through" note, so without
+   this it kept its wall-clock seed: "This month" counted the data's month
+   under the current month's label, and the stale note never rendered (#102).
+   The worker posts its ANCHOR back and the main thread adopts it here. */
+function adoptAnchor(a) {
+  if (!a) return ANCHOR;
+  Object.assign(ANCHOR, a);
+  // structuredClone keeps a Date, but a JSON hop (or a test) may not.
+  if (!(ANCHOR.date instanceof Date)) ANCHOR.date = new Date(ANCHOR.date);
+  return ANCHOR;
+}
+
+/* The period a "this/last" timeframe actually covers, e.g. "2026-08" for
+   month_this. Only worth showing when the anchor is stale, where "This month"
+   no longer means the calendar month on the wall. */
+function anchorPeriodKey(tf) {
+  switch (tf) {
+    case "year_this": return String(ANCHOR.curYear);
+    case "year_last": return String(ANCHOR.lastYear);
+    case "season_this": return ANCHOR.curSeasonKey;
+    case "season_last": return ANCHOR.lastSeasonKey;
+    case "month_this": return ANCHOR.curMonthKey;
+    case "month_last": return ANCHOR.lastMonthKey;
+    case "week_this": return ANCHOR.curWeekKey;
+    case "week_last": return ANCHOR.lastWeekKey;
+    default: return "";
+  }
+}
+
 function normalizeTrack(raw, i) {
   return {
     i,
@@ -114,6 +145,16 @@ function normalizeTrack(raw, i) {
     sat: raw.saturation_tier != null ? raw.saturation_tier : (raw.sat || null),
     playlists: raw.playlists || []
   };
+}
+
+/* "2016–2026" from aggregateScrobbles()'s byYear, or "" when there is none.
+   The app bar read meta.scrobbleRange, which only the sample library sets,
+   so live data always showed "—" (#120). */
+function scrobbleYearRange(byYear) {
+  const years = Object.keys(byYear || {}).map(Number).filter((y) => y > 0);
+  if (!years.length) return "";
+  const lo = Math.min(...years), hi = Math.max(...years);
+  return lo === hi ? String(lo) : `${lo}–${hi}`;
 }
 
 function aggregateScrobbles(rows) {
