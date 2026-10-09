@@ -23,6 +23,7 @@ from dotenv import load_dotenv
 
 from pipeline._http import FORCE_OFF, RateLimitedClient, classify_lastfm
 from pipeline.config import (
+    MissingCredentialsError,
     LASTFM_API_ROOT,
     LASTFM_CACHE,
     LASTFM_RATE_LIMIT,
@@ -257,7 +258,7 @@ def enrich(
     api_key = os.getenv("LASTFM_API_KEY")
     if not api_key:
         log.error("LASTFM_API_KEY not set in .env")
-        raise RuntimeError("LASTFM_API_KEY missing")
+        raise MissingCredentialsError("LASTFM_API_KEY missing")
 
     if input_path is None:
         input_path = next((p for p in _INPUT_PRIORITY if p.exists()), DEFAULT_INPUT)

@@ -201,7 +201,7 @@ def api_tag_graph(
 async def api_reload():
     """Shares the refresh/sync mutation lock (F-05): a reload racing a
     full refresh could otherwise re-read tracks.jsonl mid-rewrite."""
-    from app.refresh import RefreshInProgress, exclusive_mutation
+    from app.refresh import RefreshInProgress, exclusive_mutation, run_to_completion
     try:
         async with exclusive_mutation("reload"):
             # data.reload() re-parses both JSONL files synchronously. This
@@ -209,7 +209,7 @@ async def api_reload():
             # took it out of the threadpool FastAPI runs `def` handlers in — so
             # without to_thread the parse would block the event loop and stall
             # every concurrent request for its duration.
-            return await asyncio.to_thread(data.reload)
+            return await run_to_completion(data.reload)
     except RefreshInProgress as exc:
         raise HTTPException(status_code=409, detail=str(exc))
 
@@ -253,15 +253,20 @@ async def lastfm_sync():
     run outside it entirely, so it could overlap a full refresh mid-rewrite
     of scrobbles.jsonl and the pipeline intermediates that read it."""
     from app.lastfm_sync import sync as _sync
-    from app.refresh import RefreshInProgress, exclusive_mutation
+    from app.refresh import RefreshInProgress, exclusive_mutation, run_to_completion
     try:
         async with exclusive_mutation("sync"):
             result = await _sync(SCROBBLES_PATH)
+            # A sync that added nothing to a snapshot already matching the file
+            # needs no reload; reloading bumped the generation, so every client
+            # re-downloaded ~1.3 MB to get the same bytes (#105).
+            if result.get("new") == 0 and result.get("in_memory_before") == result.get("total"):
+                return result
             # Same reasoning as api_reload: this handler is a coroutine (it has
             # to be, to hold the async lock), so a bare data.reload() re-parses
             # both JSONL files *on the event loop* and stalls every concurrent
             # request — including the SPA's own polling of /api/lastfm/status.
-            await asyncio.to_thread(data.reload)
+            await run_to_completion(data.reload)
             return result
     except RefreshInProgress as exc:
         raise HTTPException(status_code=409, detail=str(exc))

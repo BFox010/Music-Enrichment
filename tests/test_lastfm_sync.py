@@ -91,7 +91,7 @@ class TestFetchRecentScrobbles:
         tracks = [_raw_track(), _raw_track("Massive Attack", "Teardrop", "1705320000")]
         page = _api_page(tracks)
         with patch("httpx.AsyncClient", return_value=_mock_client([page])):
-            result, _pages = asyncio.run(
+            result, _pages, _complete = asyncio.run(
                 fetch_recent_scrobbles("testuser", "fakekey", since_ts=0)
             )
         assert len(result) == 2
@@ -103,7 +103,7 @@ class TestFetchRecentScrobbles:
             page=2, total_pages=2,
         )
         with patch("httpx.AsyncClient", return_value=_mock_client([page1, page2])):
-            result, _pages = asyncio.run(
+            result, _pages, _complete = asyncio.run(
                 fetch_recent_scrobbles("testuser", "fakekey", since_ts=0)
             )
         assert len(result) == 2
@@ -118,7 +118,7 @@ class TestFetchRecentScrobbles:
         real = _raw_track()
         page = _api_page([nowplaying, real])
         with patch("httpx.AsyncClient", return_value=_mock_client([page])):
-            result, _pages = asyncio.run(
+            result, _pages, _complete = asyncio.run(
                 fetch_recent_scrobbles("testuser", "fakekey", since_ts=0)
             )
         assert len(result) == 1
@@ -132,7 +132,7 @@ class TestFetchRecentScrobbles:
             }
         }
         with patch("httpx.AsyncClient", return_value=_mock_client([body])):
-            result, _pages = asyncio.run(
+            result, _pages, _complete = asyncio.run(
                 fetch_recent_scrobbles("testuser", "fakekey", since_ts=0)
             )
         assert len(result) == 1
@@ -146,22 +146,32 @@ class TestFetchRecentScrobbles:
                 )
 
     def test_caps_total_pages(self):
-        """C1 — a huge totalPages must be capped, not looped unbounded."""
-        # Each page reports 100 total pages; with the cap patched to 2, only 2
-        # requests should be made (and only 2 mock responses are provided, so an
-        # uncapped loop would StopIteration).
+        """C1 — a huge totalPages must be capped, not looped unbounded.
+
+        #105: the cap keeps the *oldest* pages and reports the fetch incomplete.
+        Keeping pages 1..cap (the newest) let the next sync resume after them,
+        stranding everything older for good."""
+        # Page 1 is read for totalPages only; with the cap patched to 2 the walk
+        # then takes pages 100 and 99. Three responses are provided, so an
+        # uncapped loop would StopIteration.
         pages = [
-            _api_page([_raw_track(uts=str(1730606040 + i))], page=i + 1, total_pages=100)
-            for i in range(2)
+            _api_page([_raw_track(uts="1730609999")], page=1, total_pages=100),
+            _api_page([_raw_track(uts="1700000000")], page=100, total_pages=100),
+            _api_page([_raw_track(uts="1700000500")], page=99, total_pages=100),
         ]
         client = _mock_client(pages)
         with patch("httpx.AsyncClient", return_value=client), \
-                patch("app.lastfm_sync._MAX_PAGES", 2):
-            result, _pages = asyncio.run(
+                patch("app.lastfm_sync._MAX_PAGES", 2), \
+                patch("app.lastfm_sync.asyncio.sleep", new=AsyncMock()):
+            result, pages_fetched, complete = asyncio.run(
                 fetch_recent_scrobbles("testuser", "fakekey", since_ts=0)
             )
-        assert client.get.call_count == 2
-        assert len(result) == 2
+        requested = [c.kwargs["params"]["page"] for c in client.get.call_args_list]
+        assert requested == [1, 100, 99]
+        assert pages_fetched == 3
+        assert complete is False
+        # Only the oldest pages' plays; page 1's newest play waits for the next sync.
+        assert sorted(r["date"]["uts"] for r in result) == ["1700000000", "1700000500"]
 
 
 def _mock_client_from(responses):
@@ -202,7 +212,7 @@ class TestSyncTransportFailures:
         page = _api_page([_raw_track()])
         client = _mock_client_from([_resp(503), _resp(502), _resp(200, page)])
         with patch("httpx.AsyncClient", return_value=client):
-            records, pages = asyncio.run(
+            records, pages, _complete = asyncio.run(
                 fetch_recent_scrobbles("testuser", "fakekey", since_ts=0)
             )
         assert len(records) == 1
@@ -213,7 +223,7 @@ class TestSyncTransportFailures:
         page = _api_page([_raw_track()])
         client = _mock_client_from([_resp(429), _resp(200, page)])
         with patch("httpx.AsyncClient", return_value=client):
-            records, _ = asyncio.run(fetch_recent_scrobbles("u", "k", since_ts=0))
+            records, _, _complete = asyncio.run(fetch_recent_scrobbles("u", "k", since_ts=0))
         assert len(records) == 1
 
     def test_exhausted_retries_raise_runtime_error_not_httpx(self):
@@ -269,6 +279,6 @@ class TestPaginationIsFrozen:
             for i in range(3)
         ]
         with patch("httpx.AsyncClient", return_value=_mock_client(pages)):
-            records, fetched = asyncio.run(fetch_recent_scrobbles("u", "k", since_ts=0))
+            records, fetched, _complete = asyncio.run(fetch_recent_scrobbles("u", "k", since_ts=0))
         assert fetched == 3
         assert len(records) == 3

@@ -244,6 +244,16 @@ def configure_logging(
     return run_log_path
 
 
+class MissingCredentialsError(RuntimeError):
+    """A phase's API credential is not configured.
+
+    Distinct from a failure: the orchestrator reports an *optional* phase that
+    raises this as SKIPPED. A blank DISCOGS_TOKEN used to mark 4b FAILED, and a
+    refresh then raised after Phase 8 had already rewritten tracks.jsonl (#118).
+    A required phase raising it still FAILS.
+    """
+
+
 def get_logger(name: str) -> logging.Logger:
     """Module-scoped logger."""
     return logging.getLogger(name)

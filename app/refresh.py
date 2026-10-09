@@ -5,8 +5,9 @@
   3. export feature-less tracks to inputs/pending_exportify.csv
   4. data.reload — refresh the in-memory cache
 
-SKIPPED phases are fine; only FAILED aborts. Phase 3c auto-runs once
-inputs/exportify.csv is present.
+SKIPPED phases are fine; only FAILED aborts the export (the cache is still
+reloaded, so the server matches what the sync and Phase 8 wrote). Phase 3c
+auto-runs once inputs/exportify.csv is present.
 """
 
 from __future__ import annotations
@@ -36,6 +37,10 @@ class RefreshInProgress(RuntimeError):
 # interleave writes or hand a reader a mix of old and new state, so they all
 # go through the one lock below rather than each having their own.
 _refresh_lock = asyncio.Lock()
+# What holds the lock, for the 409: naming the *requested* operation ("a sync
+# is already running" while a refresh was) sent the user looking for the wrong
+# thing (#118).
+_running_op: str | None = None
 
 
 @contextlib.asynccontextmanager
@@ -44,23 +49,53 @@ async def exclusive_mutation(op_name: str) -> AsyncIterator[None]:
     the lock, instead of queuing behind it — a queued sync silently running
     minutes after the click that requested it would be more confusing than an
     immediate "try again" response."""
+    global _running_op
     if _refresh_lock.locked():
-        raise RefreshInProgress(f"a {op_name} is already running")
+        raise RefreshInProgress(
+            f"a {_running_op or 'mutation'} is already running; try the {op_name} again when it finishes"
+        )
     async with _refresh_lock:
-        yield
+        _running_op = op_name
+        try:
+            yield
+        finally:
+            _running_op = None
+
+
+async def run_to_completion(fn, /, *args, **kwargs):
+    """``asyncio.to_thread`` that keeps its caller — and so the lock — waiting
+    until the thread has actually returned.
+
+    A thread can't be cancelled. Cancelling a bare ``await to_thread(...)``
+    unwound the ``async with`` and released the lock while the pipeline thread
+    kept rewriting files, so a second mutation could start on top of it (#118).
+    The cancellation still propagates, just not before the thread is done.
+    """
+    fut = asyncio.ensure_future(asyncio.to_thread(fn, *args, **kwargs))
+    try:
+        return await asyncio.shield(fut)
+    except asyncio.CancelledError:
+        while not fut.done():
+            try:
+                await asyncio.shield(fut)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        raise
 
 
 async def refresh() -> dict:
     """Run the full refresh chain; returns combined stats.
 
     ``RefreshInProgress`` if a refresh, sync, or reload is already running.
-    ``RuntimeError`` if a phase genuinely fails — the cache is left untouched
-    and nothing is exported, so a broken run can never masquerade as success.
+    ``RuntimeError`` if a phase genuinely fails — nothing is exported, so a
+    broken run can never masquerade as success.
     """
     async with exclusive_mutation("refresh"):
         sync_stats = await lastfm_sync.sync(SCROBBLES_PATH)
 
-        pipeline_results = await asyncio.to_thread(
+        pipeline_results = await run_to_completion(
             _pipeline_run,
             start_from="2",
             skip_tests=True,
@@ -69,15 +104,23 @@ async def refresh() -> dict:
 
         failed = failed_phases(pipeline_results)
         if failed:
-            # Never export or reload off a broken run.
-            raise RuntimeError("pipeline phases failed: " + ", ".join(failed))
+            # The sync has already appended to scrobbles.jsonl, and Phase 8 may
+            # have rewritten tracks.jsonl before a later check failed. Skipping
+            # the reload left /api/* on the old snapshot while /tracks.jsonl
+            # served the new file (#118). Reload so the server matches disk;
+            # only the export is withheld from a broken run.
+            await run_to_completion(data.reload)
+            raise RuntimeError(
+                "pipeline phases failed: " + ", ".join(failed)
+                + f" (the sync still added {sync_stats.get('new', 0)} scrobbles)"
+            )
 
         # Both re-read multi-MB files from disk. refresh() is a coroutine, so
         # calling them directly ran that I/O on the event loop and stalled every
         # concurrent dashboard request for its duration — the same problem
         # api_reload already solved with to_thread.
-        pending_count = await asyncio.to_thread(export_tunemymusic.export_pending)
-        cache_stats = await asyncio.to_thread(data.reload)
+        pending_count = await run_to_completion(export_tunemymusic.export_pending)
+        cache_stats = await run_to_completion(data.reload)
 
     return {
         "sync": sync_stats,

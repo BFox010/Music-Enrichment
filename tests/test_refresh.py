@@ -102,8 +102,12 @@ class TestRefresh:
         assert received["skip_tests"] is True
         assert received["skip_pause"] is True
 
-    def test_failed_phase_aborts_before_export_and_reload(self):
-        """A FAILED phase must raise and skip export/reload; SKIPPED is benign."""
+    def test_failed_phase_skips_export_but_reloads(self):
+        """A FAILED phase must raise and skip the export; SKIPPED is benign.
+
+        #118: it must still reload. The sync has already appended scrobbles and
+        Phase 8 may have rewritten tracks.jsonl, so skipping the reload left the
+        API serving the old snapshot while /tracks.jsonl served the new file."""
         side_effects = []
 
         async def fake_sync(_path):
@@ -128,11 +132,11 @@ class TestRefresh:
             patch("app.refresh.data.reload", new=fake_reload),
         ):
             from app.refresh import refresh
-            with pytest.raises(RuntimeError, match="8"):
+            with pytest.raises(RuntimeError, match=r"failed: 8 \(the sync still added 1 scrobbles\)"):
                 self._run(refresh())
 
-        # Neither export nor cache reload ran off the broken pipeline.
-        assert side_effects == []
+        # No export off the broken pipeline, but the server re-reads disk.
+        assert side_effects == ["reload"]
 
     def test_skipped_only_phases_do_not_abort(self):
         """SKIPPED phases alone (e.g. no Exportify CSV) must not fail a refresh."""
@@ -515,7 +519,7 @@ class TestTheOtherMutationPathsAlsoStayOffTheEventLoop:
         observed: dict = {}
 
         async def fake_fetch(_u, _k, _since):
-            return [], 0
+            return [], 0, True
 
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "scrobbles.jsonl"
