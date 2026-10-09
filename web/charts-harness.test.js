@@ -149,3 +149,47 @@ test("a failed ECharts download is announced once and nothing polls", async () =
     await TestRenderer.act(async () => renderer.unmount());
   }
 });
+
+// #114: ECharts renders a string formatter's output as HTML, and track, artist
+// and tag names come from Last.fm's crowd-sourced data.
+const EVIL = '<img src=x onerror="alert(1)">';
+
+test("names in every tooltip render as text, not markup", async () => {
+  const saved = { ...API };
+  API["/api/audio-features"] = {
+    scatter: [{ artist: EVIL, track: "T", energy: 0.5, valence: 0.4, play_count: 3 }],
+    histograms: {},
+  };
+  API["/api/tag-graph"] = { nodes: [{ tag: EVIL, count: 20 }, { tag: "dub", count: 18 }],
+    edges: [{ source: EVIL, target: "dub", weight: 3 }] };
+  API["/api/saturation"] = [{ tier: EVIL, count: 5 }];
+  try {
+    const shown = [];
+    for (const name of ["AudioFeaturesChart", "TagConstellation", "SaturationChart"]) {
+      const realm = makeRealm();
+      realm.ctx.echarts = realm.ctx.echartsStub;
+      const renderer = await mount(realm, name);
+      try {
+        await waitFor(() => realm.rec.instances.some((i) => i.options.length));
+        const opt = realm.rec.instances.flatMap((i) => i.options).find((o) => o.tooltip);
+        const fmt = opt.tooltip.formatter;
+        const series = opt.series[0];
+        if (name === "AudioFeaturesChart") shown.push(fmt({ data: series.data[0] }));
+        if (name === "SaturationChart") shown.push(fmt({ name: series.data[0].name, value: 5, percent: 100 }));
+        if (name === "TagConstellation") {
+          shown.push(fmt({ dataType: "node", data: series.data[0] }));
+          shown.push(fmt({ dataType: "edge", data: series.edges[0] }));
+        }
+      } finally {
+        await TestRenderer.act(async () => renderer.unmount());
+      }
+    }
+    assert.equal(shown.length, 4);
+    for (const html of shown) {
+      assert.ok(!html.includes("<img"), html);
+      assert.ok(html.includes("&lt;img src=x onerror=&quot;alert(1)&quot;&gt;"), html);
+    }
+  } finally {
+    Object.assign(API, saved);
+  }
+});

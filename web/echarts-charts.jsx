@@ -15,6 +15,16 @@ function themeVars() {
   };
 }
 
+/* ECharts renders a string tooltip formatter's output as HTML. Track, artist
+   and tag names come from Last.fm's crowd-sourced data, so one that contains
+   markup ran as script in the page that holds the mutation token (#114).
+   Every name interpolated into a formatter goes through this. */
+function escapeHtml(v) {
+  return String(v).replace(/[&<>"']/g, (ch) => (
+    { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]
+  ));
+}
+
 /* ── lazy ECharts loader ──
    ECharts (~1 MB) is not in index.html; it is injected on demand — prefetched on
    idle after first paint, loaded immediately when a chart view opens.
@@ -25,7 +35,12 @@ function ensureECharts() {
   if (__echartsPromise) return __echartsPromise;
   __echartsPromise = new Promise((resolve, reject) => {
     const s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
+    // Pinned with an integrity hash (#114). "echarts@5" floated to whatever 5.x
+    // jsDelivr resolved that day, which no hash can cover. The hash is of the
+    // npm tarball's dist/echarts.min.js, which jsDelivr serves verbatim.
+    s.src = "https://cdn.jsdelivr.net/npm/echarts@5.6.0/dist/echarts.min.js";
+    s.integrity = "sha384-pPi0zxBAoDu6+JXW/C68UZLvBUUtU+7zonhif43rqj7pxsGyqyqzcian2Rj37Rss";
+    s.crossOrigin = "anonymous";
     s.async = true;
     s.onload = () => resolve(window.echarts);
     s.onerror = () => {
@@ -579,7 +594,7 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
       scChart.current.setOption({
         backgroundColor: "transparent",
         tooltip: {
-          formatter: (p) => `<b>${p.data.name}</b><br>Energy: ${p.data.value[0].toFixed(2)}<br>Valence: ${p.data.value[1].toFixed(2)}<br>Plays: ${p.data.value[2]}`,
+          formatter: (p) => `<b>${escapeHtml(p.data.name)}</b><br>Energy: ${p.data.value[0].toFixed(2)}<br>Valence: ${p.data.value[1].toFixed(2)}<br>Plays: ${p.data.value[2]}`,
           backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
         },
         grid: { top: 24, bottom: 52, left: 64, right: 20 },
@@ -684,7 +699,7 @@ function SaturationChart({ active, refreshVersion = 0 }) {
       const COLORS = { "1": c.accent, "2": c.accent + "aa", "3": c.accent + "55", "unranked": c.line };
       chart.current.setOption({
         backgroundColor: "transparent",
-        tooltip: { trigger: "item", formatter: (p) => `${p.name}<br>${p.value} tracks (${p.percent}%)`,
+        tooltip: { trigger: "item", formatter: (p) => `${escapeHtml(p.name)}<br>${p.value} tracks (${p.percent}%)`,
           backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
         legend: narrow
           ? { orient: "horizontal", bottom: 0, left: "center", textStyle: { color: c.text2, fontSize: 11 } }
@@ -933,8 +948,8 @@ function TagConstellation({ active, refreshVersion = 0 }) {
         backgroundColor: "transparent",
         tooltip: {
           formatter(p) {
-            if (p.dataType === "edge") return `<b>${p.data.source}</b> ↔ <b>${p.data.target}</b><br>${p.data.value} shared tracks`;
-            return `<b>${p.data.name}</b><br>${p.data.value} tracks`;
+            if (p.dataType === "edge") return `<b>${escapeHtml(p.data.source)}</b> ↔ <b>${escapeHtml(p.data.target)}</b><br>${p.data.value} shared tracks`;
+            return `<b>${escapeHtml(p.data.name)}</b><br>${p.data.value} tracks`;
           },
           backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
         },

@@ -43,15 +43,23 @@
   <script>
     (function () {
       var _fetch = window.fetch.bind(window);
-      // Fetch the token once via the raw fetch (avoid recursing through the wrapper).
-      var _tokenPromise = _fetch("/api/config", { headers: { "ngrok-skip-browser-warning": "true" } })
-        .then(function (r) { return r.ok ? r.json() : null; })
-        .then(function (d) { return (d && d.token) || ""; })
-        .catch(function () { return ""; });
+      // Fetch the token via the raw fetch (avoid recursing through the wrapper).
+      var loadToken = function () {
+        return _fetch("/api/config", { headers: { "ngrok-skip-browser-warning": "true" } })
+          .then(function (r) { return r.ok ? r.json() : null; })
+          .then(function (d) { return (d && d.token) || ""; })
+          .catch(function () { return ""; });
+      };
+      var _tokenPromise = loadToken();
       window.fetch = function (input, init) {
         init = init || {};
         var url = typeof input === "string" ? input : (input && input.url) || "";
-        var sameOrigin = !/^https?:\/\//i.test(url) || url.indexOf(location.origin) === 0;
+        // Resolve against the page, then compare origins. The old prefix test
+        // counted a protocol-relative "//other.host/..." as same-origin and
+        // would have sent it the token (#114).
+        var sameOrigin;
+        try { sameOrigin = new URL(url, location.href).origin === location.origin; }
+        catch (e) { sameOrigin = false; }
         if (!sameOrigin) return _fetch(input, init);
         var method = (init.method || (input && input.method) || "GET").toUpperCase();
         var send = function (token) {
@@ -60,15 +68,31 @@
           if (token && method !== "GET" && method !== "HEAD") h.set("X-Dashboard-Token", token);
           return _fetch(input, Object.assign({}, init, { headers: h }));
         };
-        // Mutating requests wait for the token; reads go immediately.
-        return (method !== "GET" && method !== "HEAD") ? _tokenPromise.then(send) : send("");
+        if (method === "GET" || method === "HEAD") return send("");
+        // Mutating requests wait for the token. A server restart without
+        // DASHBOARD_TOKEN set mints a new one, and the token used to be read
+        // once per page load, so every mutation then 403'd until a full
+        // reload (#114). Refetch it and retry once.
+        return _tokenPromise.then(send).then(function (r) {
+          if (r.status !== 403) return r;
+          _tokenPromise = loadToken();
+          return _tokenPromise.then(send);
+        });
       };
     })();
   </script>
 
-  <!-- React (production, pinned) -->
-  <script defer src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"></script>
-  <script defer src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"></script>
+  <!-- React (production, pinned). integrity= makes the browser refuse a CDN copy
+       that differs from the published npm file by even a byte; the hashes are
+       of the npm tarballs' umd/ files, which unpkg serves verbatim (#114).
+       Bumping a version means recomputing its hash:
+         openssl dgst -sha384 -binary FILE | openssl base64 -A -->
+  <script defer src="https://unpkg.com/react@18.3.1/umd/react.production.min.js"
+          integrity="sha384-DGyLxAyjq0f9SPpVevD6IgztCFlnMF6oW/XQGmfe+IsZ8TqEiDrcHkMLKI6fiB/Z"
+          crossorigin="anonymous"></script>
+  <script defer src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js"
+          integrity="sha384-gTGxhz21lVGYNMcdJOyq01Edg0jhn/c22nsx0kyqP0TxaV5WVdsSH1fSDUf5YJj1"
+          crossorigin="anonymous"></script>
 
   <!-- data (defines window.MUSIC_DATA) -->
   <script defer src="data/library.js"></script>

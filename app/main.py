@@ -65,6 +65,18 @@ def require_token(x_dashboard_token: str = Header(default="")) -> None:
 # ~450 ms of server CPU.
 app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=6)
 
+
+@app.middleware("http")
+async def refuse_framing(request: Request, call_next):
+    """No page may frame the dashboard. Its Refresh is one click, and the fetch
+    shim attaches the mutation token to same-origin requests, so a framing page
+    could clickjack a refresh (#114). frame-ancestors for current browsers,
+    X-Frame-Options for older ones."""
+    response = await call_next(request)
+    response.headers.setdefault("Content-Security-Policy", "frame-ancestors 'none'")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    return response
+
 # Load data eagerly at import time; tests override via data.use_paths().
 data.load()
 
