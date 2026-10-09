@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from pipeline.normalize import join_key, normalize_artist, normalize_track
 
 
@@ -106,3 +108,49 @@ class TestJoinKey:
         b = join_key("Drake ft Future", "Jumpman")
         c = join_key("Drake featuring Future", "Jumpman")
         assert a == b == c
+
+
+class TestSymbolOnlyNames:
+    """#106: a name that is nothing but punctuation normalized to "", which
+    ingest kept and Phase 8 refused — failing every later run, since
+    scrobbles.jsonl never shrinks."""
+
+    def test_symbol_only_names_keep_a_key(self) -> None:
+        assert normalize_artist("!!!") == "!!!"
+        assert normalize_track("?") == "?"
+        assert normalize_track("...") == "..."
+
+    def test_distinct_symbol_names_stay_distinct(self) -> None:
+        assert normalize_track("?") != normalize_track("!")
+
+    def test_blank_is_still_blank(self) -> None:
+        assert normalize_artist("   ") == ""
+        assert normalize_track("") == ""
+
+    def test_any_word_character_takes_the_normal_path(self) -> None:
+        assert normalize_artist("AC/DC") == "ac dc"
+        assert normalize_track("Hey!") == "hey"
+
+    def test_symbol_only_scrobble_flows_through_to_tracks_jsonl(self, tmp_path) -> None:
+        from pipeline.dedupe import dedupe
+        from pipeline.ingest_scrobbles import ingest_from_records
+        from pipeline.update_tracks import update
+
+        scrobbles = tmp_path / "scrobbles.jsonl"
+        skeleton = tmp_path / "tracks_skeleton.jsonl"
+        tracks = tmp_path / "tracks.jsonl"
+        ingest_from_records(
+            [{
+                "artist": {"#text": "!!!", "mbid": ""},
+                "name": "?",
+                "album": {"#text": "", "mbid": ""},
+                "date": {"uts": "1730606040", "#text": ""},
+            }],
+            output_path=scrobbles, mode="replace",
+        )
+        dedupe(scrobbles, skeleton)
+        update(input_path=skeleton, output_path=tracks)
+
+        rows = [json.loads(l) for l in tracks.read_text(encoding="utf-8").splitlines() if l]
+        assert [(r["artist"], r["track"]) for r in rows] == [("!!!", "?")]
+        assert rows[0]["artist_normalized"] == "!!!"

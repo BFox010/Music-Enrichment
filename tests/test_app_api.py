@@ -692,12 +692,49 @@ class TestTracksMinEtagTracksTheServedBody:
     and cached it — and the reload that finally refreshed the snapshot left the
     file untouched, so the revalidation 304'd and the stale body stuck."""
 
-    def test_etag_changes_when_the_snapshot_changes_not_the_file(self, client):
-        before = client.get("/tracks.min.jsonl").headers["etag"]
-        # A reload publishes a new generation without the file having moved.
-        assert client.post("/api/reload", headers=_auth()).status_code == 200
-        after = client.get("/tracks.min.jsonl").headers["etag"]
-        assert before != after
+    def test_etag_changes_when_the_snapshot_changes(self, client):
+        first = client.get("/tracks.min.jsonl")
+        original = data._tracks_path.read_text(encoding="utf-8")
+        changed = dict(_TRACK, artist="Changed Artist")
+        data._tracks_path.write_text(json.dumps(changed) + "\n", encoding="utf-8")
+        try:
+            # The file moved, but nothing is served from it until the reload.
+            assert client.get("/tracks.min.jsonl").headers["etag"] == first.headers["etag"]
+            assert client.post("/api/reload", headers=_auth()).status_code == 200
+            r = client.get("/tracks.min.jsonl", headers={"If-None-Match": first.headers["etag"]})
+            assert r.status_code == 200
+            assert r.headers["etag"] != first.headers["etag"]
+            assert "Changed Artist" in r.text
+        finally:
+            data._tracks_path.write_text(original, encoding="utf-8")
+            client.post("/api/reload", headers=_auth())
+
+    def test_etag_differs_across_a_restart_over_changed_data(self, monkeypatch, tmp_path):
+        """#103: the generation counter restarts at 1 in every process, so an
+        ETag built from it repeated across a restart over different data with
+        the same row count, and the browser 304'd onto its stale body. Each
+        "boot" here resets the per-process state a real restart would."""
+        import app.main as main
+
+        def boot(track: dict) -> tuple[str, TestClient]:
+            d = tmp_path / track["artist"]
+            d.mkdir()
+            (d / "tracks.jsonl").write_text(json.dumps(track) + "\n", encoding="utf-8")
+            (d / "scrobbles.jsonl").write_text(json.dumps(_SCROBBLE) + "\n", encoding="utf-8")
+            monkeypatch.setattr(data, "_generation_counter", 0)
+            monkeypatch.setattr(main, "_min_body_cache", None)
+            return d, TestClient(app)
+
+        d1, c1 = boot(dict(_TRACK, artist="Before"))
+        with data.use_paths(d1 / "tracks.jsonl", d1 / "scrobbles.jsonl"):
+            old_etag = c1.get("/tracks.min.jsonl").headers["etag"]
+
+        d2, c2 = boot(dict(_TRACK, artist="After"))
+        with data.use_paths(d2 / "tracks.jsonl", d2 / "scrobbles.jsonl"):
+            r = c2.get("/tracks.min.jsonl", headers={"If-None-Match": old_etag})
+        assert r.status_code == 200
+        assert r.headers["etag"] != old_etag
+        assert "After" in r.text
 
     def test_etag_does_not_move_when_only_the_file_does(self, client):
         """The complement: touching the file must NOT hand out a fresh ETag for

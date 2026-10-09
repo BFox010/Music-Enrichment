@@ -210,3 +210,36 @@ class TestIsrcCaseIsNormalized:
         assert stats["resolved"] == 1
         assert rows["B"]["audio_features"]["danceability"] == 0.5
         assert rows["B"]["isrc"] == "USABC1234567"
+
+
+class TestLimitCapsWorkNotOutput:
+    """#99: scripts/backfill_audio_features.py runs 5b in place on tracks.jsonl,
+    so a `limit` that sliced the output deleted every row past it."""
+
+    def test_in_place_limited_run_keeps_every_row(self, monkeypatch, tmp_path) -> None:
+        path = tmp_path / "tracks.jsonl"
+        tracks = [
+            {"artist": "A", "track": f"T{i}", "isrc": f"USABC000000{i}"} for i in range(5)
+        ]
+        path.write_text("".join(json.dumps(t) + "\n" for t in tracks), encoding="utf-8")
+
+        monkeypatch.setattr(
+            eaf, "RateLimitedClient",
+            lambda *a, **k: type("C", (), {
+                "flush": lambda self: None,
+                "warn_if_forced": lambda self, n: None,
+                "cache_summary": lambda self: "stub",
+            })(),
+        )
+        monkeypatch.setattr(
+            eaf, "_resolve_track_ids", lambda client, isrcs: {i: f"rb-{i}" for i in isrcs},
+        )
+        monkeypatch.setattr(
+            eaf, "_fetch_audio_features", lambda client, track_id: {"energy": 0.5},
+        )
+        stats = eaf.enrich(input_path=path, output_path=path, limit=2)
+
+        rows = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines() if l]
+        assert [r["track"] for r in rows] == [f"T{i}" for i in range(5)]
+        assert [bool(r.get("audio_features")) for r in rows] == [True, True, False, False, False]
+        assert stats["total"] == 2
