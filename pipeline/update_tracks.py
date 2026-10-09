@@ -164,6 +164,58 @@ def _find_existing(
     return None
 
 
+def _find_absorbed(row: dict, index: dict[tuple[str, str], dict], claimed: set[int]) -> list[dict]:
+    """Existing rows that 4e folded into ``row``, claimed so nothing else takes them.
+
+    4e records every name it merged as an ``identity_aliases`` pair. Matching
+    on the canonical id and the row's own name finds at most one existing row,
+    so when two existing rows became one, the other was never claimed: with no
+    new tracks the row count fell and TrackShrinkError refused the run outright,
+    and with one new track the count balanced and the absorbed row's curation
+    vanished silently (#100).
+    """
+    absorbed: list[dict] = []
+    for alias in row.get("identity_aliases") or []:
+        if not isinstance(alias, (list, tuple)) or len(alias) != 2:
+            continue
+        existing = index.get(("name", f"{alias[0]}|{alias[1]}"))
+        if existing is not None and id(existing) not in claimed:
+            claimed.add(id(existing))
+            absorbed.append(existing)
+    return absorbed
+
+
+def _carries_curation(row: dict) -> bool:
+    """Owner judgement that exists only in tracks.jsonl and can't be regenerated."""
+    if any(row.get(f) is not None for f in HUMAN_EDITED_FIELDS):
+        return True
+    return MOOD_SOURCE_RANK.get(row.get("mood_source"), 0) >= MOOD_CURATED_MIN_RANK
+
+
+def _fold_absorbed(existing: dict | None, absorbed: list[dict]) -> dict | None:
+    """One existing row standing for the matched row plus everything 4e absorbed.
+
+    The matched row stays the base; each absorbed row contributes a hand-edited
+    field the base lacks, and its mood bundle when that outranks the base's
+    under MOOD_SOURCE_RANK — the same rule _merge_with_existing applies, so a
+    manual label on the absorbed row is not lost to a centroid guess on the
+    survivor.
+    """
+    if not absorbed:
+        return existing
+    base = dict(existing if existing is not None else absorbed[0])
+    others = absorbed if existing is not None else absorbed[1:]
+    for other in others:
+        for field in HUMAN_EDITED_FIELDS:
+            if base.get(field) is None and other.get(field) is not None:
+                base[field] = other[field]
+        if (MOOD_SOURCE_RANK.get(other.get("mood_source"), 0)
+                > MOOD_SOURCE_RANK.get(base.get("mood_source"), 0)):
+            for field in _MOOD_BUNDLE_FIELDS:
+                base[field] = other.get(field)
+    return base
+
+
 def _enrichment_sources(row: dict) -> list[str]:
     """Determine which enrichment sources contributed to this row."""
     sources: list[str] = []
@@ -328,6 +380,7 @@ def update(
 
     existing_index: dict[tuple[str, str], dict] = {}
     existing_count = 0
+    existing_rows: list[dict] = []
     if output_path.exists():
         existing_rows = _load_jsonl(output_path)
         existing_count = len(existing_rows)
@@ -341,13 +394,23 @@ def update(
 
     seen_new: set[str] = set()
     claimed: set[int] = set()
+    matched: list[tuple[dict, dict | None]] = []
     for i, row in enumerate(new_rows, start=1):
         context = f"source row {i}"
         key = _track_key(row, context)
         if key in seen_new:
             raise ValueError(f"duplicate source track key {key!r}")
         seen_new.add(key)
-        existing = _find_existing(row, existing_index, claimed, context)
+        matched.append((row, _find_existing(row, existing_index, claimed, context)))
+
+    # Absorbed rows are claimed only after every source row has had its direct
+    # match: an alias must never steal a row that is still a track in its own
+    # right this run.
+    absorbed_count = 0
+    for row, existing in matched:
+        absorbed = _find_absorbed(row, existing_index, claimed)
+        absorbed_count += len(absorbed)
+        existing = _fold_absorbed(existing, absorbed)
         merged = _merge_with_existing(row, existing)
         merged = fill_defaults(merged)
         merged["enrichment_sources"] = _enrichment_sources(merged)
@@ -366,15 +429,34 @@ def update(
 
     merged_rows.sort(key=lambda r: (r["artist_normalized"], r["track_normalized"]))
 
-    if len(merged_rows) < existing_count and not allow_shrink:
+    if absorbed_count:
+        log.info("Folded %d existing rows that 4e merged into another track", absorbed_count)
+
+    # The count check alone can be balanced by an unrelated new track, so it
+    # missed exactly the case that loses data. Check curation directly too.
+    dropped_curated = [
+        r for r in existing_rows if id(r) not in claimed and _carries_curation(r)
+    ]
+    if dropped_curated and not allow_shrink:
+        names = ", ".join(f"{r.get('artist')} — {r.get('track')}" for r in dropped_curated[:5])
+        raise TrackShrinkError(
+            f"Refusing to write {output_path}: {len(dropped_curated)} existing "
+            f"row(s) carrying curation (curation_state or a curated mood) have no "
+            f"counterpart in {chosen.name}, e.g. {names}. Re-run the pipeline "
+            f"without a limit, or pass allow_shrink=True (CLI: --allow-shrink) "
+            f"if dropping them is deliberate."
+        )
+
+    # Rows 4e absorbed are accounted for, not lost.
+    if len(merged_rows) < existing_count - absorbed_count and not allow_shrink:
         raise TrackShrinkError(
             f"Refusing to write {len(merged_rows)} tracks over the "
             f"{existing_count} already in {output_path} — that would drop "
-            f"{existing_count - len(merged_rows)} rows and every curated field "
+            f"{existing_count - absorbed_count - len(merged_rows)} rows and every curated field "
             f"on them. This usually means the source intermediate ({chosen.name}) "
             f"is a partial run (a phase called with limit=...). Re-run the "
-            f"pipeline without a limit, or pass allow_shrink=True if you really "
-            f"do mean to shrink the library."
+            f"pipeline without a limit, or pass allow_shrink=True (CLI: "
+            f"--allow-shrink) if you really do mean to shrink the library."
         )
 
     validation = validate_dataset(merged_rows)
@@ -396,9 +478,17 @@ def update(
         "total": len(merged_rows),
         "new": new_count,
         "updated": updated_count,
+        "absorbed": absorbed_count,
     }
 
 
 if __name__ == "__main__":
-    update()
+    import argparse
+
+    p = argparse.ArgumentParser(description="Phase 8: merge the deepest intermediate into tracks.jsonl.")
+    p.add_argument("--input", type=Path, default=None, help="Source intermediate (default: deepest existing).")
+    p.add_argument("--allow-shrink", action="store_true",
+                   help="Permit a write that drops existing rows or their curation.")
+    args = p.parse_args()
+    update(input_path=args.input, allow_shrink=args.allow_shrink)
     sys.exit(0)

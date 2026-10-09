@@ -607,3 +607,98 @@ class TestPhase8ShrinkGuard:
             assert update(input_path=inp, output_path=out)["total"] == 3
             self._write(inp, self._rows(6))
             assert update(input_path=inp, output_path=out)["total"] == 6
+
+
+class TestAbsorbedRowsKeepTheirCuration:
+    """#100: Phase 8 matched each source row to one existing row, so when 4e
+    folded two existing rows into one, the other went unclaimed. With no new
+    tracks the count fell and TrackShrinkError blocked every run; with one new
+    track the count balanced and the absorbed row's curation vanished."""
+
+    @staticmethod
+    def _write(path: Path, rows: list[dict]) -> None:
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+
+    @staticmethod
+    def _row(artist: str, track: str, **extra) -> dict:
+        return {"artist": artist, "track": track,
+                "artist_normalized": artist.lower(), "track_normalized": track.lower(),
+                "play_count": 1, **extra}
+
+    def _existing(self) -> list[dict]:
+        # Two credits of one recording, held as separate rows before 4e merged them.
+        # The survivor has a machine guess; the soon-absorbed row holds the owner's
+        # Heavy Bass label and a lock.
+        return [
+            self._row("Chase and Status", "Blind Faith",
+                      mood_tags=["Energetic"], mood_source="centroid", mood_confidence="low"),
+            self._row("Chase & Status", "Blind Faith",
+                      mood_tags=["Heavy Bass"], mood_source="manual", mood_confidence="high",
+                      curation_state="locked"),
+        ]
+
+    def _merged_source(self) -> dict:
+        # What 4e emits: one row, carrying both names as aliases. No mood bundle,
+        # as from a run that skipped Phase 6.
+        return self._row("Chase and Status", "Blind Faith",
+                         identity_aliases=[["chase and status", "blind faith"],
+                                           ["chase & status", "blind faith"]])
+
+    def test_merging_two_existing_rows_with_no_new_tracks_succeeds(self, tmp_path) -> None:
+        inp, out = tmp_path / "in.jsonl", tmp_path / "tracks.jsonl"
+        self._write(out, self._existing())
+        self._write(inp, [self._merged_source()])
+
+        stats = update(input_path=inp, output_path=out)
+
+        assert stats["total"] == 1
+        assert stats["absorbed"] == 1
+        (row,) = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines()]
+        assert row["curation_state"] == "locked"
+        assert row["mood_source"] == "manual"
+        assert row["mood_tags"] == ["Heavy Bass"]
+
+    def test_absorbed_curation_survives_when_a_new_track_balances_the_count(self, tmp_path) -> None:
+        inp, out = tmp_path / "in.jsonl", tmp_path / "tracks.jsonl"
+        self._write(out, self._existing())
+        self._write(inp, [self._merged_source(), self._row("Burial", "Archangel")])
+
+        stats = update(input_path=inp, output_path=out)
+
+        rows = {r["track"]: r for r in (json.loads(l) for l in out.read_text(encoding="utf-8").splitlines())}
+        assert stats["total"] == 2 and stats["new"] == 1
+        assert rows["Blind Faith"]["curation_state"] == "locked"
+        assert rows["Blind Faith"]["mood_tags"] == ["Heavy Bass"]
+
+    def test_an_alias_never_steals_a_row_that_is_still_its_own_track(self, tmp_path) -> None:
+        """A source row whose aliases name another *source* row's track must not
+        claim that existing row out from under its direct match."""
+        inp, out = tmp_path / "in.jsonl", tmp_path / "tracks.jsonl"
+        existing = self._existing()
+        self._write(out, existing)
+        stray = self._row("Chase and Status", "Blind Faith",
+                          identity_aliases=[["chase & status", "blind faith"]])
+        self._write(inp, [stray, self._row("Chase & Status", "Blind Faith")])
+
+        update(input_path=inp, output_path=out)
+
+        rows = {r["artist"]: r for r in (json.loads(l) for l in out.read_text(encoding="utf-8").splitlines())}
+        assert rows["Chase & Status"]["curation_state"] == "locked"
+        assert rows["Chase and Status"].get("curation_state") is None
+
+    def test_dropping_a_curated_row_is_refused_even_when_the_count_balances(self, tmp_path) -> None:
+        inp, out = tmp_path / "in.jsonl", tmp_path / "tracks.jsonl"
+        self._write(out, self._existing())
+        before = out.read_text(encoding="utf-8")
+        # The curated row is simply missing (no alias), and a new track hides it.
+        self._write(inp, [self._row("Chase and Status", "Blind Faith"), self._row("Burial", "Archangel")])
+
+        with pytest.raises(TrackShrinkError, match="carrying curation"):
+            update(input_path=inp, output_path=out)
+        assert out.read_text(encoding="utf-8") == before
+
+    def test_allow_shrink_still_overrides_the_curation_guard(self, tmp_path) -> None:
+        inp, out = tmp_path / "in.jsonl", tmp_path / "tracks.jsonl"
+        self._write(out, self._existing())
+        self._write(inp, [self._row("Chase and Status", "Blind Faith"), self._row("Burial", "Archangel")])
+        assert update(input_path=inp, output_path=out, allow_shrink=True)["total"] == 2
