@@ -96,7 +96,7 @@
   const mqReduce = window.matchMedia("(prefers-reduced-motion: reduce)");
 
   const st = {
-    enabled: localStorage.getItem("ml.ambient") !== "off",
+    enabled: readPref("ml.ambient") !== "off",
     cur: FALLBACK.map((c) => c.slice()),
     target: FALLBACK.map((c) => c.slice()),
     sig: "",
@@ -427,7 +427,7 @@
     enabled: () => st.enabled,
     setEnabled(on) {
       st.enabled = !!on;
-      localStorage.setItem("ml.ambient", on ? "on" : "off");
+      writePref("ml.ambient", on ? "on" : "off");
       sync();
     },
   };

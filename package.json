@@ -6,9 +6,11 @@
   "scripts": {
     "build": "node scripts/build_frontend.mjs",
     "dev": "node scripts/build_frontend.mjs --watch",
-    "test": "node --test web/data-processing.test.js web/anchor-handoff.test.js"
+    "test": "node --test web/data-processing.test.js web/anchor-handoff.test.js web/charts-harness.test.js"
   },
   "devDependencies": {
-    "esbuild": "^0.25.0"
+    "esbuild": "^0.25.0",
+    "react": "18.3.1",
+    "react-test-renderer": "18.3.1"
   }
 }

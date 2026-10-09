@@ -239,3 +239,54 @@ test("scrobbleYearRange spans the years present", () => {
   assert.equal(scrobbleYearRange({}), "");
   assert.equal(scrobbleYearRange(undefined), "");
 });
+
+// #113: drill and cube cross-join tracks with scrobbles, so they're valid only
+// when both came from the same load. A single-file drop used to keep the
+// previous load's cube and drill alongside the new tracks.
+test("a single-file load clears the stale drill and cube", () => {
+  const prev = {
+    meta: { trackCount: 1, scrobbleCount: 1 },
+    tracks: [{ artist: "Old" }],
+    scrobbles: { total: 1 },
+  };
+  const tracksOnly = processLibrary([track("New", "Song")], null);
+  assert.equal(tracksOnly.cube, null);
+
+  const next = loadedState(prev, tracksOnly);
+  assert.equal(next.cube, null);
+  assert.equal(next.drill, null);
+  assert.equal(next.data.tracks[0].artist, "New");
+  assert.equal(next.data.scrobbles, prev.scrobbles, "the side not loaded is kept");
+  assert.equal(next.data.meta.isSample, false);
+});
+
+test("a full load carries its own drill and cube", () => {
+  const both = processLibrary(
+    [track("A", "T")],
+    [scrobble("A", "T", "2026-03-01")],
+  );
+  const next = loadedState({ meta: {} }, both);
+  assert.ok(next.cube && next.drill);
+  assert.equal(next.data.meta.scrobbleCount, 1);
+});
+
+test("an empty load changes nothing", () => {
+  assert.equal(loadedState({ meta: {} }, { nt: null, ns: null }), null);
+  assert.equal(loadedState({ meta: {} }, null), null);
+});
+
+// #113: localStorage throws when site storage is blocked, and the prefs were
+// read during first render, so a blocked browser got a blank page.
+test("preferences survive blocked storage", () => {
+  const saved = globalThis.localStorage;
+  globalThis.localStorage = {
+    getItem() { throw new Error("SecurityError"); },
+    setItem() { throw new Error("SecurityError"); },
+  };
+  try {
+    assert.equal(readPref("ml.density"), null);
+    assert.doesNotThrow(() => writePref("ml.density", "compact"));
+  } finally {
+    globalThis.localStorage = saved;
+  }
+});

@@ -28,7 +28,13 @@ function ensureECharts() {
     s.src = "https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js";
     s.async = true;
     s.onload = () => resolve(window.echarts);
-    s.onerror = () => { __echartsPromise = null; reject(new Error("ECharts failed to load")); };
+    s.onerror = () => {
+      __echartsPromise = null;
+      // Once per failed load, for the dashboard's error state; the charts
+      // themselves just stay empty rather than retrying on a timer.
+      window.dispatchEvent(new CustomEvent("ml:echarts-failed"));
+      reject(new Error("ECharts failed to load"));
+    };
     document.head.appendChild(s);
   });
   return __echartsPromise;
@@ -40,19 +46,22 @@ function useEChart(ref) {
   // ECharts can finish loading after a view's data has already arrived, in which
   // case the render effect bailed on a null instance and nothing would wake it.
   // Bumping state on init re-renders, so an effect that lists `chart.current`
-  // among its dependencies runs again against the live instance.
+  // among its dependencies runs again against the live instance. Every view
+  // draws in such an effect, separate from its fetch: ListeningMap, Audio
+  // Features, Saturation and Tag Constellation drew inside the fetch callback
+  // (or keyed on the stable ref) and stayed blank after a late init (#113).
   const [, setReady] = useState(0);
   useEffect(() => {
     let cancelled = false;
     let ro;
-    let pollId;
     const onResize = () => chartRef.current?.resize();
-    // ECharts is loaded lazily (deferred, off the first-paint critical path), so it
-    // may not exist yet when this runs. Wait for it instead of giving up once.
-    function init() {
-      if (cancelled || chartRef.current || !ref.current) return;
-      if (!window.echarts) { pollId = setTimeout(init, 50); return; }
-      chartRef.current = echarts.init(ref.current, null, { renderer: "canvas" });
+    // ECharts is loaded lazily (deferred, off the first-paint critical path), so
+    // wait on the loader. This used to poll window.echarts every 50 ms; when the
+    // CDN failed, every mounted chart polled forever with nothing on screen to
+    // say why (#113). A failure is now announced once, by ensureECharts.
+    function init(lib) {
+      if (cancelled || chartRef.current || !ref.current || !lib) return;
+      chartRef.current = lib.init(ref.current, null, { renderer: "canvas" });
       setReady((n) => n + 1);
       window.addEventListener("resize", onResize);
       // The container is often 0×0 at init time (skeleton showing, or the page
@@ -66,10 +75,9 @@ function useEChart(ref) {
         ro.observe(ref.current);
       }
     }
-    init();
+    ensureECharts().then(init, () => {});
     return () => {
       cancelled = true;
-      clearTimeout(pollId);
       window.removeEventListener("resize", onResize);
       ro?.disconnect();
       chartRef.current?.dispose();
@@ -414,14 +422,19 @@ function ListeningMap({ active, refreshVersion = 0 }) {
   const [years, setYears] = useState([]);
   const [year, setYear] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [mapData, setMapData] = useState(null);
 
   useEffect(() => {
     if (!active) return;
     setLoading(true);
+    // Clicking 2023 then 2024 quickly could draw 2024 under a "2023" selection
+    // when the responses crossed (#113); only the newest request may land.
+    let stale = false;
     const q = year != null ? `?year=${year}` : "";
     fetch("/api/time-of-day" + q)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
+        if (stale) return;
         // First pass: learn the available years, default to the most recent, and
         // let the effect re-run with that filter.
         if (year == null) {
@@ -433,59 +446,66 @@ function ListeningMap({ active, refreshVersion = 0 }) {
         // appears without a separate request.
         if (data.years && data.years.length) setYears(data.years);
         setLoading(false);
-        const c = themeVars();
-        const colorScale = ["#191527", "#4c2f95", "#7c4ddb", c.accent];
-
-        // Calendar heatmap — one large, legible year
-        if (calChart.current) {
-          calChart.current.resize();
-          const max = data.calendar.length ? Math.max(...data.calendar.map((d) => d[1])) : 1;
-          calChart.current.setOption({
-            backgroundColor: "transparent",
-            tooltip: { formatter: (p) => `${p.data[0]} — ${p.data[1]} plays`, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
-            visualMap: { min: 0, max, type: "continuous", orient: "horizontal", left: "center", bottom: 6,
-              itemWidth: 14, itemHeight: 120, inRange: { color: colorScale }, textStyle: { color: c.muted } },
-            calendar: [{
-              top: 30, left: 42, right: 18, range: String(year),
-              cellSize: ["auto", 18],
-              itemStyle: { color: "#14141b", borderWidth: 3, borderColor: c.panel, borderRadius: 3 },
-              splitLine: { show: false },
-              yearLabel: { show: false },
-              dayLabel: { color: c.muted, fontSize: 10, firstDay: 1, nameMap: ["Su","Mo","Tu","We","Th","Fr","Sa"] },
-              monthLabel: { color: c.text2, fontSize: 11, fontWeight: 600 },
-            }],
-            series: [{ type: "heatmap", coordinateSystem: "calendar", data: data.calendar,
-              itemStyle: { borderRadius: 3, borderWidth: 3, borderColor: c.panel } }],
-          }, true);
-        }
-
-        // Hour × weekday heatmap (full history — denser = cleaner pattern)
-        if (hwChart.current && data?.hour_weekday?.length) {
-          hwChart.current.resize();
-          const days  = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
-          const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
-          const max   = Math.max(...data.hour_weekday.map((d) => d[2]));
-          hwChart.current.setOption({
-            backgroundColor: "transparent",
-            tooltip: {
-              formatter: (p) => { const [dow,h,n] = p.data; return `${days[dow]} ${hours[h]}: ${n} plays`; },
-              backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
-            },
-            grid: { top: 12, bottom: 40, left: 48, right: 12 },
-            xAxis: { type: "category", data: days, axisLabel: { color: c.muted },
-              axisLine: { lineStyle: { color: c.line } }, splitArea: { show: true } },
-            yAxis: { type: "category", data: hours, axisLabel: { color: c.muted, fontSize: 9 },
-              axisLine: { lineStyle: { color: c.line } }, splitArea: { show: true } },
-            visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0,
-              inRange: { color: colorScale }, textStyle: { color: c.muted } },
-            series: [{ type: "heatmap", data: data.hour_weekday.map(([h, dow, n]) => [dow, h, n]),
-              itemStyle: { borderRadius: 2 },
-              label: { show: false }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,.5)" } } }],
-          }, true);
-        }
+        setMapData({ year, data });
       })
-      .catch(() => setLoading(false));
+      .catch(() => { if (!stale) setLoading(false); });
+    return () => { stale = true; };
   }, [active, year, refreshVersion]);
+
+  useEffect(() => {
+    if (!active || !mapData) return;
+    const { year, data } = mapData;
+    const c = themeVars();
+    const colorScale = ["#191527", "#4c2f95", "#7c4ddb", c.accent];
+
+    // Calendar heatmap — one large, legible year
+    if (calChart.current) {
+      calChart.current.resize();
+      const max = data.calendar.length ? Math.max(...data.calendar.map((d) => d[1])) : 1;
+      calChart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: { formatter: (p) => `${p.data[0]} — ${p.data[1]} plays`, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
+        visualMap: { min: 0, max, type: "continuous", orient: "horizontal", left: "center", bottom: 6,
+          itemWidth: 14, itemHeight: 120, inRange: { color: colorScale }, textStyle: { color: c.muted } },
+        calendar: [{
+          top: 30, left: 42, right: 18, range: String(year),
+          cellSize: ["auto", 18],
+          itemStyle: { color: "#14141b", borderWidth: 3, borderColor: c.panel, borderRadius: 3 },
+          splitLine: { show: false },
+          yearLabel: { show: false },
+          dayLabel: { color: c.muted, fontSize: 10, firstDay: 1, nameMap: ["Su","Mo","Tu","We","Th","Fr","Sa"] },
+          monthLabel: { color: c.text2, fontSize: 11, fontWeight: 600 },
+        }],
+        series: [{ type: "heatmap", coordinateSystem: "calendar", data: data.calendar,
+          itemStyle: { borderRadius: 3, borderWidth: 3, borderColor: c.panel } }],
+      }, true);
+    }
+
+    // Hour × weekday heatmap (full history — denser = cleaner pattern)
+    if (hwChart.current && data?.hour_weekday?.length) {
+      hwChart.current.resize();
+      const days  = ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+      const hours = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+      const max   = Math.max(...data.hour_weekday.map((d) => d[2]));
+      hwChart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: {
+          formatter: (p) => { const [dow,h,n] = p.data; return `${days[dow]} ${hours[h]}: ${n} plays`; },
+          backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
+        },
+        grid: { top: 12, bottom: 40, left: 48, right: 12 },
+        xAxis: { type: "category", data: days, axisLabel: { color: c.muted },
+          axisLine: { lineStyle: { color: c.line } }, splitArea: { show: true } },
+        yAxis: { type: "category", data: hours, axisLabel: { color: c.muted, fontSize: 9 },
+          axisLine: { lineStyle: { color: c.line } }, splitArea: { show: true } },
+        visualMap: { min: 0, max, calculable: true, orient: "horizontal", left: "center", bottom: 0,
+          inRange: { color: colorScale }, textStyle: { color: c.muted } },
+        series: [{ type: "heatmap", data: data.hour_weekday.map(([h, dow, n]) => [dow, h, n]),
+          itemStyle: { borderRadius: 2 },
+          label: { show: false }, emphasis: { itemStyle: { shadowBlur: 8, shadowColor: "rgba(0,0,0,.5)" } } }],
+      }, true);
+    }
+  }, [active, mapData, calChart.current, hwChart.current]);
 
   return (
     <section className="block">
@@ -532,79 +552,90 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
     { key: "acousticness", label: "Acousticness",color: "#ffab40" },
   ];
 
+  const [afData, setAfData] = useState(null);
+
   useEffect(() => {
     if (!active) return;
     setLoading(true);
+    let stale = false;
     fetch("/api/audio-features")
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(({ scatter, histograms }) => {
+      .then((d) => {
+        if (stale) return;
         setLoading(false);
-        const c = themeVars();
-
-        if (scChart.current && scatter?.length) {
-          const maxP = Math.max(...scatter.map((d) => d.play_count || 1));
-          scChart.current.setOption({
-            backgroundColor: "transparent",
-            tooltip: {
-              formatter: (p) => `<b>${p.data.name}</b><br>Energy: ${p.data.value[0].toFixed(2)}<br>Valence: ${p.data.value[1].toFixed(2)}<br>Plays: ${p.data.value[2]}`,
-              backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
-            },
-            grid: { top: 24, bottom: 52, left: 64, right: 20 },
-            xAxis: { name: "Energy", nameLocation: "middle", nameGap: 30,
-              type: "value", min: 0, max: 1,
-              nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
-              splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
-            yAxis: { name: "Valence", nameLocation: "middle", nameGap: 42, nameRotate: 90,
-              type: "value", min: 0, max: 1,
-              nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
-              splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
-            series: [{
-              type: "scatter",
-              data: scatter.map((d) => ({
-                value: [d.energy, d.valence, d.play_count],
-                name: `${d.artist} — ${d.track}`,
-                symbolSize: Math.max(4, Math.sqrt((d.play_count || 1) / maxP) * 18),
-              })),
-              itemStyle: { color: c.accent, opacity: 0.6 },
-              emphasis: { itemStyle: { opacity: 1 } },
-            }],
-          });
-        }
-
-        if (histChart.current && histograms) {
-          const feats = HISTS.filter((f) => histograms[f.key]?.length);
-          if (!feats.length) return;
-          const cols  = feats.length;
-          const gridW = Math.floor(100 / cols);
-          histChart.current.setOption({
-            backgroundColor: "transparent",
-            tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
-            title: feats.map((f, i) => ({
-              text: f.label, textStyle: { color: c.text2, fontSize: 12, fontWeight: "normal" },
-              left: `${i * gridW + gridW / 2}%`, top: 8, textAlign: "center",
-            })),
-            grid: feats.map((_, i) => ({ left: `${i * gridW + 1}%`, width: `${gridW - 2}%`, top: 36, bottom: 30 })),
-            xAxis: feats.map((f, i) => ({
-              gridIndex: i, type: "category",
-              data: histograms[f.key].map((b) => b.bin_start.toFixed(1)),
-              axisLabel: { color: c.muted, fontSize: 9, rotate: 45 },
-              axisLine: { lineStyle: { color: c.line } },
-            })),
-            yAxis: feats.map((_, i) => ({
-              gridIndex: i, type: "value",
-              axisLabel: { show: i === 0, color: c.muted, fontSize: 10 },
-              splitLine: { lineStyle: { color: c.line, type: "dashed" } },
-            })),
-            series: feats.map((f, i) => ({
-              type: "bar", xAxisIndex: i, yAxisIndex: i,
-              data: histograms[f.key].map((b) => b.count),
-              itemStyle: { color: f.color, opacity: 0.85, borderRadius: [2, 2, 0, 0] },
-            })),
-          });
-        }
+        setAfData(d);
       })
-      .catch(() => setLoading(false));
+      .catch(() => { if (!stale) setLoading(false); });
+    return () => { stale = true; };
   }, [active, refreshVersion]);
+
+  useEffect(() => {
+    if (!active || !afData) return;
+    const { scatter, histograms } = afData;
+    const c = themeVars();
+
+    if (scChart.current && scatter?.length) {
+      const maxP = Math.max(...scatter.map((d) => d.play_count || 1));
+      scChart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: {
+          formatter: (p) => `<b>${p.data.name}</b><br>Energy: ${p.data.value[0].toFixed(2)}<br>Valence: ${p.data.value[1].toFixed(2)}<br>Plays: ${p.data.value[2]}`,
+          backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
+        },
+        grid: { top: 24, bottom: 52, left: 64, right: 20 },
+        xAxis: { name: "Energy", nameLocation: "middle", nameGap: 30,
+          type: "value", min: 0, max: 1,
+          nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
+          splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
+        yAxis: { name: "Valence", nameLocation: "middle", nameGap: 42, nameRotate: 90,
+          type: "value", min: 0, max: 1,
+          nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
+          splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
+        series: [{
+          type: "scatter",
+          data: scatter.map((d) => ({
+            value: [d.energy, d.valence, d.play_count],
+            name: `${d.artist} — ${d.track}`,
+            symbolSize: Math.max(4, Math.sqrt((d.play_count || 1) / maxP) * 18),
+          })),
+          itemStyle: { color: c.accent, opacity: 0.6 },
+          emphasis: { itemStyle: { opacity: 1 } },
+        }],
+      });
+    }
+
+    if (histChart.current && histograms) {
+      const feats = HISTS.filter((f) => histograms[f.key]?.length);
+      if (!feats.length) return;
+      const cols  = feats.length;
+      const gridW = Math.floor(100 / cols);
+      histChart.current.setOption({
+        backgroundColor: "transparent",
+        tooltip: { trigger: "axis", axisPointer: { type: "shadow" }, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
+        title: feats.map((f, i) => ({
+          text: f.label, textStyle: { color: c.text2, fontSize: 12, fontWeight: "normal" },
+          left: `${i * gridW + gridW / 2}%`, top: 8, textAlign: "center",
+        })),
+        grid: feats.map((_, i) => ({ left: `${i * gridW + 1}%`, width: `${gridW - 2}%`, top: 36, bottom: 30 })),
+        xAxis: feats.map((f, i) => ({
+          gridIndex: i, type: "category",
+          data: histograms[f.key].map((b) => b.bin_start.toFixed(1)),
+          axisLabel: { color: c.muted, fontSize: 9, rotate: 45 },
+          axisLine: { lineStyle: { color: c.line } },
+        })),
+        yAxis: feats.map((_, i) => ({
+          gridIndex: i, type: "value",
+          axisLabel: { show: i === 0, color: c.muted, fontSize: 10 },
+          splitLine: { lineStyle: { color: c.line, type: "dashed" } },
+        })),
+        series: feats.map((f, i) => ({
+          type: "bar", xAxisIndex: i, yAxisIndex: i,
+          data: histograms[f.key].map((b) => b.count),
+          itemStyle: { color: f.color, opacity: 0.85, borderRadius: [2, 2, 0, 0] },
+        })),
+      });
+    }
+  }, [active, afData, scChart.current, histChart.current]);
 
   return (
     <section className="block">
@@ -674,7 +705,9 @@ function SaturationChart({ active, refreshVersion = 0 }) {
     render();
     window.addEventListener("resize", render);
     return () => window.removeEventListener("resize", render);
-  }, [active, data, chart]);
+    // `chart` is a stable ref, so listing it never re-ran this after a late
+    // init; the instance itself does (#113).
+  }, [active, data, chart.current]);
 
   return (
     <div className="card">
@@ -796,6 +829,7 @@ function TagConstellation({ active, refreshVersion = 0 }) {
   const chart = useEChart(elRef);
   const [field, setField] = useState("discogs_styles");
   const [loading, setLoading] = useState(true);
+  const [graph, setGraph] = useState(null);
 
   const FIELDS = [
     ["discogs_styles", "Styles"],
@@ -806,6 +840,24 @@ function TagConstellation({ active, refreshVersion = 0 }) {
   useEffect(() => {
     if (!active) return;
     setLoading(true);
+    let stale = false;
+    const minCount = field === "mood_tags" ? 1 : 15;
+    fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
+      .then((g) => {
+        if (stale) return;
+        setLoading(false);
+        setGraph(g);
+      })
+      .catch(() => { if (!stale) setLoading(false); });
+    return () => { stale = true; };
+  }, [active, field, refreshVersion]);
+
+  // Layout is keyed on the instance as well as the data, so a graph that
+  // arrived before ECharts finished loading is drawn once it does (#113).
+  useEffect(() => {
+    if (!active || !graph || !graph.nodes?.length || !chart.current) return;
+    const { nodes, edges } = graph;
     let fitTimer = null;
     let onWinResize = null;
     let rafA = 0, rafB = 0;
@@ -920,22 +972,14 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       window.addEventListener("resize", onWinResize);
     };
 
-    const minCount = field === "mood_tags" ? 1 : 15;
-    fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
-      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then(({ nodes, edges }) => {
-        setLoading(false);
-        if (!chart.current || !nodes?.length) return;
-        // setLoading(false) flips the wrap from display:none to block, but the
-        // DOM update is async (React hasn't painted yet). Wait two animation
-        // frames so the wrap has real dimensions before we seed the layout —
-        // otherwise every node spawns at (0,0) and the view computes against
-        // a 0×0 canvas, producing zoom=0 and a blank chart.
-        rafA = requestAnimationFrame(() => {
-          rafB = requestAnimationFrame(() => setupChart(nodes, edges));
-        });
-      })
-      .catch(() => setLoading(false));
+    // setLoading(false) flips the wrap from display:none to block, but the
+    // DOM update is async (React hasn't painted yet). Wait two animation
+    // frames so the wrap has real dimensions before we seed the layout —
+    // otherwise every node spawns at (0,0) and the view computes against
+    // a 0×0 canvas, producing zoom=0 and a blank chart.
+    rafA = requestAnimationFrame(() => {
+      rafB = requestAnimationFrame(() => setupChart(nodes, edges));
+    });
 
     return () => {
       if (fitTimer) clearTimeout(fitTimer);
@@ -943,7 +987,7 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       if (rafB) cancelAnimationFrame(rafB);
       if (onWinResize) window.removeEventListener("resize", onWinResize);
     };
-  }, [active, field, refreshVersion]);
+  }, [active, graph, chart.current]);
 
   return (
     <section className="block">

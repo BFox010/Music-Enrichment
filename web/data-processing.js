@@ -113,6 +113,41 @@ function anchorPeriodKey(tf) {
   }
 }
 
+/* Preferences. localStorage throws, rather than returning null, when site
+   storage is blocked, and every read here ran during first render, so a blocked
+   browser got a blank page (#113). A failed read means "no preference"; a
+   failed write is dropped. */
+function readPref(key) {
+  try { return localStorage.getItem(key); } catch (e) { return null; }
+}
+function writePref(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) { /* storage blocked */ }
+}
+
+/* The library state after a load (live fetch, refresh or file drop).
+   processLibrary() returns drill and cube only when it had both tracks and
+   scrobbles, because both are cross-joins of the two. A single-file drop used
+   to keep the previous load's cube and drill: the "This month" KPI read the new
+   tracks while the charts read the old cube, and drill-down rows were
+   attributed through the old track indices (#113). They are cleared instead.
+   Returns null when the load produced nothing. */
+function loadedState(prevData, result) {
+  if (!result || (!result.nt && !result.ns)) return null;
+  const { nt, ns } = result;
+  const meta = prevData.meta || {};
+  return {
+    data: {
+      meta: { ...meta, isSample: false,
+        trackCount: nt ? nt.length : meta.trackCount,
+        scrobbleCount: ns ? ns.total : meta.scrobbleCount },
+      tracks: nt || prevData.tracks,
+      scrobbles: ns || prevData.scrobbles,
+    },
+    drill: result.drill || null,
+    cube: result.cube || null,
+  };
+}
+
 function normalizeTrack(raw, i) {
   return {
     i,

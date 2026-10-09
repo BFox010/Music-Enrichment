@@ -64,12 +64,12 @@ function App() {
   }, [data]);
 
   const [page, setPage] = useState("overview");
-  const [density, setDensity] = useState(() => localStorage.getItem("ml.density") || "comfortable");
-  const [accent, setAccent] = useState(() => localStorage.getItem("ml.accent") || "#a78bfa");
+  const [density, setDensity] = useState(() => readPref("ml.density") || "comfortable");
+  const [accent, setAccent] = useState(() => readPref("ml.accent") || "#a78bfa");
   // Both motion features are opt-out and remember the choice; the modules own
   // the localStorage key, this is just the mirrored state the Tweaks UI binds to.
-  const [ambient, setAmbient] = useState(() => localStorage.getItem("ml.ambient") !== "off");
-  const [pointerFx, setPointerFx] = useState(() => localStorage.getItem("ml.pointerfx") !== "off");
+  const [ambient, setAmbient] = useState(() => readPref("ml.ambient") !== "off");
+  const [pointerFx, setPointerFx] = useState(() => readPref("ml.pointerfx") !== "off");
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("plays");
   const [timeframe, setTimeframe] = useState("all");
@@ -152,24 +152,45 @@ function App() {
     });
   }, []);
 
+  /* One path for every load's result (live fetch, refresh, file drop); see
+     loadedState() in data-processing.js for why a partial load clears the
+     drill and cube. Returns false when the load produced nothing. */
+  const applyLoad = useCallback((result) => {
+    if (!result || (!result.nt && !result.ns)) return false;
+    setData((d) => loadedState(d, result).data);
+    const views = loadedState({ meta: {} }, result);
+    setDrill(views.drill);
+    setCube(views.cube);
+    return true;
+  }, []);
+
   /* ECharts (~1 MB) is off the first-paint path: prefetch on idle, and load
-     immediately if a chart page opens first. ensureECharts() is a singleton. */
+     immediately if a chart page opens first. ensureECharts() is a singleton.
+     Its failure is reported through the ml:echarts-failed event below, so the
+     rejection itself is swallowed here instead of surfacing as unhandled. */
+  const loadECharts = () => { window.ensureECharts && window.ensureECharts().catch(() => {}); };
   useEffect(() => {
     const idle = window.requestIdleCallback || ((cb) => setTimeout(cb, 1500));
-    const id = idle(() => { window.ensureECharts && window.ensureECharts(); });
+    const id = idle(loadECharts);
     return () => (window.cancelIdleCallback || clearTimeout)(id);
   }, []);
   useEffect(() => {
     const CHART_PAGES = ["trajectory", "map", "audio", "albums", "constellation", "coverage"];
-    if (CHART_PAGES.includes(page)) window.ensureECharts && window.ensureECharts();
+    if (CHART_PAGES.includes(page)) loadECharts();
   }, [page]);
+  const [chartsFailed, setChartsFailed] = useState(false);
+  useEffect(() => {
+    const onFail = () => setChartsFailed(true);
+    window.addEventListener("ml:echarts-failed", onFail);
+    return () => window.removeEventListener("ml:echarts-failed", onFail);
+  }, []);
 
   /* apply accent + density to <html> */
   useEffect(() => {
     document.documentElement.setAttribute("data-density", density);
     document.documentElement.style.setProperty("--accent", accent);
-    localStorage.setItem("ml.density", density);
-    localStorage.setItem("ml.accent", accent);
+    writePref("ml.density", density);
+    writePref("ml.accent", accent);
   }, [density, accent]);
 
   useEffect(() => { if (window.MLAmbient) window.MLAmbient.setEnabled(ambient); }, [ambient]);
@@ -218,21 +239,10 @@ function App() {
       // Off the main thread via the shared worker helper (F-08b) — a
       // refresh used to re-parse and re-cross-join synchronously here,
       // ~0.5s of main-thread work on the current library size.
-      const result = await runProcessLibrary({ tracksText, scrobblesText });
-      if (result) {
-        const { nt, ns, drill: nd, cube: nc } = result;
-        if (nt || ns) {
-          setData((d) => ({
-            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
-            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles,
-          }));
-          if (nd) setDrill(nd);
-          if (nc) setCube(nc);
-        }
-      }
+      applyLoad(await runProcessLibrary({ tracksText, scrobblesText }));
     } catch (e) { /* live fetch optional */ }
     setRefreshVersion((v) => v + 1);
-  }, [runProcessLibrary]);
+  }, [runProcessLibrary, applyLoad]);
 
   const doRefresh = useCallback(async () => {
     setRefreshing(true);
@@ -279,16 +289,9 @@ function App() {
     // synchronously here and could visibly jank the drop.
     const result = await runProcessLibrary({ trRows: rawTracks, scRows: rawScrob });
     if (!result) return; // superseded by a newer load
-    const { nt: newTracks, ns: newScrob, drill: nd, cube: nc } = result;
-    setData((d) => ({
-      meta: { ...d.meta, isSample: false, trackCount: newTracks ? newTracks.length : d.meta.trackCount, scrobbleCount: newScrob ? newScrob.total : d.meta.scrobbleCount },
-      tracks: newTracks || d.tracks,
-      scrobbles: newScrob || d.scrobbles
-    }));
-    if (nd) setDrill(nd);
-    if (nc) setCube(nc);
+    applyLoad(result);
     showToast(`Loaded your data — ${names.join(", ")}`);
-  }, [showToast, runProcessLibrary]);
+  }, [showToast, runProcessLibrary, applyLoad]);
 
   /* Live library, when served alongside (i.e. from the repo). */
   useEffect(() => {
@@ -310,21 +313,12 @@ function App() {
 
         const result = await runProcessLibrary({ tracksText, scrobblesText });
         if (cancelled) return;
-        if (result && (result.nt || result.ns)) {
-          const { nt, ns, drill: nd, cube: nc } = result;
-          setData((d) => ({
-            meta: { ...d.meta, isSample: false, trackCount: nt ? nt.length : d.meta.trackCount, scrobbleCount: ns ? ns.total : d.meta.scrobbleCount },
-            tracks: nt || d.tracks, scrobbles: ns || d.scrobbles
-          }));
-          if (nd) setDrill(nd);
-          if (nc) setCube(nc);
-          showToast("Loaded your live library from the repo");
-        }
+        if (applyLoad(result)) showToast("Loaded your live library from the repo");
         setIsLoadingLive(false);
       } catch (e) { if (!cancelled) setIsLoadingLive(false); /* sample stays */ }
     })();
     return () => { cancelled = true; };
-  }, [showToast, runProcessLibrary]);
+  }, [showToast, runProcessLibrary, applyLoad]);
 
   /* drag + drop */
   useEffect(() => {
@@ -631,6 +625,11 @@ function App() {
 
         {/* ── Main content ────────────────────────────────────────── */}
         <div className="main-content">
+          {chartsFailed && (
+            <div className="slicer-note" role="alert" style={{ display: "block", margin: "0 0 16px" }}>
+              Charts couldn't load: the ECharts script failed to download. Check the connection and reload the page.
+            </div>
+          )}
 
         {/* ── PAGE: Overview ──────────────────────────────────────── */}
         <div style={{ display: page === "overview" ? "" : "none" }}>
