@@ -50,8 +50,11 @@ _INPUT_PRIORITY: list[Path] = [
     TRACKS_WITH_TASTE_PATH,
     TRACKS_WITH_MOODS_PATH,
     REPO_ROOT / "tracks_with_features.jsonl",
-    REPO_ROOT / "tracks_with_isrcs.jsonl",
     TRACKS_WITH_AVAILABILITY_PATH,
+    # 4e's output, ranked above 5a's: reading the pre-4e file dropped identity
+    # resolution (#98).
+    REPO_ROOT / "tracks_resolved.jsonl",
+    REPO_ROOT / "tracks_with_isrcs.jsonl",
     TRACKS_WITH_METADATA_PATH,
     TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_APPLE_PATH,

@@ -122,6 +122,7 @@ phases:
     module: pipeline.merge_exportify
     callable: merge
     inputs:
+      - tracks_with_spotify.jsonl
       - tracks_with_apple.jsonl
       - inputs/exportify.csv
     outputs:
@@ -139,6 +140,8 @@ phases:
     accepts_force: true
     inputs:
       - tracks_with_audio.jsonl
+      - tracks_with_spotify.jsonl
+      - tracks_with_apple.jsonl
     outputs:
       - tracks_with_metadata.jsonl
     depends_on: ["A"]

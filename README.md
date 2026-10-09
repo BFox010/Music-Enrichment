@@ -135,9 +135,11 @@ needs no owner action and no Spotify account. All four are `optional: true` and
 keep working for tracks the automated chain misses; `3b` no longer pauses a run
 when its output is absent.
 
-Phases that read a JSONL pick the **deepest existing intermediate** rather than a
-fixed path, so skipping an optional phase doesn't silently drop the fields a
-later one added.
+Within a run, the orchestrator hands each phase the tracks file its nearest
+**successful** predecessor wrote *in this run*, so skipping or failing an
+optional phase doesn't drop the fields an earlier one added, and a previous
+run's intermediate is never read (#98). Each phase's own fallback list is only
+for running it standalone.
 
 **Phase 6's mood labels:** `mood_audit.csv` at the repo root is the canonical
 hand-labelled set (#66) and the only one a fresh clone has. The older

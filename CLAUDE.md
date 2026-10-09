@@ -86,7 +86,7 @@ inputs/lastfm_export.json
   B  enrich_spotify_ids    → tracks_with_spotify.jsonl      ← Spotify Search (optional, legacy last resort)
   3a export_tunemymusic    → inputs/tunemymusic_upload.csv  LEGACY (optional)
   3b (manual — owner)      → inputs/exportify.csv           LEGACY (optional; no longer blocks a run)
-  3c merge_exportify       → tracks_with_audio.jsonl        LEGACY (reads deepest existing intermediate)
+  3c merge_exportify       → tracks_with_audio.jsonl        LEGACY (reads this run's B or A output)
   4  enrich_metadata       → tracks_with_metadata.jsonl     ← Last.fm track.getInfo (tags + MBIDs)
   4b enrich_discogs        → tracks_with_discogs.jsonl      ← Discogs (styles, optional)
   4c derive_genres         → tracks_with_genres.jsonl       (no API — maps existing tags)

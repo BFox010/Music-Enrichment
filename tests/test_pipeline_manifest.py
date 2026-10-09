@@ -381,19 +381,15 @@ class TestDefaultInputMatchesManifest:
                 f"every phase between them."
             )
 
-    # Phase 3c is the one legitimate exception: the legacy Exportify merge is
-    # re-runnable out of order (--start-from 3c) and deliberately reads the
-    # deepest intermediate present, which is *later* in the chain than its own
-    # manifest position. See CLAUDE.md's pipeline chain note.
-    _READS_DEEPEST_BY_DESIGN = {"3c"}
-
     def test_input_priority_head_is_the_manifest_input(self, phases):
         """Modules that fall back through earlier outputs must still *prefer*
-        the manifest's declared input."""
+        the manifest's declared input.
+
+        No exemptions. 3c used to have one for reading "the deepest intermediate
+        present", which on a second run meant the previous run's Phase 5 output
+        (#98)."""
         for phase in phases:
             if phase.get("manual") or not phase.get("module"):
-                continue
-            if str(phase["id"]) in self._READS_DEEPEST_BY_DESIGN:
                 continue
             mod = importlib.import_module(phase["module"])
             priority = getattr(mod, "_INPUT_PRIORITY", None)

@@ -26,7 +26,6 @@ from pipeline.config import (
     INPUT_EXPORTIFY_CSV,
     REPO_ROOT,
     TRACKS_WITH_AUDIO_PATH,
-    TRACKS_WITH_METADATA_PATH,
     TRACKS_WITH_SPOTIFY_PATH,
     configure_logging,
     get_logger,
@@ -54,11 +53,12 @@ _AUDIO_FEATURE_COLUMNS: dict[str, str] = {
     "time_signature": "Time Signature",
 }
 
-# Read from the DEEPEST existing intermediate so we don't lose downstream data
-# (e.g. apple_music availability set by Phase 5, or spotify_id set by Phase B).
+# Upstream outputs only, nearest first. This list used to start with Phase 5's
+# and Phase 4's outputs, which 3c runs *before*: from the second run on it read
+# the previous run's rows, so new tracks never reached tracks.jsonl and play
+# counts froze (#98). The orchestrator now passes the input explicitly; this is
+# the standalone-CLI fallback.
 _INPUT_PRIORITY = [
-    REPO_ROOT / "tracks_with_availability.jsonl",
-    TRACKS_WITH_METADATA_PATH,
     TRACKS_WITH_SPOTIFY_PATH,
     TRACKS_WITH_APPLE_PATH,
     REPO_ROOT / "tracks_skeleton.jsonl",

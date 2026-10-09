@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import importlib
+import inspect
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -117,6 +118,28 @@ def _phase(phase_id: str, name: str, fn, *, optional: bool, outputs: list[str] =
     return OK
 
 
+# The parameter each tracks-chain phase reads its input rows from. Phase A
+# names it after the skeleton it reads; Phase 6 after the tracks it labels.
+_CHAIN_PARAMS: tuple[str, ...] = ("input_path", "skeleton_path", "tracks_path")
+
+
+def _chain_output(phase_def: dict) -> Path | None:
+    """The tracks intermediate a phase writes, or None if it writes none."""
+    for f in phase_def.get("outputs") or []:
+        name = Path(f).name
+        if name.startswith("tracks") and name.endswith(".jsonl"):
+            return REPO_ROOT / f
+    return None
+
+
+def _chain_kwarg(fn) -> str | None:
+    try:
+        params = inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return None
+    return next((p for p in _CHAIN_PARAMS if p in params), None)
+
+
 def failed_phases(results: dict[str, str]) -> list[str]:
     """Phase IDs that genuinely failed, excluding benign SKIPPED — an expected
     no-op like Phase 3c with no Exportify CSV. Only these count as errors.
@@ -183,11 +206,31 @@ def run(
     else:
         results["pytest"] = OK
 
+    # The tracks file the last *successful* phase wrote in this run, handed to
+    # the next chain phase explicitly. Phases used to pick "the first of these
+    # files that exists" themselves, and those lists included files that later
+    # phases, or a previous run, had written: from the second run on, 3c read
+    # run 1's Phase 5 output, Phase 4 kept preferring a stale
+    # tracks_with_audio.jsonl, and a phase after a FAILED optional one read that
+    # phase's output from the run before. New tracks never reached
+    # tracks.jsonl, play counts froze, and every phase reported OK (#98).
+    # A skipped or failed phase leaves this unchanged, so its successor reads
+    # the predecessor's output from this run.
+    chain: Path | None = None
+
     for i, phase_def in enumerate(_PHASES):
         phase_id = str(phase_def["id"])
 
         if i < start_idx:
             results[phase_id] = OK  # assumed done
+            # Resuming mid-chain: the operator vouches for the earlier phases,
+            # so seed from what they left on disk. Newest wins, so an optional
+            # phase's output from an older run can't shadow its predecessor's.
+            out = _chain_output(phase_def)
+            if out is not None and out.exists() and (
+                chain is None or out.stat().st_mtime >= chain.stat().st_mtime
+            ):
+                chain = out
             continue
 
         optional = phase_def.get("optional", False)
@@ -260,11 +303,18 @@ def run(
         kwargs = {}
         if force != FORCE_OFF and phase_def.get("accepts_force"):
             kwargs["force"] = force
+        out = _chain_output(phase_def)
+        param = _chain_kwarg(fn) if out is not None else None
+        if chain is not None and param is not None:
+            kwargs[param] = chain
+            log.info("Phase %s reads %s (this run's chain)", phase_id, chain.name)
         status = _phase(
             phase_id, phase_def["name"], fn,
             optional=optional, outputs=phase_def.get("outputs", []), **kwargs,
         )
         results[phase_id] = status
+        if status == OK and out is not None:
+            chain = out
         if status == FAILED and not optional:
             log.error("Required phase %s failed — stopping pipeline.", phase_id)
             break
