@@ -853,6 +853,12 @@ const SCENE_COLORS = ["#9e8fe9", "#51b67a", "#e47b7c", "#4fa6e9", "#d58c3b", "#0
 const SCENE_OTHER = "#838592";
 const sceneColor = (id) => SCENE_COLORS[id] || SCENE_OTHER;
 
+/* A released tag returns home like it's pulled by a magnet: slow to leave,
+   faster as it nears its scene, and it stops dead on contact. Accelerating
+   in, rather than easing out, is what reads as attraction. (No overshoot:
+   the tween clamps an easing's output at 1, so one would never draw.) */
+const magnetEase = (t) => Math.pow(t, 2.2);
+
 const CONST_FIELDS = [["discogs_styles", "Styles"], ["lastfm_tags", "Genres"], ["mood_tags", "Moods"]];
 const CONST_MIN_PLAYS = [5, 15, 30, 60];
 const CONST_STRENGTHS = [[0, "All"], [0.05, "Weak+"], [0.15, "Medium+"], [0.3, "Strong"]];
@@ -1104,10 +1110,17 @@ function TagConstellation({ active, refreshVersion = 0 }) {
     const edges = graph.edges || [];
     let rafA = 0, rafB = 0;
 
-    const draw = () => {
+    // `spring`: the redraw that pulls a released tag home. Every tag is handed
+    // its home position on every draw; only the dragged one is away from it,
+    // so only it moves.
+    const draw = (spring = false) => {
       const inst = chart.current;
       if (!inst) return;
-      inst.resize();
+      // Resize only when the canvas really changed size. An ECharts resize
+      // re-renders with animation off and re-reads every tag's position, which
+      // would snap a released tag home before its pull-back could play.
+      const box = elRef.current;
+      if (box && (box.clientWidth !== inst.getWidth() || box.clientHeight !== inst.getHeight())) inst.resize();
       const w = inst.getWidth(), h = inst.getHeight();
       if (w < 10 || h < 10) return;
       // The layout belongs to the graph, not to the focus: focusing a tag must
@@ -1116,18 +1129,6 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       if (fresh) layoutRef.current = { graph, lay: layoutConstellation(nodes, edges, w / h), fit: null };
       const L = layoutRef.current;
       const { pos, rad } = L.lay;
-      // Keep any tag the reader dragged where they left it, so a focus change
-      // or resize doesn't snap it back. Item layouts are in the same units we
-      // hand ECharts as x/y.
-      if (!fresh) {
-        const sd = inst.getModel().getSeriesByIndex(0)?.getData();
-        if (sd && sd.count() >= pos.length) {
-          for (let i = 0; i < pos.length; i++) {
-            const l = sd.getItemLayout(i);
-            if (l && isFinite(l[0]) && isFinite(l[1])) { pos[i][0] = l[0]; pos[i][1] = l[1]; }
-          }
-        }
-      }
       // Fit once per layout and canvas size, never per update. ECharts re-fits
       // a "none" layout to its nodes' bounding box on every setOption, so a
       // dragged tag that widened the box rescaled everything on the next focus
@@ -1186,14 +1187,16 @@ function TagConstellation({ active, refreshVersion = 0 }) {
         const s = e.strength == null ? 1 : e.strength;
         const touches = focus ? (e.source === focus || e.target === focus) : true;
         const sceneOk = focus ? touches : inFocusScene(sceneOf.get(e.source) || 0);
-        // Links between scenes recede so each scene's own structure reads
-        // first; a focus brings its cross-scene links back to full strength.
+        // Links between scenes are the bridges between them, so they get a
+        // visibility floor and a little extra weight rather than fading out.
+        // A focus brings its cross-scene links up to full strength.
         const across = sceneOf.get(e.source) !== sceneOf.get(e.target);
+        const base = 0.12 + 0.4 * (s / maxW);
         return {
           source: e.source, target: e.target, value: e.weight, strength: s,
           lineStyle: {
-            width: 0.5 + 2.5 * (s / maxW),
-            opacity: (touches && sceneOk) ? (focus ? 0.75 : (0.12 + 0.4 * (s / maxW)) * (across ? 0.4 : 1)) : 0.03,
+            width: 0.5 + 2.5 * (s / maxW) + (across ? 0.6 : 0),
+            opacity: (touches && sceneOk) ? (focus ? 0.75 : (across ? Math.max(0.32, base) : base)) : 0.03,
             color: "source", curveness: 0.12,
           },
         };
@@ -1202,7 +1205,8 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       const option = {
         backgroundColor: "transparent",
         animation: !reduced,
-        animationDurationUpdate: reduced ? 0 : 300,
+        animationDurationUpdate: reduced ? 0 : (spring ? 480 : 300),
+        animationEasingUpdate: spring ? magnetEase : "cubicOut",
         tooltip: {
           formatter(p) {
             if (p.dataType === "edge") {
@@ -1217,16 +1221,17 @@ function TagConstellation({ active, refreshVersion = 0 }) {
         series: [{
           id: "constellation", type: "graph", layout: "none", ...seriesBox,
           // Dragging moves only the grabbed tag: there is no physics, so its
-          // links stretch instead of hauling the whole graph along. Panning is
-          // off until the reader zooms in: at the fitted zoom there is nothing
-          // off screen, and a near-miss on a node used to grab the background.
+          // links stretch instead of hauling the whole graph along, and it
+          // follows the pointer with no pull until it's let go. Panning is off
+          // until the reader zooms in: at the fitted zoom there is nothing off
+          // screen, and a near-miss on a node used to grab the background.
           roam: zoomedRef.current ? true : "scale", draggable: true,
           scaleLimit: { min: 0.5, max: 6 },
           labelLayout: { hideOverlap: true },
           label: { position: "right", distance: 4, fontSize: 11, color: c.text, formatter: "{b}" },
           emphasis: { focus: focus ? "none" : "adjacency", label: { show: true }, lineStyle: { opacity: 0.85 } },
           data: data.concat(anchors.map(([x, y], j) => ({
-            name: ` anchor${j}`, x, y, symbolSize: 0, draggable: false,
+            name: `\u0000anchor${j}`, x, y, symbolSize: 0, draggable: false,
             itemStyle: { opacity: 0 }, label: { show: false },
             tooltip: { show: false }, emphasis: { disabled: true },
           }))),
@@ -1243,9 +1248,12 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       // change could stay blurred under the new one; clear it each time.
       if (inst.dispatchAction) inst.dispatchAction({ type: "downplay", seriesIndex: 0 });
 
-      if (inst.off) { inst.off("click"); inst.off("graphroam"); }
+      if (inst.off) { inst.off("click"); inst.off("graphroam"); inst.off("mousedown"); }
+      inst.on("mousedown", (p) => {
+        if (p.dataType === "node" && p.dataIndex < nodes.length) dragIdx = p.dataIndex;
+      });
       inst.on("click", (p) => {
-        if (p.dataType === "node" && !String(p.data.name).startsWith(" ")) {
+        if (p.dataType === "node" && !String(p.data.name).startsWith("\u0000")) {
           setFocus((f) => (f === p.data.name ? null : p.data.name));
         }
       });
@@ -1261,7 +1269,26 @@ function TagConstellation({ active, refreshVersion = 0 }) {
 
     // The wrap flips from display:none when loading ends, and React hasn't
     // painted yet; two frames give the canvas real dimensions to lay out in.
-    rafA = requestAnimationFrame(() => { rafB = requestAnimationFrame(draw); });
+    rafA = requestAnimationFrame(() => { rafB = requestAnimationFrame(() => draw()); });
+
+    // On release, a tag that was dragged off its spot is pulled back home.
+    // Capture phase, on window, so a release outside the canvas still counts;
+    // the redraw waits a frame so ECharts has finished its own drag-end.
+    let dragIdx = null, rafS = 0;
+    const onRelease = () => {
+      if (dragIdx == null) return;
+      const i = dragIdx;
+      dragIdx = null;
+      const inst = chart.current;
+      const lay = layoutRef.current.lay;
+      const sd = inst && inst.getModel().getSeriesByIndex(0)?.getData();
+      const at = sd && sd.getItemLayout(i);
+      if (!at || !lay || !lay.pos[i]) return;
+      if (Math.hypot(at[0] - lay.pos[i][0], at[1] - lay.pos[i][1]) < 0.5) return;  // a click, not a drag
+      rafS = requestAnimationFrame(() => draw(true));
+    };
+    window.addEventListener("mouseup", onRelease, true);
+    window.addEventListener("touchend", onRelease, true);
     // Re-fit whenever the canvas itself changes size (a scrollbar appearing,
     // the wrap leaving display:none, the sidebar collapsing), not only on a
     // window resize. A canvas that was still 0×0 at the first frame draws as
@@ -1273,8 +1300,10 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       ro.observe(elRef.current);
     }
     return () => {
-      cancelAnimationFrame(rafA); cancelAnimationFrame(rafB);
+      cancelAnimationFrame(rafA); cancelAnimationFrame(rafB); cancelAnimationFrame(rafS);
       if (ro) ro.disconnect();
+      window.removeEventListener("mouseup", onRelease, true);
+      window.removeEventListener("touchend", onRelease, true);
     };
   }, [active, graph, chart.current, focus, focusScene]);
 

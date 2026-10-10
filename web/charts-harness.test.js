@@ -74,9 +74,19 @@ function makeRealm() {
       const inst = {
         options: [],
         setOption(o) { this.options.push(o); },
-        resize() {}, dispose() {}, on() {},
+        resize() {}, dispose() {},
+        handlers: {},
+        on(name, fn) { this.handlers[name] = fn; },
+        off(name) { delete this.handlers[name]; },
         getWidth: () => 800, getHeight: () => 400,
-        getModel: () => ({ getSeriesByIndex: () => null }),
+        // Tests that need ECharts' live item layouts (a dragged node) set this.
+        itemLayout: null,
+        getModel() {
+          const inst = this;
+          return { getSeriesByIndex: () => (inst.itemLayout
+            ? { getData: () => ({ getItemLayout: (i) => inst.itemLayout(i) }) }
+            : null) };
+        },
       };
       rec.instances.push(inst);
       return inst;
@@ -284,6 +294,55 @@ test("the constellation draws its final layout once, with no physics and no late
       const anchors = series.data.filter(isAnchor);
       assert.equal(anchors.length, 2);
       assert.ok(anchors.every((a) => a.symbolSize === 0 && a.tooltip.show === false && a.emphasis.disabled));
+    } finally {
+      await TestRenderer.act(async () => renderer.unmount());
+    }
+  } finally {
+    API["/api/tag-graph"] = saved;
+  }
+});
+
+test("a dragged tag is pulled back home on release, and only that tag moves", async () => {
+  const saved = API["/api/tag-graph"];
+  const g = sceneGraph();
+  API["/api/tag-graph"] = { ...g, scenes: [0, 1, 2].map((id) => ({ id, name: `scene ${id}`, tags: 1, plays: 1 })) };
+  try {
+    const realm = makeRealm();
+    realm.ctx.echarts = realm.ctx.echartsStub;
+    const renderer = await mount(realm, "TagConstellation");
+    try {
+      await waitFor(() => realm.rec.instances.some((i) => i.options.length));
+      const inst = realm.rec.instances.find((i) => i.options.length);
+      const home = inst.options[0].series[0].data.map((d) => [d.x, d.y]);
+      const before = inst.options.length;
+
+      // Press on tag 0, drag it 200 units away (ECharts moves the item
+      // layout), and let go anywhere on the page.
+      inst.handlers.mousedown({ dataType: "node", dataIndex: 0 });
+      inst.itemLayout = (i) => (i === 0 ? [home[0][0] + 200, home[0][1] + 120] : home[i]);
+      await TestRenderer.act(async () => {
+        realm.ctx.dispatchEvent({ type: "mouseup" });
+        await new Promise((r) => setTimeout(r, 30));
+      });
+
+      assert.equal(inst.options.length, before + 1, "one redraw on release");
+      const pull = inst.options[inst.options.length - 1];
+      assert.equal(typeof pull.animationEasingUpdate, "function", "the pull-back uses the magnet easing");
+      assert.ok(pull.animationEasingUpdate(0.25) < 0.25 && pull.animationEasingUpdate(1) === 1,
+        "slow to leave, arrives exactly home");
+      assert.ok(pull.animationDurationUpdate > 300);
+      const after = pull.series[0].data.map((d) => [d.x, d.y]);
+      assert.deepEqual(after, home, "every tag, the dragged one included, is handed its home position");
+
+      // A press that didn't move (a click) triggers no pull-back redraw.
+      inst.handlers.mousedown({ dataType: "node", dataIndex: 1 });
+      inst.itemLayout = (i) => home[i];
+      const n = inst.options.length;
+      await TestRenderer.act(async () => {
+        realm.ctx.dispatchEvent({ type: "mouseup" });
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(inst.options.length, n, "a click is not a drag");
     } finally {
       await TestRenderer.act(async () => renderer.unmount());
     }
