@@ -1,0 +1,235 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Groove · Listening Atlas prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --black: #0e0e10;      /* page, and the vinyl */
+    --groove: #1c1b1f;     /* an empty hour */
+    --line: #2a292e;
+    --text: #f2efe9;
+    --text-2: #a9a39a;
+    --muted: #77726b;
+    --amber: #ffb547;      /* the one hue: the ramp runs groove → amber → white-hot */
+    --hot: #fff3dc;
+    --cond: 'IBM Plex Sans Condensed', system-ui, sans-serif;
+    --sans: 'IBM Plex Sans', system-ui, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--black); color: var(--text); }
+  body { font: 400 15px/1.55 var(--sans); -webkit-font-smoothing: antialiased; overflow-x: hidden; }
+  :focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 32px; }
+
+  header { display: flex; justify-content: space-between; align-items: center; gap: 20px; padding: 22px 0;
+           border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { margin: 0; font: 700 20px var(--cond); letter-spacing: 0.01em; }
+  header nav { display: flex; gap: 20px; font-size: 14px; color: var(--text-2); flex-wrap: wrap; }
+  header nav a { color: inherit; text-decoration: none; }
+  header nav a[aria-current] { color: var(--text); box-shadow: inset 0 -2px var(--amber); }
+
+  .stage { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(300px, 0.75fr); gap: 48px; align-items: center; padding: 40px 0; }
+  .record { position: relative; width: 100%; max-width: 720px; justify-self: center; }
+  .record svg { width: 100%; height: auto; display: block; overflow: visible; }
+  .record .spin { transform-origin: 500px 500px; }
+  .seg { cursor: crosshair; transition: opacity .15s; }
+  .record.hovering .seg { opacity: .35; }
+  .record.hovering .seg.lit { opacity: 1; }
+  .hourlab { font: 500 22px var(--mono); fill: var(--muted); }
+  @media (max-width: 600px) { .hourlab { font-size: 40px; } .yearlab { font-size: 22px; } }
+  .yearlab { font: 500 15px var(--mono); fill: var(--text-2); }
+
+  .panel h2 { margin: 0 0 12px; font: 600 clamp(34px, 3.6vw, 52px)/1.02 var(--cond); letter-spacing: -0.01em; }
+  .panel .how { margin: 0 0 28px; color: var(--text-2); max-width: 30em; }
+  .readout { border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 22px 0; min-height: 150px; }
+  .readout .when { font: 600 40px/1.05 var(--cond); }
+  .readout .when span { color: var(--amber); }
+  .readout .n { font: 400 18px var(--mono); color: var(--text-2); margin-top: 6px; }
+  .readout .ctx { font-size: 14px; color: var(--muted); margin-top: 6px; }
+  .ramp { margin-top: 22px; }
+  .ramp .bar { height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--groove), #6b4a1e 30%, var(--amber) 70%, var(--hot)); }
+  .ramp .ends { display: flex; justify-content: space-between; font-size: 13px; color: var(--muted); margin-top: 6px; }
+
+  .sides { display: grid; grid-template-columns: 1fr 1fr; gap: 56px; padding: 48px 0 24px; border-top: 1px solid var(--line); }
+  .sides h3 { margin: 0 0 16px; font: 600 24px var(--cond); }
+  .sides h3 small { font: 400 14px var(--sans); color: var(--muted); margin-left: 8px; }
+  .tracklist { list-style: none; margin: 0; padding: 0; }
+  .tracklist li { display: grid; grid-template-columns: 40px 44px 1fr auto; gap: 14px; align-items: center;
+                  padding: 9px 0; border-bottom: 1px dashed var(--line); }
+  .tracklist .pos { font: 500 14px var(--mono); color: var(--muted); }
+  .tracklist .thumb { width: 44px; height: 44px; border-radius: 50%; overflow: hidden; background: var(--groove);
+                      display: grid; place-items: center; font: 600 13px var(--cond); color: var(--muted); }
+  .tracklist .thumb.sq { border-radius: 3px; }
+  .tracklist img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .tracklist .name { min-width: 0; }
+  .tracklist .name b { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .tracklist .name small { color: var(--muted); font-size: 13px; }
+  .tracklist .plays { font: 400 14px var(--mono); color: var(--text-2); font-variant-numeric: tabular-nums; }
+  .tracklist .plays i { display: inline-block; height: 4px; margin-right: 10px; vertical-align: middle; background: var(--amber); border-radius: 2px; opacity: .8; }
+
+  .facts { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; padding: 32px 0 64px; }
+  .facts div { border-left: 2px solid var(--line); padding-left: 14px; color: var(--text-2); font-size: 14px; }
+  .facts b { display: block; font: 600 30px var(--cond); color: var(--text); font-variant-numeric: tabular-nums; }
+
+  /* the one orchestrated moment: the record spins up, then settles at true midnight */
+  @media (prefers-reduced-motion: no-preference) {
+    .record.intro .spin { animation: spinup 2.2s cubic-bezier(.15,.75,.2,1) both; }
+    .record.intro .ring { animation: fade .9s ease both; animation-delay: calc(.25s + var(--r) * 90ms); }
+  }
+  @keyframes spinup { from { transform: rotate(-200deg); } }
+  @keyframes fade { from { opacity: 0; } }
+
+  @media (max-width: 900px) {
+    .wrap { padding: 0 16px; }
+    .stage { grid-template-columns: 1fr; gap: 24px; padding: 24px 0; }
+    .sides { grid-template-columns: 1fr; gap: 36px; }
+    .facts { grid-template-columns: repeat(2, 1fr); }
+    .readout { min-height: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Listening Atlas</h1>
+    <nav aria-label="Sections">
+      <a href="#" aria-current="page">Overview</a><a href="#">Genres &amp; moods</a><a href="#">Albums</a>
+      <a href="#">Trajectory</a><a href="#">Seasons</a><a href="#">Tracks</a>
+    </nav>
+  </header>
+
+  <div class="stage">
+    <div class="record intro" id="record"></div>
+    <div class="panel">
+      <h2>Every year you've listened, pressed into one record.</h2>
+      <p class="how">Each groove is a year, newest on the outside. Going clockwise from the top is the hour of the day. The brighter the groove, the more of that year's listening happened in that hour. Hover or tab through to read it.</p>
+      <div class="readout" id="readout" aria-live="polite"></div>
+      <div class="ramp" aria-hidden="true"><div class="bar"></div><div class="ends"><span>Quiet hour</span><span>That year's busiest hour</span></div></div>
+    </div>
+  </div>
+
+  <div class="sides">
+    <div>
+      <h3>Side A <small>Most-played artists</small></h3>
+      <ol class="tracklist" id="sideA"></ol>
+    </div>
+    <div>
+      <h3>Side B <small>Most-played tracks</small></h3>
+      <ol class="tracklist" id="sideB"></ol>
+    </div>
+  </div>
+
+  <div class="facts" id="facts"></div>
+</div>
+
+<script>
+const fmt = n => n.toLocaleString('en-US');
+const hourName = h => h === 0 ? 'midnight' : h === 12 ? 'noon' : (h % 12) + (h < 12 ? 'am' : 'pm');
+const DOW = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const argmax = a => a.indexOf(Math.max(...a));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const initials = s => s.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+const img = (src, alt) => src ? `<img src="${esc(src)}" alt="${esc(alt)}" loading="lazy" decoding="async">` : esc(initials(alt));
+
+// One-hue sequential ramp: empty groove → amber → white-hot.
+const STOPS = [[0, [28, 27, 31]], [0.3, [107, 74, 30]], [0.7, [255, 181, 71]], [1, [255, 243, 220]]];
+function ramp(t) {
+  for (let i = 1; i < STOPS.length; i++) {
+    const [t1, c1] = STOPS[i], [t0, c0] = STOPS[i - 1];
+    if (t <= t1) { const k = (t - t0) / (t1 - t0); return `rgb(${c0.map((v, j) => Math.round(v + (c1[j] - v) * k)).join(',')})`; }
+  }
+  return `rgb(${STOPS.at(-1)[1].join(',')})`;
+}
+
+// Hours fill 345° so a 15° lead-in at twelve o'clock is free for the year labels.
+const C = 500, GAP_DEG = 15, SPAN = (360 - GAP_DEG) / 24;
+const polar = (r, deg) => { const a = (deg - 90) * Math.PI / 180; return [C + r * Math.cos(a), C + r * Math.sin(a)]; };
+function arc(r0, r1, a0, a1) {
+  const [x0, y0] = polar(r1, a0), [x1, y1] = polar(r1, a1), [x2, y2] = polar(r0, a1), [x3, y3] = polar(r0, a0);
+  return `M${x0},${y0}A${r1},${r1} 0 0 1 ${x1},${y1}L${x2},${y2}A${r0},${r0} 0 0 0 ${x3},${y3}Z`;
+}
+
+fetch('data.json').then(r => r.json()).then(d => {
+  const total = d.byHour.reduce((a, b) => a + b, 0);
+  const years = Object.keys(d.hourByYear).filter(y => d.byYear[y] / total > 0.02);
+  const R0 = 175, R1 = 455, ringW = (R1 - R0) / years.length;
+  const cover = d.topTracks.find(t => t.cover);
+
+  let segs = '', labels = '';
+  years.forEach((y, ri) => {
+    const row = d.hourByYear[y], mx = Math.max(...row);
+    const r0 = R0 + ri * ringW + 2, r1 = R0 + (ri + 1) * ringW - 2;
+    segs += `<g class="ring" style="--r:${ri}">`;
+    row.forEach((v, h) => {
+      const a0 = GAP_DEG / 2 + h * SPAN + 0.6, a1 = GAP_DEG / 2 + (h + 1) * SPAN - 0.6;
+      segs += `<path class="seg" tabindex="0" data-y="${y}" data-h="${h}" d="${arc(r0, r1, a0, a1)}" fill="${ramp(v / mx)}"><title>${hourName(h)}, ${y}: ${fmt(v)} plays</title></path>`;
+    });
+    segs += '</g>';
+    labels += `<text class="yearlab" x="${C}" y="${C - (r0 + r1) / 2 + 5}" text-anchor="middle">${String(y).slice(2)}</text>`;
+  });
+  const hourLabs = [0, 6, 12, 18].map(h => {
+    const [x, y] = polar(R1 + 30, GAP_DEG / 2 + (h + 0.5) * SPAN);
+    return `<text class="hourlab" x="${x}" y="${y + 7}" text-anchor="middle">${hourName(h).replace('midnight', '12am')}</text>`;
+  }).join('');
+
+  const rec = document.getElementById('record');
+  rec.innerHTML = `<svg viewBox="-20 -20 1040 1040" role="img" aria-label="Plays by hour of day for each year, drawn as the grooves of a record">
+    <defs>
+      <radialGradient id="vinyl"><stop offset="0.3" stop-color="#151417"/><stop offset="1" stop-color="#09090b"/></radialGradient>
+      <clipPath id="label"><circle cx="${C}" cy="${C}" r="${R0 - 22}"/></clipPath>
+    </defs>
+    <circle cx="${C}" cy="${C}" r="${R1 + 14}" fill="url(#vinyl)" stroke="#2a292e"/>
+    <g class="spin">
+      ${segs}
+      ${cover ? `<image href="${esc(cover.cover)}" x="${C - R0 + 22}" y="${C - R0 + 22}" width="${2 * (R0 - 22)}" height="${2 * (R0 - 22)}" clip-path="url(#label)" preserveAspectRatio="xMidYMid slice"/>` : `<circle cx="${C}" cy="${C}" r="${R0 - 22}" fill="#3a2a14"/>`}
+      <circle cx="${C}" cy="${C}" r="${R0 - 22}" fill="none" stroke="rgba(0,0,0,.35)" stroke-width="6"/>
+    </g>
+    <circle cx="${C}" cy="${C}" r="9" fill="var(--black)" stroke="#444" />
+    ${labels}${hourLabs}
+  </svg>`;
+  setTimeout(() => rec.classList.remove('intro'), 3200);
+
+  const readout = document.getElementById('readout');
+  const peakOverall = () => {
+    let best = [0, years[0], 0];
+    years.forEach(y => d.hourByYear[y].forEach((v, h) => { if (v > best[0]) best = [v, y, h]; }));
+    return best;
+  };
+  function show(y, h) {
+    const v = d.hourByYear[y][h], yt = d.byYear[y];
+    readout.innerHTML = `<div class="when"><span>${hourName(h)}</span> in ${y}</div><div class="n">${fmt(v)} plays</div><div class="ctx">${(v / yt * 100).toFixed(1)}% of ${y}'s ${fmt(yt)} plays</div>`;
+  }
+  const [pv, py, ph] = peakOverall();
+  const idle = () => { readout.innerHTML = `<div class="when"><span>${hourName(ph)}</span> in ${py}</div><div class="n">${fmt(pv)} plays</div><div class="ctx">The single busiest groove on the record.</div>`; };
+  idle();
+
+  const allSegs = rec.querySelectorAll('.seg');
+  allSegs.forEach(s => {
+    const on = () => { rec.classList.add('hovering'); allSegs.forEach(o => o.classList.toggle('lit', o.dataset.h === s.dataset.h || o === s)); show(s.dataset.y, +s.dataset.h); };
+    const off = () => { rec.classList.remove('hovering'); idle(); };
+    s.addEventListener('mouseenter', on); s.addEventListener('focus', on);
+    s.addEventListener('mouseleave', off); s.addEventListener('blur', off);
+  });
+
+  const amax = d.topArtists[0].plays, tmax = d.topTracks[0].plays;
+  document.getElementById('sideA').innerHTML = d.topArtists.map((a, i) =>
+    `<li><span class="pos">A${i + 1}</span><span class="thumb">${img(a.image, a.name)}</span><span class="name"><b>${esc(a.name)}</b><small>${a.tracks} tracks in library</small></span><span class="plays"><i style="width:${Math.round(a.plays / amax * 48)}px"></i>${fmt(a.plays)}</span></li>`).join('');
+  document.getElementById('sideB').innerHTML = d.topTracks.map((t, i) =>
+    `<li><span class="pos">B${i + 1}</span><span class="thumb sq">${img(t.cover, t.track)}</span><span class="name"><b>${esc(t.track)}</b><small>${esc(t.artist)}</small></span><span class="plays"><i style="width:${Math.round(t.plays / tmax * 48)}px"></i>${fmt(t.plays)}</span></li>`).join('');
+
+  const topSeason = Object.entries(d.bySeason).reduce((a, b) => b[1] > a[1] ? b : a);
+  document.getElementById('facts').innerHTML = [
+    [fmt(d.meta.scrobbles), 'plays logged'], [fmt(d.meta.artists), 'artists'],
+    [DOW[argmax(d.byDow)], 'your heaviest day'],
+    [Math.round(topSeason[1] / total * 100) + '%', `of plays fall in ${topSeason[0]}`],
+  ].map(([v, l]) => `<div><b>${v}</b>${l}</div>`).join('');
+});
+</script>
+</body>
+</html>
