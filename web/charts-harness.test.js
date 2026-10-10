@@ -302,7 +302,7 @@ test("the constellation draws its final layout once, with no physics and no late
   }
 });
 
-test("a dragged tag is pulled back home on release, and only that tag moves", async () => {
+test("holding a tag shows every scene undimmed, then it's pulled home and the view returns", async () => {
   const saved = API["/api/tag-graph"];
   const g = sceneGraph();
   API["/api/tag-graph"] = { ...g, scenes: [0, 1, 2].map((id) => ({ id, name: `scene ${id}`, tags: 1, plays: 1 })) };
@@ -314,35 +314,56 @@ test("a dragged tag is pulled back home on release, and only that tag moves", as
       await waitFor(() => realm.rec.instances.some((i) => i.options.length));
       const inst = realm.rec.instances.find((i) => i.options.length);
       const home = inst.options[0].series[0].data.map((d) => [d.x, d.y]);
-      const before = inst.options.length;
+      const heldTag = inst.options[0].series[0].data[0].name;
+      const partners = new Set(g.edges.flatMap((e) => (e.source === heldTag ? [e.target] : e.target === heldTag ? [e.source] : [])));
+      const moved = [home[0][0] + 200, home[0][1] + 120];
+      inst.itemLayout = (i) => (i === 0 ? moved : home[i]);
 
-      // Press on tag 0, drag it 200 units away (ECharts moves the item
-      // layout), and let go anywhere on the page.
-      inst.handlers.mousedown({ dataType: "node", dataIndex: 0 });
-      inst.itemLayout = (i) => (i === 0 ? [home[0][0] + 200, home[0][1] + 120] : home[i]);
+      // Press on tag 0 and move: that's a hold.
+      inst.handlers.mousedown({ dataType: "node", dataIndex: 0, event: { event: { clientX: 0, clientY: 0 } } });
       await TestRenderer.act(async () => {
-        realm.ctx.dispatchEvent({ type: "mouseup" });
-        await new Promise((r) => setTimeout(r, 30));
+        realm.ctx.dispatchEvent({ type: "mousemove", clientX: 30, clientY: 10 });
+        await new Promise((r) => setTimeout(r, 20));
       });
+      const held = inst.options[inst.options.length - 1].series[0];
+      const real = held.data.filter((d) => !String(d.name).startsWith("\u0000"));
+      assert.ok(real.every((d) => d.itemStyle.opacity === 0.95), "nothing dims while a tag is held");
+      assert.equal(held.emphasis.disabled, true, "hover highlighting is off while holding");
+      assert.deepEqual([real[0].x, real[0].y], moved, "the held tag stays under the pointer");
+      for (const d of real) {
+        assert.equal(d.label.show, d.name === heldTag || partners.has(d.name), `label for ${d.name}`);
+      }
+      assert.ok(held.edges.every((e) => e.lineStyle.opacity === 0), "resting links step aside for the tethers");
 
-      assert.equal(inst.options.length, before + 1, "one redraw on release");
-      const pull = inst.options[inst.options.length - 1];
-      assert.equal(typeof pull.animationEasingUpdate, "function", "the pull-back uses the magnet easing");
-      assert.ok(pull.animationEasingUpdate(0.25) < 0.25 && pull.animationEasingUpdate(1) === 1,
-        "slow to leave, arrives exactly home");
-      assert.ok(pull.animationDurationUpdate > 300);
-      const after = pull.series[0].data.map((d) => [d.x, d.y]);
-      assert.deepEqual(after, home, "every tag, the dragged one included, is handed its home position");
-
-      // A press that didn't move (a click) triggers no pull-back redraw.
-      inst.handlers.mousedown({ dataType: "node", dataIndex: 1 });
-      inst.itemLayout = (i) => home[i];
+      // Let go: one redraw pulls it home with the magnet easing...
       const n = inst.options.length;
       await TestRenderer.act(async () => {
         realm.ctx.dispatchEvent({ type: "mouseup" });
         await new Promise((r) => setTimeout(r, 30));
       });
-      assert.equal(inst.options.length, n, "a click is not a drag");
+      const pull = inst.options[n];
+      assert.equal(typeof pull.animationEasingUpdate, "function", "the pull-back uses the magnet easing");
+      assert.ok(pull.animationEasingUpdate(0.25) < 0.25 && pull.animationEasingUpdate(1) === 1,
+        "slow to leave, arrives exactly home");
+      assert.deepEqual(pull.series[0].data.slice(0, home.length - 2).map((d) => [d.x, d.y]), home.slice(0, home.length - 2),
+        "every tag, the held one included, is handed its home position");
+
+      // ...and once it has landed, the normal view comes back.
+      await TestRenderer.act(() => new Promise((r) => setTimeout(r, 650)));
+      const rest = inst.options[inst.options.length - 1].series[0];
+      assert.notEqual(rest.emphasis.disabled, true, "hover highlighting is back");
+      assert.ok(rest.edges.some((e) => e.lineStyle.opacity > 0), "resting links are back");
+
+      // A press that doesn't move is a click: no hold, no redraw.
+      inst.itemLayout = (i) => home[i];
+      const m = inst.options.length;
+      inst.handlers.mousedown({ dataType: "node", dataIndex: 1, event: { event: { clientX: 0, clientY: 0 } } });
+      await TestRenderer.act(async () => {
+        realm.ctx.dispatchEvent({ type: "mousemove", clientX: 2, clientY: 1 });
+        realm.ctx.dispatchEvent({ type: "mouseup" });
+        await new Promise((r) => setTimeout(r, 30));
+      });
+      assert.equal(inst.options.length, m, "a click is not a hold");
     } finally {
       await TestRenderer.act(async () => renderer.unmount());
     }
