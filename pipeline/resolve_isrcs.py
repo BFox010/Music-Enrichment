@@ -25,6 +25,11 @@ their human-edited fields at the Phase 8 merge.
 Does **not** set ``canonical_track_id``; 4e owns that, and now computes it with
 these ISRCs in hand.
 
+Also records ``artwork_url`` (the album's ``cover_xl``) off the same Deezer
+track response the ISRC came from. Only from a Deezer-resolved row: that is the
+match this phase vouched for, and the response is already cached, so the cover
+costs nothing. Phase 5 falls back to iTunes artwork for the rest.
+
 Usage:
     python -m pipeline.resolve_isrcs
     python -m pipeline.resolve_isrcs --limit 100
@@ -159,7 +164,31 @@ def _isrc_from_deezer_track(response: Any) -> str | None:
     return isrc.strip().upper() if isinstance(isrc, str) and isrc.strip() else None
 
 
-def _resolve_deezer(client: RateLimitedClient, artist: str, track: str) -> str | None:
+def _artwork_from_deezer(*responses: Any) -> str | None:
+    """First ``album.cover_xl`` among ``responses``, in the order given.
+
+    A coverless Deezer album carries an empty image hash, so its URL reads
+    ``.../images/cover//1000x1000...`` and names no image; it is treated as no
+    artwork rather than stored as one.
+    """
+    for response in responses:
+        if not isinstance(response, dict) or response.get("_error"):
+            continue
+        album = response.get("album")
+        url = album.get("cover_xl") if isinstance(album, dict) else None
+        if isinstance(url, str) and url.strip() and "/cover//" not in url:
+            return url.strip()
+    return None
+
+
+def _resolve_deezer(
+    client: RateLimitedClient, artist: str, track: str
+) -> tuple[str | None, str | None]:
+    """``(isrc, artwork_url)`` for the first variation whose match has an ISRC.
+
+    Artwork is taken only alongside the ISRC, never from a match this phase
+    rejected, so the cover always belongs to the recording the row now carries.
+    """
     search_url = f"{DEEZER_API_ROOT}search"
     for label, var_artist, var_track in lookup_variations(artist, track):
         artist_norm = normalize_artist(var_artist)
@@ -180,8 +209,8 @@ def _resolve_deezer(client: RateLimitedClient, artist: str, track: str) -> str |
         )
         isrc = _isrc_from_deezer_track(track_response)
         if isrc:
-            return isrc
-    return None
+            return isrc, _artwork_from_deezer(track_response, match)
+    return None, None
 
 
 def enrich(
@@ -235,6 +264,7 @@ def enrich(
     stats = {
         "total": len(work), "already_had": 0,
         "resolved_musicbrainz": 0, "resolved_deezer": 0, "unresolved": 0,
+        "artwork": 0,
     }
     t0 = time.monotonic()
     to_resolve = sum(1 for t in work if not t.get("isrc"))
@@ -248,13 +278,14 @@ def enrich(
 
             isrc: str | None = None
             source: str | None = None
+            artwork: str | None = None
             mbid = track.get("musicbrainz_id")
             if mbid:
                 isrc = _resolve_musicbrainz(mb_client, mbid)
                 if isrc:
                     source = "musicbrainz"
             if not isrc:
-                isrc = _resolve_deezer(
+                isrc, artwork = _resolve_deezer(
                     dz_client, track.get("artist", ""), track.get("track", "")
                 )
                 if isrc:
@@ -268,6 +299,11 @@ def enrich(
                 if source not in sources:
                     sources.append(source)
                 stats[f"resolved_{source}"] += 1
+                if artwork:
+                    track["artwork_url"] = artwork
+                    track["artwork_source"] = "deezer"
+                    track["artwork_retrieved_at"] = today
+                    stats["artwork"] += 1
             else:
                 stats["unresolved"] += 1
 
@@ -291,9 +327,9 @@ def enrich(
     resolved = stats["resolved_musicbrainz"] + stats["resolved_deezer"]
     log.info(
         "Phase 5a done: resolved=%d (musicbrainz=%d deezer=%d)  unresolved=%d  "
-        "already_had=%d  /  %d total",
+        "already_had=%d  artwork=%d  /  %d total",
         resolved, stats["resolved_musicbrainz"], stats["resolved_deezer"],
-        stats["unresolved"], stats["already_had"], stats["total"],
+        stats["unresolved"], stats["already_had"], stats["artwork"], stats["total"],
     )
     log.info("  %s", mb_client.cache_summary())
     log.info("  %s", dz_client.cache_summary())

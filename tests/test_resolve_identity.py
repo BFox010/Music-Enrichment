@@ -555,6 +555,29 @@ class TestMergedRowKeepsProvenance:
         assert merged["isrc_source"] == "deezer"
         assert merged["isrc_retrieved_at"] == "2026-08-01"
 
+    def test_artwork_gap_filled_with_its_provenance(self):
+        """5a runs before 4e, so a Deezer cover found on the quieter variant
+        would otherwise be dropped when the louder row becomes the base."""
+        loud = _row("gorillaz", "DARE", play_count=100)
+        quiet = _row("gorillaz", "DARE (feat. Shaun Ryder)", play_count=5,
+                     artwork_url="https://cdn-images.dzcdn.net/images/cover/q/1000x1000.jpg",
+                     artwork_source="deezer", artwork_retrieved_at="2026-08-01")
+        merged = merge_cluster([loud, quiet])
+        assert merged["artwork_url"].endswith("/q/1000x1000.jpg")
+        assert merged["artwork_source"] == "deezer"
+        assert merged["artwork_retrieved_at"] == "2026-08-01"
+
+    def test_base_row_artwork_is_not_replaced(self):
+        loud = _row("gorillaz", "DARE", play_count=100,
+                    artwork_url="https://cdn-images.dzcdn.net/images/cover/l/1000x1000.jpg",
+                    artwork_source="deezer", artwork_retrieved_at="2026-08-02")
+        quiet = _row("gorillaz", "DARE (feat. Shaun Ryder)", play_count=5,
+                     artwork_url="https://cdn-images.dzcdn.net/images/cover/q/1000x1000.jpg",
+                     artwork_source="deezer", artwork_retrieved_at="2026-08-01")
+        merged = merge_cluster([loud, quiet])
+        assert merged["artwork_url"].endswith("/l/1000x1000.jpg")
+        assert merged["artwork_retrieved_at"] == "2026-08-02"
+
     def test_mood_distance_follows_the_winning_mood(self):
         loud = _row("artist", "song", play_count=100, mood_tags=["Fast"],
                     mood_source="centroid", mood_confidence="medium",

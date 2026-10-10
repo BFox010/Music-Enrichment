@@ -258,6 +258,10 @@ currently `6`, mirrored in the manifest. Integer, monotonic.
   leftovers computed on every run but rendered nowhere on the dashboard — and
   added `isrc_source`/`isrc_retrieved_at` (#37) as provenance for Phase 5a's
   resolved ISRCs.
+- `artwork_url` (+ `artwork_source`, `artwork_retrieved_at`) was added within v6,
+  additively. Phase 5a takes Deezer's `cover_xl` from the track it resolved the
+  ISRC from; Phase 5 falls back to the iTunes match's cover, upsized to 600px.
+  Both read responses the phases already cache, so no extra requests.
 
 Canonical track identity, used for every cross-phase join:
 

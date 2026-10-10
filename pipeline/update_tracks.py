@@ -229,14 +229,14 @@ def _enrichment_sources(row: dict) -> list[str]:
                 if src not in sources:
                     sources.append(src)
 
-    # audio_features and isrc carry their own provenance, so read the actual
-    # source rather than mapping from a fixed trigger.
+    # audio_features, isrc and artwork carry their own provenance, so read the
+    # actual source rather than mapping from a fixed trigger.
     af = row.get("audio_features")
     if isinstance(af, dict) and af.get("source") and af["source"] not in sources:
         sources.append(af["source"])
-    isrc_source = row.get("isrc_source")
-    if isrc_source and isrc_source not in sources:
-        sources.append(isrc_source)
+    for own_source in (row.get("isrc_source"), row.get("artwork_source")):
+        if own_source and own_source not in sources:
+            sources.append(own_source)
 
     # Phase 4d's two routes are distinct provenance: an artist-level genre from
     # Last.fm's folksonomy is weaker evidence than one from MusicBrainz. Read the

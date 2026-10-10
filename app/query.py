@@ -12,7 +12,7 @@ from typing import Any
 from app.data import get_tracks
 
 DISPLAY_COLUMNS: list[str] = [
-    "artist", "track", "album", "play_count", "release_year",
+    "artist", "track", "album", "artwork_url", "play_count", "release_year",
     "genres", "mood_tags", "mood_confidence", "saturation_tier",
     "audio_features.energy", "audio_features.valence",
     "audio_features.danceability", "audio_features.tempo",

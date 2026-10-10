@@ -62,6 +62,11 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "apple_music_available": None,
     "apple_music_id": None,
     "apple_music_checked_at": None,
+    # Album cover URL: Deezer cover_xl from Phase 5a, else iTunes from Phase 5.
+    # artwork_source is "deezer" or "itunes_search".
+    "artwork_url": None,
+    "artwork_source": None,
+    "artwork_retrieved_at": None,
     # Audio features (Phase 3c)
     "audio_features": None,  # full block when present, else None
     # Genres / tags
@@ -195,7 +200,8 @@ class TrackV6:
     """Current canonical Track schema. Field order mirrors FIELD_DEFAULTS.
 
     v5 minus ``blacklisted``/``rejected_reason`` (#63), plus
-    ``isrc_source``/``isrc_retrieved_at`` (#37).
+    ``isrc_source``/``isrc_retrieved_at`` (#37). The ``artwork_*`` fields were
+    added later without a bump — additive, so a v6 row lacking them is valid.
     """
 
     _schema_version: int = SCHEMA_VERSION
@@ -217,6 +223,9 @@ class TrackV6:
     apple_music_available: bool | None = None
     apple_music_id: str | None = None
     apple_music_checked_at: str | None = None
+    artwork_url: str | None = None
+    artwork_source: str | None = None
+    artwork_retrieved_at: str | None = None
     audio_features: dict[str, Any] | None = None
     genres: list[str] = field(default_factory=list)
     lastfm_tags: list[str] = field(default_factory=list)

@@ -317,6 +317,7 @@ def _union_lists(rows: list[dict], field: str) -> list:
 # from another row in the cluster.
 _GAP_FILL_PROVENANCE: dict[str, tuple[str, ...]] = {
     "isrc": ("isrc_source", "isrc_retrieved_at"),
+    "artwork_url": ("artwork_source", "artwork_retrieved_at"),
     "apple_music_available": ("apple_music_checked_at",),
 }
 
@@ -365,7 +366,7 @@ def merge_cluster(rows: list[dict]) -> dict:
     for field in ("musicbrainz_id", "isrc", "spotify_id", "apple_music_id",
                   "artist_mbid", "release_year", "duration_ms", "explicit",
                   "audio_features", "itunes_genre", "apple_music_available",
-                  "album", "lastfm_listeners", "lastfm_playcount"):
+                  "album", "lastfm_listeners", "lastfm_playcount", "artwork_url"):
         if merged.get(field) in (None, "", []):
             for r in ordered[1:]:
                 if r.get(field) not in (None, "", []):
