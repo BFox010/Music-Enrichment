@@ -13,6 +13,7 @@ import json
 from pipeline._http import KIND_NOT_FOUND, KIND_TRANSIENT
 from pipeline import resolve_isrcs as ri
 from pipeline.resolve_isrcs import (
+    _artwork_from_deezer,
     _classify_deezer,
     _best_deezer_match,
     _isrc_from_deezer_track,
@@ -165,7 +166,7 @@ class TestResolveDeezer:
             {query: _deezer_search(_deezer_item(1, "Roads", "Portishead"))},
             {"1": {"isrc": "GBAAA9400013"}},
         )
-        assert _resolve_deezer(client, "Portishead", "Roads") == "GBAAA9400013"
+        assert _resolve_deezer(client, "Portishead", "Roads") == ("GBAAA9400013", None)
 
     def test_variation_retry_strips_feat(self) -> None:
         client = _StubDeezerClient(
@@ -177,11 +178,11 @@ class TestResolveDeezer:
             {"2": {"isrc": "USCM51300289"}},
         )
         result = _resolve_deezer(client, "Drake", "1 Train (feat. Kendrick Lamar)")
-        assert result == "USCM51300289"
+        assert result == ("USCM51300289", None)
 
     def test_unmatched_returns_none(self) -> None:
         client = _StubDeezerClient({}, {})
-        assert _resolve_deezer(client, "Nobody", "Nothing") is None
+        assert _resolve_deezer(client, "Nobody", "Nothing") == (None, None)
 
     def test_match_without_isrc_keeps_trying_variations(self) -> None:
         """A matched Deezer track with no ISRC on file must not stop the
@@ -195,7 +196,7 @@ class TestResolveDeezer:
             },
             {"1": {"id": 1}, "2": {"isrc": "USXYZ0000001"}},
         )
-        assert _resolve_deezer(client, "A", "B (feat. C)") == "USXYZ0000001"
+        assert _resolve_deezer(client, "A", "B (feat. C)") == ("USXYZ0000001", None)
 
 
 # ── enrich() end-to-end ──
@@ -203,7 +204,8 @@ class TestResolveDeezer:
 
 class TestEnrichPersistsIsrc:
     @staticmethod
-    def _run(monkeypatch, tmp_path, tracks, mb_by_mbid=None, deezer_isrc_by_track=None):
+    def _run(monkeypatch, tmp_path, tracks, mb_by_mbid=None, deezer_isrc_by_track=None,
+             deezer_artwork_by_track=None):
         src = tmp_path / "in.jsonl"
         src.write_text("".join(json.dumps(t) + "\n" for t in tracks), encoding="utf-8")
         out = tmp_path / "out.jsonl"
@@ -222,7 +224,10 @@ class TestEnrichPersistsIsrc:
         )
         monkeypatch.setattr(
             ri, "_resolve_deezer",
-            lambda client, artist, track: (deezer_isrc_by_track or {}).get(track),
+            lambda client, artist, track: (
+                (deezer_isrc_by_track or {}).get(track),
+                (deezer_artwork_by_track or {}).get(track),
+            ),
         )
         stats = ri.enrich(input_path=src, output_path=out)
         rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
@@ -320,7 +325,7 @@ class TestDeezerInBandErrors:
         RateLimitedClient does."""
         query = 'artist:"Portishead" track:"Roads"'
         client = _StubDeezerClient({query: {"error": {"code": 4}}}, {})
-        assert _resolve_deezer(client, "Portishead", "Roads") is None
+        assert _resolve_deezer(client, "Portishead", "Roads") == (None, None)
 
 
 class TestLimitCapsWorkNotOutput:
@@ -342,7 +347,7 @@ class TestLimitCapsWorkNotOutput:
         )
         monkeypatch.setattr(ri, "_resolve_musicbrainz", lambda client, mbid: None)
         monkeypatch.setattr(
-            ri, "_resolve_deezer", lambda client, artist, track: "GBAAA9400013",
+            ri, "_resolve_deezer", lambda client, artist, track: ("GBAAA9400013", None),
         )
         stats = ri.enrich(input_path=path, output_path=path, limit=2)
 
@@ -350,3 +355,105 @@ class TestLimitCapsWorkNotOutput:
         assert [r["track"] for r in rows] == [f"T{i}" for i in range(5)]
         assert [bool(r.get("isrc")) for r in rows] == [True, True, False, False, False]
         assert stats["total"] == 2
+
+
+# ── Album artwork (Deezer cover_xl) ──
+
+
+_XL = "https://cdn-images.dzcdn.net/images/cover/3e479561a56e0e2be01ff775cc0d9dcc/1000x1000-000000-80-0-0.jpg"
+_XL_OTHER = "https://cdn-images.dzcdn.net/images/cover/aaaabbbbccccddddeeeeffff00001111/1000x1000-000000-80-0-0.jpg"
+
+
+def _album(cover_xl: str) -> dict:
+    # Shape as cached: every cover size sits on the album object.
+    return {"id": 1, "cover_medium": cover_xl.replace("1000x1000", "250x250"),
+            "cover_xl": cover_xl}
+
+
+class TestArtworkFromDeezer:
+    def test_reads_album_cover_xl(self) -> None:
+        assert _artwork_from_deezer({"isrc": "X", "album": _album(_XL)}) == _XL
+
+    def test_first_response_with_a_cover_wins(self) -> None:
+        track = {"album": _album(_XL)}
+        search_item = {"album": _album(_XL_OTHER)}
+        assert _artwork_from_deezer(track, search_item) == _XL
+
+    def test_falls_back_to_later_response(self) -> None:
+        assert _artwork_from_deezer({"album": {}}, {"album": _album(_XL)}) == _XL
+
+    def test_empty_image_hash_is_no_artwork(self) -> None:
+        """Deezer's coverless-album placeholder has an empty hash segment."""
+        placeholder = "https://cdn-images.dzcdn.net/images/cover//1000x1000-000000-80-0-0.jpg"
+        assert _artwork_from_deezer({"album": {"cover_xl": placeholder}}) is None
+
+    def test_error_and_malformed_responses_are_none(self) -> None:
+        assert _artwork_from_deezer({"_error": "not_found"}) is None
+        assert _artwork_from_deezer(None, "x", {"album": "not-a-dict"}) is None
+        assert _artwork_from_deezer() is None
+
+
+class TestResolveDeezerArtwork:
+    def test_artwork_comes_from_the_track_that_supplied_the_isrc(self) -> None:
+        query = 'artist:"Portishead" track:"Roads"'
+        item = {**_deezer_item(1, "Roads", "Portishead"), "album": _album(_XL_OTHER)}
+        client = _StubDeezerClient(
+            {query: _deezer_search(item)},
+            {"1": {"isrc": "GBAAA9400013", "album": _album(_XL)}},
+        )
+        assert _resolve_deezer(client, "Portishead", "Roads") == ("GBAAA9400013", _XL)
+
+    def test_search_item_cover_used_when_track_response_lacks_one(self) -> None:
+        query = 'artist:"Portishead" track:"Roads"'
+        item = {**_deezer_item(1, "Roads", "Portishead"), "album": _album(_XL)}
+        client = _StubDeezerClient(
+            {query: _deezer_search(item)}, {"1": {"isrc": "GBAAA9400013"}},
+        )
+        assert _resolve_deezer(client, "Portishead", "Roads") == ("GBAAA9400013", _XL)
+
+    def test_no_artwork_from_a_match_without_an_isrc(self) -> None:
+        """The cascade moves past an ISRC-less match; its cover must not ride
+        along onto the recording the next variation resolves."""
+        client = _StubDeezerClient(
+            {
+                'artist:"A" track:"B (feat. C)"': _deezer_search(
+                    {**_deezer_item(1, "B (feat. C)", "A"), "album": _album(_XL_OTHER)}),
+                'artist:"A" track:"B"': _deezer_search(_deezer_item(2, "B", "A")),
+            },
+            {"1": {"id": 1, "album": _album(_XL_OTHER)},
+             "2": {"isrc": "USXYZ0000001", "album": _album(_XL)}},
+        )
+        assert _resolve_deezer(client, "A", "B (feat. C)") == ("USXYZ0000001", _XL)
+
+
+class TestEnrichPersistsArtwork:
+    _run = staticmethod(TestEnrichPersistsIsrc._run)
+
+    def test_deezer_resolution_records_artwork_with_provenance(self, monkeypatch, tmp_path) -> None:
+        stats, rows = self._run(
+            monkeypatch, tmp_path, [{"artist": "A", "track": "B"}],
+            deezer_isrc_by_track={"B": "GBAAA9400013"},
+            deezer_artwork_by_track={"B": _XL},
+        )
+        assert rows["B"]["artwork_url"] == _XL
+        assert rows["B"]["artwork_source"] == "deezer"
+        assert rows["B"]["artwork_retrieved_at"] == rows["B"]["isrc_retrieved_at"]
+        assert stats["artwork"] == 1
+
+    def test_musicbrainz_resolution_records_no_artwork(self, monkeypatch, tmp_path) -> None:
+        """MusicBrainz carries no cover; Phase 5's iTunes fallback covers these."""
+        stats, rows = self._run(
+            monkeypatch, tmp_path, [{"artist": "A", "track": "B", "musicbrainz_id": "mb-1"}],
+            mb_by_mbid={"mb-1": "USABC1234567"},
+            deezer_artwork_by_track={"B": _XL},
+        )
+        assert "artwork_url" not in rows["B"]
+        assert stats["artwork"] == 0
+
+    def test_deezer_match_without_cover_leaves_field_absent(self, monkeypatch, tmp_path) -> None:
+        stats, rows = self._run(
+            monkeypatch, tmp_path, [{"artist": "A", "track": "B"}],
+            deezer_isrc_by_track={"B": "GBAAA9400013"},
+        )
+        assert "artwork_url" not in rows["B"]
+        assert "artwork_source" not in rows["B"]

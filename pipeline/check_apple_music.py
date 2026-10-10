@@ -5,6 +5,8 @@ Queries ``itunes.apple.com/search?entity=song&country=us`` and matches back. Set
                                     known false positives
   - apple_music_id: str | None    — Apple's trackId, NOT iTunes Persistent ID
   - apple_music_checked_at: str   — ISO date
+  - artwork_url (+ artwork_source, artwork_retrieved_at) — the match's cover,
+    upsized; only where Phase 5a left the row without Deezer artwork
 
 Cache ``.cache/apple_music.json``, keyed ``artist_norm|track_norm``. Re-checks
 only past ``APPLE_MUSIC_CACHE_DAYS``; ``force`` bypasses both that gate and the
@@ -17,6 +19,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -84,6 +87,30 @@ def _best_match(response: Any, artist_norm: str, track_norm: str) -> dict[str, A
     return None
 
 
+# iTunes Search only offers 30/60/100px thumbnails, but the CDN renders the size
+# named in the URL's final segment. Every artworkUrl100 in the cache ends
+# ``/100x100bb.jpg`` (checked 2026-10-09, 56k URLs), and the 600px rewrite serves
+# a real 600px JPEG — enough for a dashboard tile.
+_ITUNES_ARTWORK_SIZE = "600x600bb"
+_ITUNES_ARTWORK_SEGMENT = re.compile(r"/100x100bb(\.[A-Za-z]+)$")
+
+
+def _upsize_itunes_artwork(url: str) -> str:
+    """Rewrite a 100px iTunes artwork URL to ``_ITUNES_ARTWORK_SIZE``.
+
+    A URL in any other shape is returned unchanged: a 100px cover still beats
+    none, and guessing at an unknown format risks a URL that 404s.
+    """
+    return _ITUNES_ARTWORK_SEGMENT.sub(rf"/{_ITUNES_ARTWORK_SIZE}\1", url)
+
+
+def _artwork_from_itunes(match: dict[str, Any]) -> str | None:
+    url = match.get("artworkUrl100")
+    if not isinstance(url, str) or not url.strip():
+        return None
+    return _upsize_itunes_artwork(url.strip())
+
+
 def _is_stale(checked_at: str | None) -> bool:
     """True if `checked_at` is missing or older than APPLE_MUSIC_CACHE_DAYS."""
     if not checked_at:
@@ -145,7 +172,10 @@ def check(
     client.warn_if_forced(len(tracks))
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    stats = {"total": len(tracks), "available": 0, "unavailable": 0, "skipped_fresh": 0, "errors": 0}
+    stats = {
+        "total": len(tracks), "available": 0, "unavailable": 0, "skipped_fresh": 0,
+        "errors": 0, "artwork": 0,
+    }
     t0 = time.monotonic()
     enriched: list[dict] = []
 
@@ -184,6 +214,16 @@ def check(
                     "apple_music_id": str(match.get("trackId") or "") or None,
                     "apple_music_checked_at": today,
                 })
+                # Fallback only: 5a's Deezer cover_xl is larger and belongs to
+                # the recording whose ISRC the row carries.
+                artwork = None if track.get("artwork_url") else _artwork_from_itunes(match)
+                if artwork:
+                    track.update({
+                        "artwork_url": artwork,
+                        "artwork_source": "itunes_search",
+                        "artwork_retrieved_at": today,
+                    })
+                    stats["artwork"] += 1
             else:
                 stats["unavailable"] += 1
                 track.update({
@@ -211,9 +251,9 @@ def check(
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
     log.info(
-        "Phase 5 done: avail=%d  unavail=%d  errors=%d  skipped_fresh=%d  /  %d total",
+        "Phase 5 done: avail=%d  unavail=%d  errors=%d  skipped_fresh=%d  artwork=%d  /  %d total",
         stats["available"], stats["unavailable"], stats["errors"], stats["skipped_fresh"],
-        stats["total"],
+        stats["artwork"], stats["total"],
     )
     log.info("  %s", client.cache_summary())
     log.info("Wrote → %s", output_path)

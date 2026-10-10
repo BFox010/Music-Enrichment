@@ -27,6 +27,7 @@ _TRACK = {
     "artist": "Portishead",
     "track": "Roads",
     "album": "Dummy",
+    "artwork_url": "https://cdn-images.dzcdn.net/images/cover/abc/1000x1000-000000-80-0-0.jpg",
     "play_count": 10,
     "release_year": 1994,
     "genres": ["trip-hop", "electronic"],
@@ -372,6 +373,7 @@ class TestTracks:
         assert t["artist"] == "Portishead"
         assert t["track"] == "Roads"
         assert t["play_count"] == 10
+        assert t["artwork_url"] == _TRACK["artwork_url"]
 
 
 class TestTagGraph:

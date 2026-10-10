@@ -530,6 +530,73 @@ class TestPlaylistsAbsenceIsNotAVerdict:
         assert merged["playlists"] == []
 
 
+class TestArtworkMerge:
+    """A run that finds no cover — a lookup that failed, a match the name
+    variations no longer reach — must not erase one an earlier run found. The
+    URL and its provenance move as one: a mix would credit a Deezer cover to
+    iTunes, or date it to a run that never fetched it."""
+
+    _DEEZER = {
+        "artwork_url": "https://cdn-images.dzcdn.net/images/cover/abc/1000x1000-000000-80-0-0.jpg",
+        "artwork_source": "deezer",
+        "artwork_retrieved_at": "2026-08-01",
+    }
+    _ITUNES = {
+        "artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/x/y.jpg/600x600bb.jpg",
+        "artwork_source": "itunes_search",
+        "artwork_retrieved_at": "2026-10-09",
+    }
+
+    def _row(self, **extra) -> dict:
+        return {"artist": "x", "track": "y",
+                "artist_normalized": "x", "track_normalized": "y", **extra}
+
+    def test_fresh_null_keeps_existing_artwork(self) -> None:
+        nulls = {k: None for k in self._DEEZER}
+        merged = _merge_with_existing(self._row(**nulls), self._row(**self._DEEZER))
+        for key, value in self._DEEZER.items():
+            assert merged[key] == value
+
+    def test_absent_artwork_keeps_existing(self) -> None:
+        merged = _merge_with_existing(self._row(), self._row(**self._DEEZER))
+        for key, value in self._DEEZER.items():
+            assert merged[key] == value
+
+    def test_new_artwork_replaces_url_and_provenance_together(self) -> None:
+        merged = _merge_with_existing(self._row(**self._ITUNES), self._row(**self._DEEZER))
+        for key, value in self._ITUNES.items():
+            assert merged[key] == value
+
+    def test_artwork_source_is_an_enrichment_source(self) -> None:
+        assert "deezer" in _enrichment_sources(self._DEEZER)
+        assert "itunes_search" in _enrichment_sources(self._ITUNES)
+
+    def test_survives_a_rerun_that_found_nothing(self, tmp_path) -> None:
+        inp = tmp_path / "input.jsonl"
+        out = tmp_path / "tracks.jsonl"
+        inp.write_text(json.dumps(self._row(play_count=1, **self._DEEZER)) + "\n",
+                       encoding="utf-8")
+        update(input_path=inp, output_path=out)
+
+        inp.write_text(json.dumps(self._row(play_count=2)) + "\n", encoding="utf-8")
+        update(input_path=inp, output_path=out)
+
+        row = json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+        assert row["play_count"] == 2
+        for key, value in self._DEEZER.items():
+            assert row[key] == value
+
+    def test_written_in_schema_order_beside_the_other_lookups(self, tmp_path) -> None:
+        inp = tmp_path / "input.jsonl"
+        out = tmp_path / "tracks.jsonl"
+        inp.write_text(json.dumps(self._row(**self._DEEZER)) + "\n", encoding="utf-8")
+        update(input_path=inp, output_path=out)
+        keys = list(json.loads(out.read_text(encoding="utf-8").splitlines()[0]))
+        at = keys.index("artwork_url")
+        assert keys[at - 1] == "apple_music_checked_at"
+        assert keys[at + 1:at + 3] == ["artwork_source", "artwork_retrieved_at"]
+
+
 class TestPhase8ShrinkGuard:
     """Phase 8 iterates the *source* rows only, so an existing tracks.jsonl row
     with no counterpart is silently dropped along with everything human about
