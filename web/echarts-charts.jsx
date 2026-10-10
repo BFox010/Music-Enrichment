@@ -838,26 +838,256 @@ function AlbumsPage({ active, tracks }) {
   );
 }
 
-/* ── Tag Constellation (force graph) ── */
+/* ── Tag Constellation: scenes + focus (#92) ──
+   Answers "which tags cluster into scenes in my listening, and what sits next
+   to any one tag?". The scenes come from the server (modularity clustering over
+   pairing strength). The layout is computed here, once per graph, and then held
+   still: the old force sim never stopped, so the framing drifted out of view
+   and the page animated forever regardless of prefers-reduced-motion. */
+
+// Hex rather than the oklch() the rest of the app authors in: ECharts derives
+// emphasis and blur colours from these, and its colour parser can't read
+// oklch(). Eight hues 45° apart at the genre palette's lightness; scenes past
+// the eighth share one grey, since a ninth hue would no longer read as distinct.
+const SCENE_COLORS = ["#9e8fe9", "#51b67a", "#e47b7c", "#4fa6e9", "#d58c3b", "#00b6be", "#d07ebe", "#a4a537"];
+const SCENE_OTHER = "#838592";
+const sceneColor = (id) => SCENE_COLORS[id] || SCENE_OTHER;
+
+/* A released tag returns home like it's pulled by a magnet: slow to leave,
+   faster as it nears its scene, and it stops dead on contact. Accelerating
+   in, rather than easing out, is what reads as attraction. (No overshoot:
+   the tween clamps an easing's output at 1, so one would never draw.) */
+const magnetEase = (t) => Math.pow(t, 2.2);
+const SPRING_MS = 480;
+// A hub tag can pair with most of the library; past this many tethers the
+// weakest ones are noise.
+const MAX_TETHERS = 80;
+
+const CONST_FIELDS = [["discogs_styles", "Styles"], ["lastfm_tags", "Genres"], ["mood_tags", "Moods"]];
+const CONST_MIN_PLAYS = [5, 15, 30, 60];
+/* The resting view's links: each tag joined to the one it's most often heard
+   with. A strength cut-off ("Weak / Medium / Strong") had no meaning a
+   listener could act on, read differently on every field, and left a third
+   of the tags with no line at all; this rule connects every tag, explains
+   itself in a sentence, and makes a cross-scene line mean something specific
+   (that tag's closest companion lives in another scene). Every weaker tie is
+   still shown, faint, when the tag is held. Ties break by name so the same
+   graph always draws the same lines. */
+function strongestPairings(nodes, edges) {
+  const key = (e) => JSON.stringify([e.source, e.target]);
+  const better = (a, b) => !b || a.strength > b.strength
+    || (a.strength === b.strength && key(a) < key(b));
+  const best = new Map();
+  for (const e of edges) {
+    const s = { ...e, strength: e.strength == null ? 1 : e.strength };
+    for (const t of [e.source, e.target]) if (better(s, best.get(t))) best.set(t, s);
+  }
+  const keep = new Set();
+  for (const d of nodes) { const e = best.get(d.tag); if (e) keep.add(key(e)); }
+  return edges.filter((e) => keep.has(key(e)));
+}
+const constSymbolSize = (count, maxCount) => 10 + 46 * Math.sqrt(count / Math.max(maxCount, 1));
+
+/* Deterministic two-level layout, in pixels at scale 1. No randomness, so the
+   same graph always lands the same way.
+
+   A single force layout over every tag couldn't do this job: hub tags ("rock",
+   "pop") pulled nodes across scene lines until the colours bled together, and
+   repulsion flung small disconnected scenes to the edge, squeezing everything
+   else into a corner. So each scene is laid out as its own compact disc, and
+   the discs are then packed, with scenes that share the most pulled together.
+   Every colour is one contiguous region, and nothing can drift off alone.
+
+   `aspect` (width / height) shapes the packing to the canvas, so a wide card
+   gets a wide constellation instead of a disc with empty margins.
+
+   Returns { pos: [[x, y]...] in node order, rad: [r...], box: [x0, y0, x1, y1] }
+   with the box including each node's radius. */
+function layoutConstellation(nodes, edges, aspect = 1) {
+  const n = nodes.length;
+  if (!n) return { pos: [], rad: [], box: [0, 0, 1, 1] };
+  const at = new Map(nodes.map((d, i) => [d.tag, i]));
+  const maxCount = Math.max(...nodes.map((d) => d.count), 1);
+  const rad = nodes.map((d) => constSymbolSize(d.count, maxCount) / 2);
+  const sceneOf = nodes.map((d) => d.scene || 0);
+  const sceneIds = [...new Set(sceneOf)].sort((a, b) => a - b);
+  const slot = new Map(sceneIds.map((s, k) => [s, k]));
+  const members = sceneIds.map(() => []);
+  nodes.forEach((d, i) => members[slot.get(sceneOf[i])].push(i));  // most-played first
+  const links = edges
+    .map((e) => [at.get(e.source), at.get(e.target), e.strength == null ? 1 : e.strength])
+    .filter(([a, b]) => a !== undefined && b !== undefined);
+
+  // 1. Inside each scene: biggest tag at the centre on a golden-angle spiral,
+  //    relaxed by the scene's own links, then strictly de-overlapped.
+  const local = new Array(n);
+  const discR = [];
+  members.forEach((m, k) => {
+    const meanR = m.reduce((s, i) => s + rad[i], 0) / m.length;
+    const K = meanR * 2 + 8;
+    m.forEach((i, j) => {
+      const r = K * 0.55 * Math.sqrt(j), t = j * 2.399963;
+      local[i] = [r * Math.cos(t), r * Math.sin(t)];
+    });
+    const inner = links.filter(([a, b]) => slot.get(sceneOf[a]) === k && slot.get(sceneOf[b]) === k);
+    for (let it = 0; it < 160; it++) {
+      const temp = K * 0.6 * (1 - it / 160) + 0.2;
+      const dx = new Float64Array(n), dy = new Float64Array(n);
+      for (let x = 0; x < m.length; x++) {
+        for (let y = x + 1; y < m.length; y++) {
+          const i = m[x], j = m[y];
+          let ex = local[i][0] - local[j][0], ey = local[i][1] - local[j][1];
+          let d = Math.sqrt(ex * ex + ey * ey);
+          if (d < 1e-3) { ex = 0.01 * (y - x); ey = 0.01; d = Math.sqrt(ex * ex + ey * ey); }
+          const gap = rad[i] + rad[j] + 3;
+          const f = (K * K) / d * 0.5 + (d < gap ? (gap - d) * 2 : 0);
+          dx[i] += (ex / d) * f; dy[i] += (ey / d) * f;
+          dx[j] -= (ex / d) * f; dy[j] -= (ey / d) * f;
+        }
+      }
+      for (const [a, b, s] of inner) {
+        const ex = local[a][0] - local[b][0], ey = local[a][1] - local[b][1];
+        const d = Math.sqrt(ex * ex + ey * ey) || 0.01;
+        const f = (d * d / K) * s;
+        dx[a] -= (ex / d) * f; dy[a] -= (ey / d) * f;
+        dx[b] += (ex / d) * f; dy[b] += (ey / d) * f;
+      }
+      for (const i of m) {
+        dx[i] -= local[i][0] * 0.35; dy[i] -= local[i][1] * 0.35;  // keeps the disc round and tight
+        const mag = Math.sqrt(dx[i] * dx[i] + dy[i] * dy[i]);
+        if (mag > 0) { const st = Math.min(mag, temp); local[i][0] += (dx[i] / mag) * st; local[i][1] += (dy[i] / mag) * st; }
+      }
+    }
+    separate(m, local, rad, 2);
+    // Re-centre on the disc's own middle so packing works with true radii.
+    let cx = 0, cy = 0;
+    for (const i of m) { cx += local[i][0]; cy += local[i][1]; }
+    cx /= m.length; cy /= m.length;
+    let R = 0;
+    for (const i of m) {
+      local[i][0] -= cx; local[i][1] -= cy;
+      R = Math.max(R, Math.hypot(local[i][0], local[i][1]) + rad[i]);
+    }
+    discR.push(R + 6);
+  });
+
+  // 2. Pack the discs: shared strength pulls scenes together, a hard
+  //    constraint keeps them apart, and a weak pull to the middle keeps the
+  //    whole thing round.
+  const S = sceneIds.length;
+  const aff = Array.from({ length: S }, () => new Float64Array(S));
+  for (const [a, b, s] of links) {
+    const ka = slot.get(sceneOf[a]), kb = slot.get(sceneOf[b]);
+    if (ka !== kb) { aff[ka][kb] += s; aff[kb][ka] += s; }
+  }
+  const maxAff = Math.max(1e-9, ...aff.map((row) => Math.max(...row)));
+  const C = sceneIds.map((_, k) => {
+    if (k === 0) return [0, 0];
+    const r = (discR[0] + discR[k]) * 0.9 * Math.sqrt(k), t = k * 2.399963;
+    return [r * Math.cos(t), r * Math.sin(t)];
+  });
+  for (let it = 0; it < 400; it++) {
+    const step = 0.08 * (1 - it / 400) + 0.01;
+    for (let a = 0; a < S; a++) {
+      for (let b = a + 1; b < S; b++) {
+        const ex = C[b][0] - C[a][0], ey = C[b][1] - C[a][1];
+        const d = Math.sqrt(ex * ex + ey * ey) || 0.01;
+        const gap = discR[a] + discR[b] + 10;
+        if (aff[a][b] > 0 && d > gap) {
+          const pull = (d - gap) * step * (0.2 + 0.8 * aff[a][b] / maxAff);
+          const wa = discR[b] / (discR[a] + discR[b]);  // the smaller disc moves more
+          C[a][0] += (ex / d) * pull * wa; C[a][1] += (ey / d) * pull * wa;
+          C[b][0] -= (ex / d) * pull * (1 - wa); C[b][1] -= (ey / d) * pull * (1 - wa);
+        }
+      }
+    }
+    const sa = Math.sqrt(Math.max(aspect, 0.25));
+    for (let a = 0; a < S; a++) { C[a][0] *= 1 - (step * 0.15) / sa; C[a][1] *= 1 - step * 0.15 * sa; }
+    separateDiscs(C, discR, 10);
+  }
+  for (let pass = 0; pass < 60; pass++) if (!separateDiscs(C, discR, 10)) break;
+
+  const pos = nodes.map((_, i) => {
+    const k = slot.get(sceneOf[i]);
+    return [C[k][0] + local[i][0], C[k][1] + local[i][1]];
+  });
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  pos.forEach(([x, y], i) => {
+    x0 = Math.min(x0, x - rad[i]); x1 = Math.max(x1, x + rad[i]);
+    y0 = Math.min(y0, y - rad[i]); y1 = Math.max(y1, y + rad[i]);
+  });
+  return { pos, rad, box: [x0, y0, x1, y1] };
+}
+
+/* Push overlapping circles (indices `m`) apart until none overlap by more
+   than `pad`. */
+function separate(m, p, rad, pad) {
+  for (let pass = 0; pass < 80; pass++) {
+    let moved = false;
+    for (let x = 0; x < m.length; x++) {
+      for (let y = x + 1; y < m.length; y++) {
+        const i = m[x], j = m[y];
+        const ex = p[i][0] - p[j][0], ey = p[i][1] - p[j][1];
+        const d = Math.sqrt(ex * ex + ey * ey) || 0.01;
+        const gap = rad[i] + rad[j] + pad;
+        if (d < gap - 0.01) {
+          const push = (gap - d) / 2;
+          p[i][0] += (ex / d) * push; p[i][1] += (ey / d) * push;
+          p[j][0] -= (ex / d) * push; p[j][1] -= (ey / d) * push;
+          moved = true;
+        }
+      }
+    }
+    if (!moved) return;
+  }
+}
+
+function separateDiscs(C, R, pad) {
+  let moved = false;
+  for (let a = 0; a < C.length; a++) {
+    for (let b = a + 1; b < C.length; b++) {
+      let ex = C[b][0] - C[a][0], ey = C[b][1] - C[a][1];
+      let d = Math.sqrt(ex * ex + ey * ey);
+      if (d < 1e-3) { ex = 0.01 * (b - a); ey = 0.01; d = Math.sqrt(ex * ex + ey * ey); }
+      const gap = R[a] + R[b] + pad;
+      if (d < gap - 0.01) {
+        const push = gap - d, wa = R[b] / (R[a] + R[b]);
+        C[a][0] -= (ex / d) * push * wa; C[a][1] -= (ey / d) * push * wa;
+        C[b][0] += (ex / d) * push * (1 - wa); C[b][1] += (ey / d) * push * (1 - wa);
+        moved = true;
+      }
+    }
+  }
+  return moved;
+}
+
 function TagConstellation({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
+  const panelRef = useRef(null);
   const chart = useEChart(elRef);
   const [field, setField] = useState("discogs_styles");
+  const [minPlays, setMinPlays] = useState(15);
   const [loading, setLoading] = useState(true);
   const [graph, setGraph] = useState(null);
+  const [focus, setFocus] = useState(null);           // a tag
+  const [focusScene, setFocusScene] = useState(null); // a scene id, or "other"
+  const [detail, setDetail] = useState(null);
+  const [query, setQuery] = useState("");
+  const [viewKey, setViewKey] = useState(0);          // bumps to reset pan/zoom
+  const [held, setHeld] = useState(null);             // readout while a tag is held
+  const layoutRef = useRef({ graph: null, lay: null });
+  const zoomedRef = useRef(false);
 
-  const FIELDS = [
-    ["discogs_styles", "Styles"],
-    ["mood_tags",      "Moods"],
-    ["lastfm_tags",    "Genres"],
-  ];
+  // Moods has 14 tags, so a play threshold only hides real ones.
+  const effMinPlays = field === "mood_tags" ? 1 : minPlays;
 
   useEffect(() => {
     if (!active) return;
     setLoading(true);
     let stale = false;
-    const minCount = field === "mood_tags" ? 1 : 15;
-    fetch(`/api/tag-graph?field=${field}&min_count=${minCount}`)
+    // Every pairing, once: the link threshold is applied in the browser, and
+    // a held tag's tethers need its weak ties too.
+    fetch(`/api/tag-graph?field=${field}&min_count=${effMinPlays}&min_strength=0`)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((g) => {
         if (stale) return;
@@ -866,143 +1096,472 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       })
       .catch(() => { if (!stale) setLoading(false); });
     return () => { stale = true; };
-  }, [active, field, refreshVersion]);
+  }, [active, field, effMinPlays, refreshVersion]);
 
-  // Layout is keyed on the instance as well as the data, so a graph that
-  // arrived before ECharts finished loading is drawn once it does (#113).
+  // A new field or threshold can drop the focused tag; never focus a ghost.
   useEffect(() => {
-    if (!active || !graph || !graph.nodes?.length || !chart.current) return;
-    const { nodes, edges } = graph;
-    let fitTimer = null;
-    let onWinResize = null;
-    let rafA = 0, rafB = 0;
-    let fitted = false;
+    if (focus && graph && !graph.nodes.some((d) => d.tag === focus)) setFocus(null);
+  }, [graph]);
+  useEffect(() => { setFocus(null); setFocusScene(null); }, [field]);
 
-    // Read settled node positions and patch the view (zoom + center) so the
-    // bounding box of the cluster fills the canvas with margin. Layout stays
-    // "force" — physics keeps running, only the camera moves.
-    const fitView = () => {
+  useEffect(() => {
+    if (!focus) { setDetail(null); return; }
+    let stale = false;
+    fetch(`/api/tag-detail?field=${field}&tag=${encodeURIComponent(focus)}`)
+      .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
+      .then((d) => { if (!stale) setDetail(d); })
+      .catch(() => { if (!stale) setDetail(null); });
+    return () => { stale = true; };
+  }, [focus, field]);
+
+  useEffect(() => {
+    if (!focus) return;
+    const onKey = (e) => { if (e.key === "Escape") setFocus(null); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [focus]);
+
+  const scenes = (graph && graph.scenes) || [];
+  const sceneName = (id) => (scenes[id] && scenes[id].name) || "";
+  const inFocusScene = (sid) => focusScene == null
+    || (focusScene === "other" ? sid >= SCENE_COLORS.length : sid === focusScene);
+
+  // Drawn in an effect keyed on the instance as well as the data, so a graph
+  // that arrived before ECharts finished loading is drawn once it does (#113).
+  useEffect(() => {
+    if (!active || !graph || !chart.current) return;
+    const nodes = graph.nodes || [];
+    // The page holds every pairing: the layout and a held tag's tethers use
+    // them all, and the resting view draws each tag's strongest one.
+    const allEdges = graph.edges || [];
+    const strengthOf = (e) => (e.strength == null ? 1 : e.strength);
+    const edges = strongestPairings(nodes, allEdges);
+    const indexOf = new Map(nodes.map((d, i) => [d.tag, i]));
+    let rafA = 0, rafB = 0, rafS = 0, rafT = 0, holdEnd = 0;
+    let press = null;  // { i, x, y }: a press on a tag, until it moves or lifts
+    let hold = null;   // the held tag and its tethers, until it's home again
+
+    // `spring`: the redraw that pulls a released tag home. Every tag is handed
+    // its home position on every draw; only the dragged one is away from it,
+    // so only it moves.
+    const draw = ({ spring = false } = {}) => {
       const inst = chart.current;
       if (!inst) return;
-      const cw = inst.getWidth(), ch = inst.getHeight();
-      if (cw < 10 || ch < 10) return;  // canvas not laid out yet — skip
-      const gdata = inst.getModel().getSeriesByIndex(0)?.getData();
-      if (!gdata || gdata.count() === 0) return;
-      let xMin = Infinity, xMax = -Infinity, yMin = Infinity, yMax = -Infinity;
-      let ok = true;
-      gdata.each((idx) => {
-        const p = gdata.getItemLayout(idx);
-        if (!p || !isFinite(p[0]) || !isFinite(p[1])) { ok = false; return; }
-        if (p[0] < xMin) xMin = p[0]; if (p[0] > xMax) xMax = p[0];
-        if (p[1] < yMin) yMin = p[1]; if (p[1] > yMax) yMax = p[1];
-      });
-      if (!ok || !isFinite(xMin)) return;
-      const bw = xMax - xMin, bh = yMax - yMin;
-      if (bw <= 0 || bh <= 0) return;
-      const cxData = (xMin + xMax) / 2, cyData = (yMin + yMax) / 2;
-      const margin = 1.2;
-      const zoom = Math.min(cw / (bw * margin), ch / (bh * margin));
-      if (!isFinite(zoom) || zoom <= 0) return;
-      inst.setOption({ series: [{ zoom, center: [cxData, cyData] }] });
-      fitted = true;
-    };
+      // Resize only when the canvas really changed size. An ECharts resize
+      // re-renders with animation off and re-reads every tag's position, which
+      // would snap a released tag home before its pull-back could play.
+      const box = elRef.current;
+      if (box && (box.clientWidth !== inst.getWidth() || box.clientHeight !== inst.getHeight())) inst.resize();
+      const w = inst.getWidth(), h = inst.getHeight();
+      if (w < 10 || h < 10) return;
+      // The layout belongs to the graph, not to the focus: focusing a tag must
+      // never move anything, or the reader loses their place.
+      const fresh = layoutRef.current.graph !== graph;
+      if (fresh) layoutRef.current = { graph, lay: layoutConstellation(nodes, allEdges, w / h), fit: null };
+      const L = layoutRef.current;
+      const { pos, rad } = L.lay;
+      // Fit once per layout and canvas size, never per update. ECharts re-fits
+      // a "none" layout to its nodes' bounding box on every setOption, so a
+      // dragged tag that widened the box rescaled everything on the next focus
+      // change. Two invisible anchors at the layout's corners pin that box,
+      // and the series box is sized to it times k, which makes ECharts' own
+      // fit exactly k. Positions and circles scale together (ECharts draws
+      // symbols at their pixel size), so the fit can't make circles overlap.
+      if (!L.fit || L.fit.w !== w || L.fit.h !== h) {
+        const box = [Infinity, Infinity, -Infinity, -Infinity];
+        pos.forEach(([x, y], i) => {
+          box[0] = Math.min(box[0], x - rad[i]); box[2] = Math.max(box[2], x + rad[i]);
+          box[1] = Math.min(box[1], y - rad[i]); box[3] = Math.max(box[3], y + rad[i]);
+        });
+        const bw = Math.max(box[2] - box[0], 1), bh = Math.max(box[3] - box[1], 1);
+        const pad = 28;
+        const k = Math.min(1.5, (w - 2 * pad) / bw, (h - 2 * pad) / bh);
+        L.fit = {
+          w, h, k,
+          anchors: [[box[0], box[1]], [box[2], box[3]]],
+          seriesBox: { left: (w - k * bw) / 2, top: (h - k * bh) / 2, width: k * bw, height: k * bh },
+        };
+      }
+      const { k, anchors, seriesBox } = L.fit;
 
-    const setupChart = (nodes, edges) => {
-      if (!chart.current) return;
-      chart.current.resize();
       const c = themeVars();
-      const maxCount  = nodes[0]?.count || 1;
-      const maxWeight = edges.reduce((m, e) => Math.max(m, e.weight), 1);
-      const nodeColor = (i, n) =>
-        `hsl(${Math.round((i / Math.max(n - 1, 1)) * 260 + 200)}, 58%, 50%)`;
-      // Seed each node on a circle so the force sim starts from a 2-D spread
-      // instead of all-zero coords (which whip them across the screen). Radius
-      // is generous so the seeded ring already approximates the equilibrium
-      // spread the sim will produce. Centered on (0,0) because ECharts force
-      // gravity pulls nodes toward the origin regardless of where we seed them —
-      // matching that center keeps the initial view aligned with where the
-      // nodes will actually settle.
-      const cw = chart.current.getWidth(), ch = chart.current.getHeight();
-      const R = Math.min(cw, ch) * 0.46;
+      const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      // While a tag is held, nothing dims: the point is to see the held tag
+      // against every scene at full strength. Its partners are labelled so
+      // each tether can be read; the resting links step aside for the tethers.
+      const holding = hold != null;
+      const partners = holding ? new Set(hold.ties.map((t) => t.j)) : null;
+      // A held tag keeps the position ECharts' drag gave it: handing it home
+      // here would snap it back under the pointer mid-drag.
+      const live = holding && !spring
+        ? inst.getModel().getSeriesByIndex(0)?.getData()?.getItemLayout(hold.i)
+        : null;
+      const near = new Set();
+      if (focus) {
+        near.add(focus);
+        for (const e of edges) {
+          if (e.source === focus) near.add(e.target);
+          if (e.target === focus) near.add(e.source);
+        }
+      }
+      const lit = (d) => (holding || (focus ? near.has(d.tag) : inFocusScene(d.scene || 0)));
+      const labelled = (d, i) => (holding ? (i === hold.i || partners.has(i)) : lit(d));
 
-      const symSize = (d) => Math.max(14, Math.sqrt(d.count / maxCount) * 72);
-      const nodeData = nodes.map((d, i) => {
-        const x = R * Math.cos((2 * Math.PI * i) / nodes.length);
-        const y = R * Math.sin((2 * Math.PI * i) / nodes.length);
+      const data = nodes.map((d, i) => {
+        const on = lit(d);
+        const xy = live && i === hold.i ? live : pos[i];
         return {
-          name: d.tag, value: d.count, x, y,
-          symbolSize: symSize(d),
-          itemStyle: { color: nodeColor(i, nodes.length) },
-          label: { show: d.count >= maxCount * 0.08, fontSize: 11, color: c.text },
+          name: d.tag, value: d.count, scene: d.scene || 0,
+          x: xy[0], y: xy[1],
+          symbolSize: rad[i] * 2 * k,
+          itemStyle: {
+            color: sceneColor(d.scene || 0), opacity: on ? 0.95 : 0.2,
+            borderColor: d.tag === focus ? c.text : "transparent", borderWidth: d.tag === focus ? 2 : 0,
+          },
+          // With nothing focused every tag is labelled and hideOverlap keeps
+          // the biggest legible; zooming in reveals the rest. A focus labels
+          // its whole neighbourhood and nothing else.
+          label: { show: labelled(d, i), fontWeight: d.tag === focus || (holding && i === hold.i) ? 700 : 400 },
         };
       });
-      const edgeData = edges.map((e) => ({
-        source: e.source, target: e.target, value: e.weight,
-        lineStyle: {
-          width: Math.max(0.5, Math.log2(e.weight + 1) * 0.9),
-          opacity: 0.18 + (e.weight / maxWeight) * 0.32,
-          color: "source", curveness: 0,
-        },
-      }));
-      chart.current.setOption({
+      const sceneOf = new Map(nodes.map((d) => [d.tag, d.scene || 0]));
+      const maxW = edges.reduce((m, e) => Math.max(m, strengthOf(e)), 0.01);
+      const links = edges.map((e) => {
+        const s = strengthOf(e);
+        const touches = focus ? (e.source === focus || e.target === focus) : true;
+        const sceneOk = focus ? touches : inFocusScene(sceneOf.get(e.source) || 0);
+        // Links between scenes are the bridges between them, so they get a
+        // visibility floor and a little extra weight rather than fading out.
+        // A focus brings its cross-scene links up to full strength.
+        const across = sceneOf.get(e.source) !== sceneOf.get(e.target);
+        const base = 0.12 + 0.4 * (s / maxW);
+        const opacity = holding ? 0 : (touches && sceneOk) ? (focus ? 0.75 : (across ? Math.max(0.32, base) : base)) : 0.03;
+        return {
+          source: e.source, target: e.target, value: e.weight, strength: s,
+          lineStyle: { width: 0.5 + 2.5 * (s / maxW) + (across ? 0.6 : 0), opacity, color: "source", curveness: 0.12 },
+        };
+      });
+
+      const option = {
         backgroundColor: "transparent",
+        animation: !reduced,
+        animationDurationUpdate: reduced ? 0 : (spring ? SPRING_MS : 300),
+        animationEasingUpdate: spring ? magnetEase : "cubicOut",
         tooltip: {
+          // The readout says what a held tag ties to; a tooltip riding along
+          // with the pointer would only cover the scene being looked at.
+          show: !holding,
           formatter(p) {
-            if (p.dataType === "edge") return `<b>${escapeHtml(p.data.source)}</b> ↔ <b>${escapeHtml(p.data.target)}</b><br>${p.data.value} shared tracks`;
-            return `<b>${escapeHtml(p.data.name)}</b><br>${p.data.value} tracks`;
+            if (p.dataType === "edge") {
+              const s = p.data.strength != null ? ` · pairing ${Math.round(p.data.strength * 100)}%` : "";
+              return `<b>${escapeHtml(p.data.source)}</b> ↔ <b>${escapeHtml(p.data.target)}</b><br>${p.data.value} plays together${s}`;
+            }
+            const sn = sceneName(p.data.scene);
+            return `<b>${escapeHtml(p.data.name)}</b><br>${p.data.value} plays${sn ? ` · ${escapeHtml(sn)} scene` : ""}`;
           },
           backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
         },
         series: [{
-          type: "graph", layout: "force",
-          center: [0, 0],  // align initial view with the (0,0) gravity well
-          // Per-node repulsion scaled with symbol area so big circles push
-          // harder than small ones — keeps the large hub nodes from sliding
-          // under each other while still letting small nodes pack in close.
-          force: {
-            // Per-node repulsion scales with symbol area so big circles push
-            // much harder than small ones — keeps the large hub nodes from
-            // sliding under each other while small nodes can still pack in.
-            repulsion: nodeData.map((n) => Math.min(4000, Math.max(420, n.symbolSize * n.symbolSize / 1.4))),
-            // edgeLength min larger than the biggest-pair diameter (~72) so
-            // even strongly connected hub pairs sit edge-to-edge, not overlapping.
-            gravity: 0.13, edgeLength: [150, 240],
-            layoutAnimation: true, friction: 0.4,
-          },
-          roam: true, draggable: true,
-          label: { show: false, formatter: "{b}" },
-          emphasis: { scale: true, focus: "adjacency",
-            label: { show: true, fontSize: 12, color: c.text },
-            lineStyle: { opacity: 0.85, width: 2 } },
-          data: nodeData,
-          edges: edgeData,
+          id: "constellation", type: "graph", layout: "none", ...seriesBox,
+          // Dragging moves only the grabbed tag: there is no physics, so its
+          // links stretch instead of hauling the whole graph along, and it
+          // follows the pointer with no pull until it's let go. Panning is off
+          // until the reader zooms in: at the fitted zoom there is nothing off
+          // screen, and a near-miss on a node used to grab the background.
+          roam: zoomedRef.current ? true : "scale", draggable: true,
+          scaleLimit: { min: 0.5, max: 6 },
+          labelLayout: { hideOverlap: !holding },
+          label: { position: "right", distance: 4, fontSize: 11, color: c.text, formatter: "{b}" },
+          // Hovering a tag lifts its links and only softens the rest, so the
+          // other scenes stay readable; holding one turns hover off entirely.
+          emphasis: holding
+            ? { disabled: true }
+            : { focus: focus ? "none" : "adjacency", label: { show: true }, lineStyle: { opacity: 0.85 } },
+          blur: { itemStyle: { opacity: 0.45 }, label: { opacity: 0.55 }, lineStyle: { opacity: 0.08 } },
+          data: data.concat(anchors.map(([x, y], j) => ({
+            name: `\u0000anchor${j}`, x, y, symbolSize: 0, draggable: false,
+            itemStyle: { opacity: 0 }, label: { show: false },
+            tooltip: { show: false }, emphasis: { disabled: true },
+          }))),
+          edges: links,
         }],
-      }, true);
+      };
+      // The first frame is the final shape: the layout is complete and fitted
+      // before anything is drawn, so there is no zoomed-in start followed by a
+      // re-fit (#92). A new graph resets the camera; a focus change or resize
+      // keeps the reader's pan and zoom, which a not-merge setOption drops.
+      if (fresh) { zoomedRef.current = false; option.series[0].roam = "scale"; inst.setOption(option, true); }
+      else inst.setOption(option);
+      // A hover highlight survives a merge, so a node hovered before a focus
+      // change could stay blurred under the new one; clear it each time.
+      if (inst.dispatchAction) inst.dispatchAction({ type: "downplay", seriesIndex: 0 });
 
-      // One fit ~1.5s in, after the force sim has roughly settled. Layout stays
-      // "force", so nodes keep bouncing — only the camera moves.
-      fitTimer = setTimeout(fitView, 1500);
-      // Re-fit on window resize so framing follows the new canvas size.
-      onWinResize = () => { if (fitted) fitView(); };
-      window.addEventListener("resize", onWinResize);
+      if (inst.off) { inst.off("click"); inst.off("graphroam"); inst.off("mousedown"); }
+      inst.on("mousedown", (p) => {
+        if (p.dataType !== "node" || p.dataIndex >= nodes.length) return;
+        const ev = (p.event && p.event.event) || {};
+        press = { i: p.dataIndex, x: ev.clientX || 0, y: ev.clientY || 0 };
+      });
+      inst.on("click", (p) => {
+        if (p.dataType === "node" && !String(p.data.name).startsWith("\u0000")) {
+          setFocus((f) => (f === p.data.name ? null : p.data.name));
+        }
+      });
+      inst.on("graphroam", () => {
+        const z = (inst.getOption().series[0] || {}).zoom || 1;
+        const zoomed = z > 1.02;
+        if (zoomed !== zoomedRef.current) {
+          zoomedRef.current = zoomed;
+          inst.setOption({ series: [{ id: "constellation", roam: zoomed ? true : "scale" }] });
+        }
+      });
     };
 
-    // setLoading(false) flips the wrap from display:none to block, but the
-    // DOM update is async (React hasn't painted yet). Wait two animation
-    // frames so the wrap has real dimensions before we seed the layout —
-    // otherwise every node spawns at (0,0) and the view computes against
-    // a 0×0 canvas, producing zoom=0 and a blank chart.
-    rafA = requestAnimationFrame(() => {
-      rafB = requestAnimationFrame(() => setupChart(nodes, edges));
-    });
+    /* ── Holding a tag: tethers to everything it pairs with ──
+       The tethers are drawn straight onto the chart's canvas rather than as
+       graph edges, so they can follow the held tag every frame without a
+       setOption (which would fight ECharts' own drag) and can carry a true
+       gradient from the held tag's scene colour to each partner's. Width and
+       brightness grade with pairing strength, so the ties that matter stand
+       out and the weak ones stay faint. Carrying the tag up to a scene
+       brightens the tethers into it and dims the rest, and the readout names
+       that scene's strongest ties. */
+    const pixelOf = (sd, i) => {
+      const el = sd.getItemGraphicEl && sd.getItemGraphicEl(i);
+      return el && el.transformCoordToGlobal ? el.transformCoordToGlobal(0, 0) : null;
+    };
+    const startHold = (i) => {
+      const inst = chart.current;
+      if (!inst || hold) return;
+      const tag = nodes[i].tag;
+      const ties = [];
+      for (const e of allEdges) {
+        const other = e.source === tag ? e.target : e.target === tag ? e.source : null;
+        const j = other == null ? undefined : indexOf.get(other);
+        if (j !== undefined) ties.push({ j, s: strengthOf(e), w: e.weight });
+      }
+      ties.sort((a, b) => b.s - a.s);
+      const kept = ties.slice(0, MAX_TETHERS);
+      const sd = inst.getModel().getSeriesByIndex(0)?.getData();
+      const g = window.echarts && window.echarts.graphic;
+      // Scene discs in pixels, for "which scene is the held tag at".
+      const discs = [];
+      if (sd) {
+        const byScene = new Map();
+        nodes.forEach((d, j) => {
+          if (j === i) return;
+          const p = pixelOf(sd, j);
+          if (!p) return;
+          const s = d.scene || 0;
+          if (!byScene.has(s)) byScene.set(s, []);
+          byScene.get(s).push(p);
+        });
+        for (const [scene, pts] of byScene) {
+          const x = pts.reduce((t, p) => t + p[0], 0) / pts.length;
+          const y = pts.reduce((t, p) => t + p[1], 0) / pts.length;
+          discs.push({ scene, x, y, r: Math.max(...pts.map((p) => Math.hypot(p[0] - x, p[1] - y))) });
+        }
+      }
+      const zr = inst.getZr && inst.getZr();
+      const lines = g && zr ? kept.map(() => {
+        const line = new g.Line({ shape: { x1: 0, y1: 0, x2: 0, y2: 0 }, style: { lineCap: "round" }, z: 1, silent: true });
+        zr.add(line);
+        return line;
+      }) : [];
+      // A ring around each partner, shown for the scene the tag is carried
+      // to: up close the tethers are short, and the rings still say which
+      // tags in that scene the held one ties to, and how strongly.
+      const rings = g && zr ? kept.map((t) => {
+        const ring = new g.Circle({ shape: { cx: 0, cy: 0, r: 0 }, style: { fill: "none", opacity: 0 }, z: 3, silent: true });
+        zr.add(ring);
+        return ring;
+      }) : [];
+      const radii = sd ? kept.map((t) => {
+        const size = sd.getItemVisual ? sd.getItemVisual(t.j, "symbolSize") : 0;
+        return (Array.isArray(size) ? size[0] : size || 0) / 2;
+      }) : [];
+      if (inst.dispatchAction) inst.dispatchAction({ type: "hideTip" });
+      // Ties to other scenes are scaled against the strongest tie outside
+      // the held tag's own scene, not its strongest tie overall. A tag's top
+      // partners are usually in its own scene (that's why it's there), and
+      // measured against those, every bridge to another scene drew thin and
+      // grey, which hid the very thing a hold is for.
+      const own = nodes[i].scene || 0;
+      const maxOf = (pred) => Math.max(1e-6, ...kept.filter(pred).map((t) => t.s));
+      hold = {
+        i, tag, ties: kept, lines, rings, radii, discs, at: undefined,
+        maxOwn: maxOf((t) => (nodes[t.j].scene || 0) === own),
+        maxOut: maxOf((t) => (nodes[t.j].scene || 0) !== own),
+        targets: sd ? kept.map((t) => pixelOf(sd, t.j)) : [],
+      };
+      setHeld(holdSummary(hold, null));
+      draw();
+      rafT = requestAnimationFrame(tick);
+    };
+    const tick = () => {
+      if (!hold) return;
+      const inst = chart.current;
+      const sd = inst && inst.getModel().getSeriesByIndex(0)?.getData();
+      const g = window.echarts && window.echarts.graphic;
+      const here = sd && pixelOf(sd, hold.i);
+      if (here && g) {
+        const [hx, hy] = here;
+        let at = null, best = Infinity;
+        for (const d of hold.discs) {
+          const gap = Math.hypot(d.x - hx, d.y - hy) - d.r;
+          if (gap < best) { best = gap; at = d.scene; }
+        }
+        // "At" a scene from a little way out, so its tethers are still long
+        // enough to read as the tag arrives.
+        if (best > 110) at = null;
+        if (at === nodes[hold.i].scene) at = null;  // its own scene is home, not a visit
+        const from = sceneColor(nodes[hold.i].scene || 0);
+        const c = themeVars();
+        hold.ties.forEach((t, k) => {
+          const p = hold.targets[k];
+          const line = hold.lines[k];
+          if (!p || !line) return;
+          const home = (nodes[t.j].scene || 0) === (nodes[hold.i].scene || 0);
+          // A gentle curve lifts the middle of the range, so a moderate tie
+          // still reads as a tie.
+          const rel = Math.pow(Math.min(1, t.s / (home ? hold.maxOwn : hold.maxOut)), 0.7);
+          const into = at != null && (nodes[t.j].scene || 0) === at;
+          const fade = (at != null && !into ? 0.15 : 1) * (home ? 0.6 : 1);
+          line.attr({
+            shape: { x1: hx, y1: hy, x2: p[0], y2: p[1] },
+            style: {
+              stroke: new g.LinearGradient(hx, hy, p[0], p[1], [
+                { offset: 0, color: from }, { offset: 1, color: sceneColor(nodes[t.j].scene || 0) },
+              ], true),
+              lineWidth: (0.8 + 4.2 * rel) * (into ? 1.5 : 1),
+              opacity: Math.min(1, (0.22 + 0.78 * rel) * (into ? 1.3 : 1) * fade),
+            },
+          });
+          const ring = hold.rings[k];
+          if (ring) {
+            ring.attr({
+              shape: { cx: p[0], cy: p[1], r: (hold.radii[k] || 4) + 3 + 2 * rel },
+              style: { stroke: c.text, lineWidth: 1 + 3 * rel, opacity: into ? 0.35 + 0.65 * rel : 0 },
+            });
+          }
+        });
+        // The readout sits in the corner farthest from the held tag, so it
+        // never covers the scene being looked at.
+        const corner = (hy < inst.getHeight() / 2 ? "b" : "t") + (hx < inst.getWidth() / 2 ? "r" : "l");
+        if (at !== hold.at || corner !== hold.corner) {
+          hold.at = at; hold.corner = corner;
+          setHeld(holdSummary(hold, at));
+        }
+      }
+      rafT = requestAnimationFrame(tick);
+    };
+    const endHold = () => {
+      clearTimeout(holdEnd);
+      cancelAnimationFrame(rafT);
+      if (!hold) return;
+      const zr = chart.current && chart.current.getZr && chart.current.getZr();
+      if (zr) hold.lines.concat(hold.rings).forEach((l) => zr.remove(l));
+      hold = null;
+      setHeld(null);
+      draw();
+    };
+    // Who the held tag ties to, grouped by scene, strongest scenes first.
+    const holdSummary = (h, at) => {
+      const groups = new Map();
+      for (const t of h.ties) {
+        const s = nodes[t.j].scene || 0;
+        if (!groups.has(s)) groups.set(s, { scene: s, pull: 0, ties: [] });
+        const gr = groups.get(s);
+        gr.pull += t.s;
+        gr.ties.push({ tag: nodes[t.j].tag, s: t.s });
+      }
+      return {
+        tag: h.tag, scene: nodes[h.i].scene || 0, at, corner: h.corner || "tl",
+        groups: [...groups.values()].sort((a, b) => b.pull - a.pull),
+      };
+    };
 
+    // The wrap flips from display:none when loading ends, and React hasn't
+    // painted yet; two frames give the canvas real dimensions to lay out in.
+    rafA = requestAnimationFrame(() => { rafB = requestAnimationFrame(() => draw()); });
+
+    // A press becomes a hold once the pointer actually moves, so a plain
+    // click opens the tag's panel without flashing tethers.
+    const onMove = (e) => {
+      if (!press || hold) return;
+      const x = e.clientX || (e.touches && e.touches[0] && e.touches[0].clientX) || 0;
+      const y = e.clientY || (e.touches && e.touches[0] && e.touches[0].clientY) || 0;
+      if (Math.hypot(x - press.x, y - press.y) > 4) startHold(press.i);
+    };
+    // On release, the held tag is pulled back home and its tethers follow it
+    // in; the normal view returns once it has landed. Capture phase, on
+    // window, so a release outside the canvas still counts; the pull waits a
+    // frame so ECharts has finished its own drag-end.
+    const onRelease = () => {
+      press = null;
+      if (!hold) return;
+      const reduced = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+      rafS = requestAnimationFrame(() => {
+        draw({ spring: true });
+        holdEnd = setTimeout(endHold, reduced ? 0 : SPRING_MS + 60);
+      });
+    };
+    window.addEventListener("mousemove", onMove, true);
+    window.addEventListener("touchmove", onMove, true);
+    window.addEventListener("mouseup", onRelease, true);
+    window.addEventListener("touchend", onRelease, true);
+    // Re-fit whenever the canvas itself changes size (a scrollbar appearing,
+    // the wrap leaving display:none, the sidebar collapsing), not only on a
+    // window resize. A canvas that was still 0×0 at the first frame draws as
+    // soon as it has a size, instead of staying blank until something else
+    // happens to redraw it.
+    let ro;
+    if (window.ResizeObserver && elRef.current) {
+      ro = new ResizeObserver(() => draw());
+      ro.observe(elRef.current);
+    }
     return () => {
-      if (fitTimer) clearTimeout(fitTimer);
-      if (rafA) cancelAnimationFrame(rafA);
-      if (rafB) cancelAnimationFrame(rafB);
-      if (onWinResize) window.removeEventListener("resize", onWinResize);
+      cancelAnimationFrame(rafA); cancelAnimationFrame(rafB); cancelAnimationFrame(rafS);
+      if (hold) {
+        const zr = chart.current && chart.current.getZr && chart.current.getZr();
+        if (zr) hold.lines.concat(hold.rings).forEach((l) => zr.remove(l));
+        hold = null;
+        setHeld(null);
+      }
+      clearTimeout(holdEnd);
+      cancelAnimationFrame(rafT);
+      if (ro) ro.disconnect();
+      window.removeEventListener("mousemove", onMove, true);
+      window.removeEventListener("touchmove", onMove, true);
+      window.removeEventListener("mouseup", onRelease, true);
+      window.removeEventListener("touchend", onRelease, true);
     };
-  }, [active, graph, chart.current]);
+  }, [active, graph, chart.current, focus, focusScene]);
+
+  // Reset view: a new graph object counts as a fresh layout, so the next draw
+  // replaces the option outright and restores the default pan and zoom. The
+  // layout is deterministic, so nothing moves.
+  useEffect(() => {
+    if (viewKey) setGraph((g) => g && { ...g });
+  }, [viewKey]);
+
+  useEffect(() => {
+    if (focus && detail && panelRef.current && panelRef.current.scrollIntoView) {
+      panelRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [detail]);
+
+  const nodes = (graph && graph.nodes) || [];
+  const focusNode = focus ? nodes.find((d) => d.tag === focus) : null;
+  const pickTag = (value) => {
+    const hit = nodes.find((d) => d.tag.toLowerCase() === value.trim().toLowerCase());
+    if (hit) { setFocus(hit.tag); setFocusScene(null); setQuery(""); }
+  };
+  const shownLinks = graph && graph.edges
+    ? strongestPairings(graph.nodes || [], graph.edges).length : 0;
+  const named = scenes.slice(0, SCENE_COLORS.length);
+  const rest = scenes.slice(SCENE_COLORS.length);
+  const DrillPanel = window.DrillPanel;
 
   return (
     <section className="block">
@@ -1010,17 +1569,109 @@ function TagConstellation({ active, refreshVersion = 0 }) {
         <div className="card-head">
           <h3 className="card-title">Tag constellation</h3>
           <div style={cardTools}>
-            <div className="seg" role="group">
-              {FIELDS.map(([v, l]) => (
+            <div className="seg" role="group" aria-label="Tag field">
+              {CONST_FIELDS.map(([v, l]) => (
                 <button key={v} aria-pressed={field === v} onClick={() => setField(v)}>{l}</button>
               ))}
             </div>
-            <span className="card-meta">force graph</span>
+            <span className="card-meta">{nodes.length} tags · {shownLinks} links · {scenes.length} scenes</span>
           </div>
         </div>
-        <p style={cardDesc}>Each node is a tag, sized by how many tracks carry it; links connect tags that share tracks. Drag nodes to untangle, scroll to zoom.</p>
-        <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        <p style={cardDesc}><b>Which tags cluster into scenes in your listening, and what sits next to any one tag?</b> Tags heard on the same tracks pull together, and colour marks the scenes that clustering finds. <b>Grab a tag and carry it around</b> to see every tie it has, coloured from its scene to each partner's and brighter the stronger the pairing; bring it up to another scene to see what connects them. Let go and it returns home. Click a tag for its tracks. Scroll to zoom; once zoomed in, drag the background to pan.</p>
+
+        <div className="artist-picker">
+          <div className="ap-search">
+            {/* Own wrapper so the icon stays inside the input when the row wraps. */}
+            <span className="const-find">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
+              <input value={query} list="const-tags" placeholder="Find a tag…" aria-label="Find a tag"
+                onChange={(e) => { setQuery(e.target.value); pickTag(e.target.value); }}
+                onKeyDown={(e) => { if (e.key === "Enter") pickTag(query); }} />
+            </span>
+            <datalist id="const-tags">{nodes.map((d) => <option key={d.tag} value={d.tag} />)}</datalist>
+            {field !== "mood_tags" && (
+              <div className="seg seg-sm" role="group" aria-label="Minimum plays per tag" title="Hide tags with fewer plays than this">
+                {CONST_MIN_PLAYS.map((v) => (
+                  <button key={v} aria-pressed={minPlays === v} onClick={() => setMinPlays(v)}>{v}+ plays</button>
+                ))}
+              </div>
+            )}
+            <button className="ap-reset" onClick={() => { setFocus(null); setFocusScene(null); setViewKey((k) => k + 1); }}>Reset view</button>
+          </div>
+          <div className="ap-chips const-scenes" role="group" aria-label="Scenes">
+            {named.map((s) => (
+              <button key={s.id} className={"ap-chip" + (focusScene === s.id ? " on" : "")}
+                aria-pressed={focusScene === s.id}
+                onClick={() => { setFocus(null); setFocusScene((f) => (f === s.id ? null : s.id)); }}>
+                <span className="ap-dot" style={{ background: sceneColor(s.id) }}></span>{s.name}
+                <span className="ap-count">{s.tags}</span>
+              </button>
+            ))}
+            {rest.length > 0 && (
+              <button className={"ap-chip" + (focusScene === "other" ? " on" : "")} aria-pressed={focusScene === "other"}
+                onClick={() => { setFocus(null); setFocusScene((f) => (f === "other" ? null : "other")); }}>
+                <span className="ap-dot" style={{ background: SCENE_OTHER }}></span>{rest.length} smaller scenes
+                <span className="ap-count">{rest.reduce((n, s) => n + s.tags, 0)}</span>
+              </button>
+            )}
+          </div>
+          <p className="const-key">
+            <span><i className="ck-dot"></i><b>Colour</b> is the scene: tags you tend to hear on the same tracks.</span>
+            <span><i className="ck-size"></i><b>Size</b> is plays.</span>
+            <span><i className="ck-line"></i><b>Lines</b> join each tag to the tag it's most often heard with. Hold a tag to see all of its ties.</span>
+            <span><b>Pairing %</b> is how much two tags' listening overlaps: shared plays relative to how much each is played. 100% would mean they're always heard together.</span>
+          </p>
+        </div>
+
+        <div className="const-stage">
+          <div className="echart-wrap tall" ref={elRef} style={{ display: loading || !nodes.length ? "none" : "block" }} />
+          {held && (
+            <div className={"const-held " + held.corner} aria-live="polite">
+              <div className="ch-title">
+                <span className="ap-dot" style={{ background: sceneColor(held.scene) }}></span>
+                Holding <b>{held.tag}</b>
+                <span className="ch-sub">{held.groups.reduce((n, gr) => n + gr.ties.length, 0)} ties</span>
+              </div>
+              {(held.at != null ? held.groups.filter((gr) => gr.scene === held.at) : held.groups.slice(0, 5)).map((gr) => (
+                <div key={gr.scene} className={"ch-row" + (gr.scene === held.at ? " at" : "")}>
+                  <span className="ap-dot" style={{ background: sceneColor(gr.scene) }}></span>
+                  <span className="ch-scene">{gr.scene === held.scene ? "own scene" : sceneName(gr.scene)}</span>
+                  <span className="ch-ties">
+                    {gr.ties.slice(0, gr.scene === held.at ? 6 : 2).map((t) => `${t.tag} ${Math.round(t.s * 100)}%`).join(" · ")}
+                  </span>
+                </div>
+              ))}
+              <div className="ch-hint">{held.at != null ? "Its strongest ties into this scene, by pairing %" : "Carry it to a scene to see what connects"}</div>
+            </div>
+          )}
+        </div>
         {loading && <ChartLoading height={560} />}
+        {!loading && graph && !nodes.length && (
+          <div className="empty"><div className="big">No tags reach {effMinPlays} plays</div><div>Lower the play threshold to bring them back.</div></div>
+        )}
+
+        {focus && (
+          <div className="const-panel" ref={panelRef}>
+            <div className="const-nbrs">
+              <span className="const-nbrs-title">Sits next to <b>{focus}</b>{focusNode ? ` (${sceneName(focusNode.scene)} scene)` : ""}</span>
+              <div className="ap-chips">
+                {(detail ? detail.neighbours : []).map((nb) => {
+                  const nn = nodes.find((d) => d.tag === nb.tag);
+                  return (
+                    <button key={nb.tag} className="ap-chip" disabled={!nn} title={nn ? `Focus ${nb.tag}` : `${nb.tag} is below the current play threshold`}
+                      onClick={() => nn && setFocus(nb.tag)}>
+                      <span className="ap-dot" style={{ background: nn ? sceneColor(nn.scene) : SCENE_OTHER }}></span>{nb.tag}
+                      <span className="ap-count">{Math.round(nb.strength * 100)}%</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            {DrillPanel && detail && (
+              <DrillPanel label={focus} slice={detail} onClose={() => setFocus(null)} views={true} />
+            )}
+          </div>
+        )}
       </div>
     </section>
   );
