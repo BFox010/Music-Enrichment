@@ -821,3 +821,13 @@ class TestEnergyFilterBoundary:
         """Unchanged: no energy means the filter can say nothing about the row."""
         for qs in ("min_energy=0.0", "max_energy=1.0", "min_energy=0.0&max_energy=1.0"):
             assert "none" not in self._names(energy_client, qs)
+
+
+class TestFramingIsRefused:
+    """#114: the one-click Refresh could be clickjacked from a framing page."""
+
+    @pytest.mark.parametrize("path", ["/", "/api/overview", "/tracks.min.jsonl", "/api/config"])
+    def test_every_response_refuses_framing(self, client, path):
+        r = client.get(path)
+        assert r.headers["content-security-policy"] == "frame-ancestors 'none'"
+        assert r.headers["x-frame-options"] == "DENY"

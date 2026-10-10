@@ -17,7 +17,7 @@
     reduced: mqReduce.matches,
     fine: mqFine.matches,
     // User-facing kill switch for the pointer effects (Tweaks panel).
-    pointerFx: localStorage.getItem("ml.pointerfx") !== "off",
+    pointerFx: readPref("ml.pointerfx") !== "off",
   };
   const pointerActive = () => state.fine && !state.reduced && state.pointerFx;
 
@@ -225,7 +225,7 @@
     pointerFxEnabled: () => state.pointerFx,
     setPointerFx(on) {
       state.pointerFx = !!on;
-      localStorage.setItem("ml.pointerfx", on ? "on" : "off");
+      writePref("ml.pointerfx", on ? "on" : "off");
       syncPointerGate();
     },
   };
