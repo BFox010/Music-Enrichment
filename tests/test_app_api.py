@@ -413,6 +413,34 @@ class TestTagGraph:
         node_names = {n["tag"] for n in body["nodes"]}
         assert "Moody" in node_names
 
+    def test_scenes_and_strength_are_served(self, client):
+        body = client.get("/api/tag-graph?field=discogs_styles&min_count=1").json()
+        assert body["scenes"] and {"id", "name", "tags", "plays"} <= set(body["scenes"][0])
+        assert all("scene" in n for n in body["nodes"])
+        assert all("strength" in e for e in body["edges"])
+
+    def test_min_strength_is_bounded(self, client):
+        assert client.get("/api/tag-graph?min_strength=0.3").status_code == 200
+        assert client.get("/api/tag-graph?min_strength=1.5").status_code == 422
+        assert client.get("/api/tag-graph?min_strength=-0.1").status_code == 422
+
+
+class TestTagDetail:
+    def test_status_and_shape(self, client):
+        r = client.get("/api/tag-detail?field=discogs_styles&tag=Trip%20Hop")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["total"] == 1
+        assert body["tracks"] == {"Portishead — Roads": 1}
+        assert body["byHour"][22] == 1
+        assert [n["tag"] for n in body["neighbours"]] == ["Downtempo"]
+
+    def test_tag_is_required(self, client):
+        assert client.get("/api/tag-detail?field=discogs_styles").status_code == 422
+
+    def test_field_is_validated(self, client):
+        assert client.get("/api/tag-detail?field=nope&tag=x").status_code == 422
+
 
 class TestReload:
     def test_status(self, client):

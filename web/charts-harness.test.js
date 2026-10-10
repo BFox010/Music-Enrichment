@@ -23,6 +23,8 @@ const COMPILED = transformSync(SRC, {
   jsxFactory: "React.createElement", jsxFragment: "React.Fragment",
 }).code;
 const COMPONENTS = ["ListeningMap", "AudioFeaturesChart", "SaturationChart", "TagConstellation"];
+// Plain functions exported alongside the components so they can be tested directly.
+const HELPERS = ["layoutConstellation"];
 
 // One API response per endpoint, shaped like app.main's.
 const API = {
@@ -82,7 +84,7 @@ function makeRealm() {
   };
   vm.createContext(ctx);
   vm.runInContext(
-    `(function(){\n${COMPILED}\n;${COMPONENTS.map((n) => `window.${n}=${n};`).join("")}})();`,
+    `(function(){\n${COMPILED}\n;${[...COMPONENTS, ...HELPERS].map((n) => `window.${n}=${n};`).join("")}})();`,
     ctx, { filename: "echarts-charts.jsx" },
   );
   return { ctx, rec };
@@ -191,5 +193,101 @@ test("names in every tooltip render as text, not markup", async () => {
     }
   } finally {
     Object.assign(API, saved);
+  }
+});
+
+// #92: the Tag Constellation's layout is computed once, before the first draw,
+// and handed to ECharts as fixed positions. The old force sim started zoomed
+// in, re-fitted the camera on a 1.5 s timer and never stopped moving.
+
+/** Three scenes (one disconnected), most-played first like the API returns. */
+function sceneGraph() {
+  const nodes = [];
+  const edges = [];
+  const add = (scene, n, base) => {
+    for (let i = 0; i < n; i++) nodes.push({ tag: `s${scene}t${i}`, count: base - i * 3, scene });
+    for (let i = 0; i < n; i++) for (let j = i + 1; j < n; j++) {
+      if ((i + j) % 3 !== 0) edges.push({ source: `s${scene}t${i}`, target: `s${scene}t${j}`, weight: 5, strength: 0.4 });
+    }
+  };
+  add(0, 14, 120); add(1, 10, 90); add(2, 4, 20);
+  edges.push({ source: "s0t0", target: "s1t0", weight: 1, strength: 0.05 });  // scene 2 stays disconnected
+  nodes.sort((a, b) => b.count - a.count);
+  return { nodes, edges };
+}
+
+test("the constellation layout is deterministic", () => {
+  const { ctx } = makeRealm();
+  const { nodes, edges } = sceneGraph();
+  const a = ctx.layoutConstellation(nodes, edges, 1.8);
+  const b = ctx.layoutConstellation(nodes, edges, 1.8);
+  assert.deepEqual(JSON.parse(JSON.stringify(a)), JSON.parse(JSON.stringify(b)));
+});
+
+test("no two tags overlap, and every scene is one region", () => {
+  const { ctx } = makeRealm();
+  const { nodes, edges } = sceneGraph();
+  const { pos, rad } = ctx.layoutConstellation(nodes, edges, 1.8);
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+    const d = Math.hypot(pos[i][0] - pos[j][0], pos[i][1] - pos[j][1]);
+    assert.ok(d >= rad[i] + rad[j] - 0.5, `${nodes[i].tag} overlaps ${nodes[j].tag}`);
+  }
+  // Each scene's members fit in a disc around their centroid that holds no
+  // other scene's tag: colour regions never interleave.
+  for (const s of new Set(nodes.map((n) => n.scene))) {
+    const idx = nodes.map((n, i) => (n.scene === s ? i : -1)).filter((i) => i >= 0);
+    const cx = idx.reduce((t, i) => t + pos[i][0], 0) / idx.length;
+    const cy = idx.reduce((t, i) => t + pos[i][1], 0) / idx.length;
+    const R = Math.max(...idx.map((i) => Math.hypot(pos[i][0] - cx, pos[i][1] - cy) + rad[i]));
+    nodes.forEach((n, i) => {
+      if (n.scene !== s) assert.ok(Math.hypot(pos[i][0] - cx, pos[i][1] - cy) > R, `${n.tag} sits inside scene ${s}`);
+    });
+  }
+});
+
+test("a disconnected scene is packed beside the rest, not flung to the edge", () => {
+  const { ctx } = makeRealm();
+  const { nodes, edges } = sceneGraph();
+  const { pos, rad } = ctx.layoutConstellation(nodes, edges, 1.8);
+  const lone = nodes.map((n, i) => (n.scene === 2 ? i : -1)).filter((i) => i >= 0);
+  const rest = nodes.map((n, i) => (n.scene !== 2 ? i : -1)).filter((i) => i >= 0);
+  const gap = Math.min(...lone.flatMap((i) => rest.map((j) =>
+    Math.hypot(pos[i][0] - pos[j][0], pos[i][1] - pos[j][1]) - rad[i] - rad[j])));
+  assert.ok(gap < 80, `disconnected scene sits ${Math.round(gap)} px from everything else`);
+});
+
+test("the constellation draws its final layout once, with no physics and no later re-fit", async () => {
+  const saved = API["/api/tag-graph"];
+  const g = sceneGraph();
+  API["/api/tag-graph"] = { ...g, scenes: [0, 1, 2].map((id) => ({ id, name: `scene ${id}`, tags: 1, plays: 1 })) };
+  try {
+    const realm = makeRealm();
+    realm.ctx.echarts = realm.ctx.echartsStub;
+    const renderer = await mount(realm, "TagConstellation");
+    try {
+      await waitFor(() => realm.rec.instances.some((i) => i.options.length));
+      await TestRenderer.act(() => new Promise((r) => setTimeout(r, 1700)));  // past the old 1.5 s re-fit
+      const opts = realm.rec.instances.flatMap((i) => i.options);
+      const series = opts[0].series[0];
+      assert.equal(series.layout, "none", "positions are fixed, not simulated");
+      assert.equal(series.draggable, true, "a dragged tag moves alone; nothing is tethered by physics");
+      assert.equal(series.roam, "scale", "no background panning until the reader zooms in");
+      const isAnchor = (d) => String(d.name).startsWith("\u0000");
+      const real = series.data.filter((d) => !isAnchor(d));
+      assert.equal(real.length, g.nodes.length);
+      assert.ok(real.every((d) => Number.isFinite(d.x) && Number.isFinite(d.y)));
+      for (const o of opts.slice(1)) {
+        const s = (o.series || [])[0] || {};
+        assert.ok(s.zoom === undefined && s.center === undefined, "nothing re-fits the camera after the first draw");
+      }
+      // The anchors that pin the fitted box can't be hovered or clicked.
+      const anchors = series.data.filter(isAnchor);
+      assert.equal(anchors.length, 2);
+      assert.ok(anchors.every((a) => a.symbolSize === 0 && a.tooltip.show === false && a.emphasis.disabled));
+    } finally {
+      await TestRenderer.act(async () => renderer.unmount());
+    }
+  } finally {
+    API["/api/tag-graph"] = saved;
   }
 });

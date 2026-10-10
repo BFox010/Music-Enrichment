@@ -629,26 +629,18 @@ def forgotten_favorites(
     return result[:top]
 
 
-def tag_graph(
-    field: str = "discogs_styles",
-    min_count: int = 15,
-    window: Optional[str] = None,
-) -> dict[str, Any]:
-    """Co-occurrence graph for a tag field, weighted by plays.
-
-    Nodes are tags whose play count >= min_count. Edges connect any two tags
-    heard together on the same track; edge weight = shared plays.
-    """
-    if field not in _TAG_GRAPH_FIELDS:
-        field = "discogs_styles"
-
-    # Play-weighted: an edge is thick because the pairing was heard often, not
-    # because it spans many tracks each heard once.
+def _tag_plays(
+    field: str, window: Optional[str]
+) -> tuple[Counter[str], Counter[tuple[str, str]], list[tuple[dict, dict]]]:
+    """Play counts per tag and per tag pair, plus the (scrobble, track) pairs
+    behind them. Play-weighted: a pairing counts because it was heard often,
+    not because it spans many tracks each heard once."""
     snap = get_snapshot()
     index = _track_index(snap)
     matches = window_predicate(window)
     tag_counts: Counter[str] = Counter()
     co_occur: Counter[tuple[str, str]] = Counter()
+    heard: list[tuple[dict, dict]] = []
 
     for s in snap.scrobbles:
         if not matches(s):
@@ -656,6 +648,7 @@ def tag_graph(
         track = _lookup(index, s)
         if not track:
             continue
+        heard.append((s, track))
         tags = list(dict.fromkeys(v for v in (track.get(field) or []) if v))
         for tag in tags:
             tag_counts[tag] += 1
@@ -663,15 +656,186 @@ def tag_graph(
             for j in range(i + 1, len(tags)):
                 key = (tags[i], tags[j]) if tags[i] <= tags[j] else (tags[j], tags[i])
                 co_occur[key] += 1
+    return tag_counts, co_occur, heard
 
-    kept = {tag for tag, n in tag_counts.items() if n >= min_count}
-    nodes = sorted(
-        [{"tag": t, "count": tag_counts[t]} for t in kept],
-        key=lambda x: -x["count"],
+
+def _pair_strength(shared: int, a_plays: int, b_plays: int) -> float:
+    """Shared plays relative to both tags' totals (the cosine of their play
+    sets), 0..1. Raw shared plays rank every pairing with a hub tag first —
+    "hip-hop" co-occurs with everything simply because it is everywhere — so
+    clustering and the link threshold both use this instead (#92)."""
+    return shared / math.sqrt(a_plays * b_plays) if a_plays and b_plays else 0.0
+
+
+def _louvain(
+    nodes: list[str], weights: dict[tuple[str, str], float]
+) -> dict[str, int]:
+    """Community detection by modularity (Louvain), deterministic: nodes are
+    visited in the given order and ties keep the current community, so the same
+    graph always yields the same scenes. Returns node -> community index.
+
+    Small enough to carry here rather than add networkx for one call: the
+    largest tag graph is a few hundred nodes."""
+    # Each level's nodes are integer ids; `members` maps them back to tags.
+    members: list[list[str]] = [[n] for n in nodes]
+    pos = {n: i for i, n in enumerate(nodes)}
+    adj: list[dict[int, float]] = [dict() for _ in nodes]
+    for (a, b), w in weights.items():
+        if w <= 0 or a == b or a not in pos or b not in pos:
+            continue
+        i, j = pos[a], pos[b]
+        adj[i][j] = adj[i].get(j, 0.0) + w
+        adj[j][i] = adj[j].get(i, 0.0) + w
+    degree = [sum(nbrs.values()) for nbrs in adj]
+    two_m = sum(degree)
+    if two_m == 0:
+        return {n: i for i, n in enumerate(nodes)}
+
+    while True:
+        n = len(adj)
+        comm = list(range(n))
+        tot = degree[:]  # summed degree per community
+        moved_any = False
+        improved = True
+        while improved:
+            improved = False
+            for i in range(n):
+                home = comm[i]
+                links: dict[int, float] = {}
+                for j, w in adj[i].items():
+                    if j != i:
+                        links[comm[j]] = links.get(comm[j], 0.0) + w
+                tot[home] -= degree[i]
+                best = home
+                best_gain = links.get(home, 0.0) - tot[home] * degree[i] / two_m
+                for c in sorted(links):
+                    gain = links[c] - tot[c] * degree[i] / two_m
+                    if gain > best_gain + 1e-12:
+                        best, best_gain = c, gain
+                tot[best] += degree[i]
+                if best != home:
+                    comm[i] = best
+                    improved = moved_any = True
+        if not moved_any:
+            break
+        # Fold each community into one node and run again on the smaller graph.
+        relabel = {c: k for k, c in enumerate(dict.fromkeys(comm))}
+        new_members: list[list[str]] = [[] for _ in relabel]
+        new_adj: list[dict[int, float]] = [dict() for _ in relabel]
+        new_degree = [0.0] * len(relabel)
+        for i in range(n):
+            ci = relabel[comm[i]]
+            new_members[ci].extend(members[i])
+            new_degree[ci] += degree[i]
+            for j, w in adj[i].items():
+                cj = relabel[comm[j]]
+                new_adj[ci][cj] = new_adj[ci].get(cj, 0.0) + w
+        members, adj, degree = new_members, new_adj, new_degree
+
+    return {tag: k for k, group in enumerate(members) for tag in group}
+
+
+def tag_graph(
+    field: str = "discogs_styles",
+    min_count: int = 15,
+    window: Optional[str] = None,
+    min_strength: float = 0.0,
+) -> dict[str, Any]:
+    """Co-occurrence graph for a tag field, grouped into scenes.
+
+    Nodes are tags whose play count >= min_count. Edges connect two tags heard
+    on the same track: ``weight`` is shared plays, ``strength`` is
+    ``_pair_strength`` (0..1). ``min_strength`` drops weak edges from the
+    response but not from clustering, so a tag's scene (and its colour) holds
+    still while the reader thins the links out.
+
+    Scenes are modularity communities over strength, ranked by plays and named
+    after their two most-played tags.
+    """
+    if field not in _TAG_GRAPH_FIELDS:
+        field = "discogs_styles"
+    tag_counts, co_occur, _ = _tag_plays(field, window)
+
+    kept = sorted(
+        (t for t, n in tag_counts.items() if n >= min_count),
+        key=lambda t: (-tag_counts[t], t),
     )
-    edges = [
-        {"source": a, "target": b, "weight": w}
+    kept_set = set(kept)
+    strength = {
+        (a, b): _pair_strength(w, tag_counts[a], tag_counts[b])
         for (a, b), w in co_occur.items()
-        if a in kept and b in kept
+        if a in kept_set and b in kept_set
+    }
+    community = _louvain(kept, strength)
+
+    groups: dict[int, list[str]] = defaultdict(list)
+    for tag in kept:  # already most-played first
+        groups[community[tag]].append(tag)
+    ranked = sorted(
+        groups.values(), key=lambda g: (-sum(tag_counts[t] for t in g), g[0])
+    )
+    scene_of = {tag: k for k, group in enumerate(ranked) for tag in group}
+    scenes = [
+        {
+            "id": k,
+            "name": " · ".join(group[:2]),
+            "tags": len(group),
+            "plays": sum(tag_counts[t] for t in group),
+        }
+        for k, group in enumerate(ranked)
     ]
-    return {"nodes": nodes, "edges": edges, "field": field, "min_count": min_count}
+
+    nodes = [{"tag": t, "count": tag_counts[t], "scene": scene_of[t]} for t in kept]
+    edges = [
+        {"source": a, "target": b, "weight": co_occur[(a, b)], "strength": round(s, 4)}
+        for (a, b), s in strength.items()
+        if s >= min_strength
+    ]
+    edges.sort(key=lambda e: (-e["strength"], e["source"], e["target"]))
+    return {
+        "nodes": nodes, "edges": edges, "scenes": scenes,
+        "field": field, "min_count": min_count, "min_strength": min_strength,
+    }
+
+
+def tag_detail(
+    field: str, tag: str, window: Optional[str] = None, neighbours: int = 12
+) -> dict[str, Any]:
+    """Everything behind one tag: the plays that carry it, broken down the way
+    the dashboard's ``DrillPanel`` reads a slice (genres, moods, tracks and
+    hour of day), plus the tags it pairs with most strongly."""
+    if field not in _TAG_GRAPH_FIELDS:
+        field = "discogs_styles"
+    tag_counts, co_occur, heard = _tag_plays(field, window)
+
+    genres: Counter[str] = Counter()
+    moods: Counter[str] = Counter()
+    tracks: Counter[str] = Counter()
+    by_hour = [0] * 24
+    for s, track in heard:
+        if tag not in (track.get(field) or []):
+            continue
+        genres.update(dict.fromkeys((g for g in (track.get("genres") or []) if g), 1))
+        moods.update(dict.fromkeys((m for m in (track.get("mood_tags") or []) if m), 1))
+        tracks[f"{track.get('artist') or 'Unknown'} — {track.get('track') or 'Untitled'}"] += 1
+        hour = s.get("hour")
+        if hour not in (None, ""):
+            by_hour[int(hour) % 24] += 1
+
+    pairs = []
+    for (a, b), w in co_occur.items():
+        if tag in (a, b):
+            other = b if a == tag else a
+            pairs.append({
+                "tag": other, "weight": w,
+                "strength": round(_pair_strength(w, tag_counts[tag], tag_counts[other]), 4),
+            })
+    pairs.sort(key=lambda p: (-p["strength"], p["tag"]))
+    return {
+        "tag": tag, "field": field, "total": tag_counts.get(tag, 0),
+        "genres": dict(genres.most_common(20)),
+        "moods": dict(moods.most_common(20)),
+        "tracks": dict(tracks.most_common(50)),
+        "byHour": by_hour,
+        "neighbours": pairs[:neighbours],
+    }

@@ -773,6 +773,25 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .ap-chip.on .ap-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .ap-more { margin: 9px 2px 0; font-size: 11.5px; color: var(--muted-s); }
 
+/* Tag Constellation (#92): the scene key, the encoding legend and the focus panel */
+.const-scenes { max-height: none; margin-top: 2px; }
+.const-find { position: relative; display: flex; flex: 1 1 220px; }
+.const-find > svg { position: absolute; left: 12px; top: 50%; transform: translateY(-50%); width: 14px; height: 14px; color: var(--muted-s); pointer-events: none; }
+.const-find input { flex: 1; min-width: 0; }
+.const-scenes .ap-count { margin-left: 2px; }
+.const-key { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 2px 0; font-size: 12px; color: var(--muted-s); line-height: 1.5; }
+.const-key span { display: block; }
+.const-key b { color: var(--text-2); font-weight: 600; }
+.const-key i { display: inline-block; vertical-align: middle; margin: -2px 7px 0 0; }
+.const-key .ck-dot { width: 9px; height: 9px; border-radius: 50%; background: linear-gradient(90deg, #9e8fe9 50%, #51b67a 50%); }
+.const-key .ck-size { width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--text-2); box-shadow: -7px 2px 0 -3px var(--text-2); margin-left: 6px; }
+.const-key .ck-line { width: 18px; height: 0; border-top: 2.5px solid var(--text-2); border-radius: 2px; opacity: .8; }
+.const-panel { margin-top: 16px; display: flex; flex-direction: column; gap: 14px; }
+.const-nbrs { display: flex; flex-direction: column; gap: 9px; }
+.const-nbrs-title { font-size: 13px; color: var(--text-2); }
+.const-nbrs-title b { color: var(--text); }
+.const-nbrs .ap-chip:disabled { cursor: default; opacity: .55; }
+
 /* listening calendar */
 .echart-wrap.cal { width: 100%; min-height: 220px; }
 

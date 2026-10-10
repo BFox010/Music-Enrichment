@@ -204,9 +204,21 @@ def api_forgotten_favorites(
 def api_tag_graph(
     field: str = Query("discogs_styles", pattern="^(discogs_styles|mood_tags|lastfm_tags)$"),
     min_count: int = Query(15, ge=1, le=500),
+    min_strength: float = Query(0.0, ge=0.0, le=1.0),
     window: Optional[str] = _WINDOW,
 ):
-    return metrics.tag_graph(field=field, min_count=min_count, window=window)
+    return metrics.tag_graph(
+        field=field, min_count=min_count, window=window, min_strength=min_strength
+    )
+
+
+@app.get("/api/tag-detail")
+def api_tag_detail(
+    tag: str = Query(..., min_length=1, max_length=200),
+    field: str = Query("discogs_styles", pattern="^(discogs_styles|mood_tags|lastfm_tags)$"),
+    window: Optional[str] = _WINDOW,
+):
+    return metrics.tag_detail(field=field, tag=tag, window=window)
 
 
 @app.post("/api/reload", dependencies=[Depends(require_token)])
