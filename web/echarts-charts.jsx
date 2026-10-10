@@ -865,7 +865,27 @@ const MAX_TETHERS = 80;
 
 const CONST_FIELDS = [["discogs_styles", "Styles"], ["lastfm_tags", "Genres"], ["mood_tags", "Moods"]];
 const CONST_MIN_PLAYS = [5, 15, 30, 60];
-const CONST_STRENGTHS = [[0, "All"], [0.05, "Weak+"], [0.15, "Medium+"], [0.3, "Strong"]];
+/* The resting view's links: each tag joined to the one it's most often heard
+   with. A strength cut-off ("Weak / Medium / Strong") had no meaning a
+   listener could act on, read differently on every field, and left a third
+   of the tags with no line at all; this rule connects every tag, explains
+   itself in a sentence, and makes a cross-scene line mean something specific
+   (that tag's closest companion lives in another scene). Every weaker tie is
+   still shown, faint, when the tag is held. Ties break by name so the same
+   graph always draws the same lines. */
+function strongestPairings(nodes, edges) {
+  const key = (e) => JSON.stringify([e.source, e.target]);
+  const better = (a, b) => !b || a.strength > b.strength
+    || (a.strength === b.strength && key(a) < key(b));
+  const best = new Map();
+  for (const e of edges) {
+    const s = { ...e, strength: e.strength == null ? 1 : e.strength };
+    for (const t of [e.source, e.target]) if (better(s, best.get(t))) best.set(t, s);
+  }
+  const keep = new Set();
+  for (const d of nodes) { const e = best.get(d.tag); if (e) keep.add(key(e)); }
+  return edges.filter((e) => keep.has(key(e)));
+}
 const constSymbolSize = (count, maxCount) => 10 + 46 * Math.sqrt(count / Math.max(maxCount, 1));
 
 /* Deterministic two-level layout, in pixels at scale 1. No randomness, so the
@@ -1047,9 +1067,6 @@ function TagConstellation({ active, refreshVersion = 0 }) {
   const chart = useEChart(elRef);
   const [field, setField] = useState("discogs_styles");
   const [minPlays, setMinPlays] = useState(15);
-  // Strong pairings only by default: every weaker tether made the picture a
-  // hairball again, and the reader can always ask for more.
-  const [minStrength, setMinStrength] = useState(0.3);
   const [loading, setLoading] = useState(true);
   const [graph, setGraph] = useState(null);
   const [focus, setFocus] = useState(null);           // a tag
@@ -1114,12 +1131,11 @@ function TagConstellation({ active, refreshVersion = 0 }) {
   useEffect(() => {
     if (!active || !graph || !chart.current) return;
     const nodes = graph.nodes || [];
-    // The page holds every pairing. The threshold only decides which links
-    // the resting view draws; the layout and the tethers use them all, so
-    // changing the threshold never moves a tag.
+    // The page holds every pairing: the layout and a held tag's tethers use
+    // them all, and the resting view draws each tag's strongest one.
     const allEdges = graph.edges || [];
     const strengthOf = (e) => (e.strength == null ? 1 : e.strength);
-    const edges = allEdges.filter((e) => strengthOf(e) >= minStrength);
+    const edges = strongestPairings(nodes, allEdges);
     const indexOf = new Map(nodes.map((d, i) => [d.tag, i]));
     let rafA = 0, rafB = 0, rafS = 0, rafT = 0, holdEnd = 0;
     let press = null;  // { i, x, y }: a press on a tag, until it moves or lifts
@@ -1520,7 +1536,7 @@ function TagConstellation({ active, refreshVersion = 0 }) {
       window.removeEventListener("mouseup", onRelease, true);
       window.removeEventListener("touchend", onRelease, true);
     };
-  }, [active, graph, chart.current, focus, focusScene, minStrength]);
+  }, [active, graph, chart.current, focus, focusScene]);
 
   // Reset view: a new graph object counts as a fresh layout, so the next draw
   // replaces the option outright and restores the default pan and zoom. The
@@ -1542,7 +1558,7 @@ function TagConstellation({ active, refreshVersion = 0 }) {
     if (hit) { setFocus(hit.tag); setFocusScene(null); setQuery(""); }
   };
   const shownLinks = graph && graph.edges
-    ? graph.edges.filter((e) => (e.strength == null ? 1 : e.strength) >= minStrength).length : 0;
+    ? strongestPairings(graph.nodes || [], graph.edges).length : 0;
   const named = scenes.slice(0, SCENE_COLORS.length);
   const rest = scenes.slice(SCENE_COLORS.length);
   const DrillPanel = window.DrillPanel;
@@ -1580,11 +1596,6 @@ function TagConstellation({ active, refreshVersion = 0 }) {
                 ))}
               </div>
             )}
-            <div className="seg seg-sm" role="group" aria-label="Minimum link strength" title="Hide pairings weaker than this">
-              {CONST_STRENGTHS.map(([v, l]) => (
-                <button key={v} aria-pressed={minStrength === v} onClick={() => setMinStrength(v)}>{l}</button>
-              ))}
-            </div>
             <button className="ap-reset" onClick={() => { setFocus(null); setFocusScene(null); setViewKey((k) => k + 1); }}>Reset view</button>
           </div>
           <div className="ap-chips const-scenes" role="group" aria-label="Scenes">
@@ -1607,7 +1618,8 @@ function TagConstellation({ active, refreshVersion = 0 }) {
           <p className="const-key">
             <span><i className="ck-dot"></i><b>Colour</b> is the scene: tags you tend to hear on the same tracks.</span>
             <span><i className="ck-size"></i><b>Size</b> is plays.</span>
-            <span><i className="ck-line"></i><b>Lines</b> join tags heard together. Thicker means a stronger pairing: shared plays relative to each tag's total.</span>
+            <span><i className="ck-line"></i><b>Lines</b> join each tag to the tag it's most often heard with. Hold a tag to see all of its ties.</span>
+            <span><b>Pairing %</b> is how much two tags' listening overlaps: shared plays relative to how much each is played. 100% would mean they're always heard together.</span>
           </p>
         </div>
 
@@ -1629,7 +1641,7 @@ function TagConstellation({ active, refreshVersion = 0 }) {
                   </span>
                 </div>
               ))}
-              <div className="ch-hint">{held.at != null ? "Strongest ties into this scene, by pairing strength" : "Carry it to a scene to see what connects"}</div>
+              <div className="ch-hint">{held.at != null ? "Its strongest ties into this scene, by pairing %" : "Carry it to a scene to see what connects"}</div>
             </div>
           )}
         </div>

@@ -24,7 +24,7 @@ const COMPILED = transformSync(SRC, {
 }).code;
 const COMPONENTS = ["ListeningMap", "AudioFeaturesChart", "SaturationChart", "TagConstellation"];
 // Plain functions exported alongside the components so they can be tested directly.
-const HELPERS = ["layoutConstellation"];
+const HELPERS = ["layoutConstellation", "strongestPairings"];
 
 // One API response per endpoint, shaped like app.main's.
 const API = {
@@ -370,4 +370,30 @@ test("holding a tag shows every scene undimmed, then it's pulled home and the vi
   } finally {
     API["/api/tag-graph"] = saved;
   }
+});
+
+test("resting links: every tag is joined to its strongest pairing, and nothing else", () => {
+  const { ctx } = makeRealm();
+  const nodes = ["a", "b", "c", "d", "e"].map((tag) => ({ tag }));
+  const edges = [
+    { source: "a", target: "b", strength: 0.9 },
+    { source: "a", target: "c", strength: 0.5 },
+    { source: "c", target: "d", strength: 0.2 },  // d's only tie, and c's best is a
+    { source: "b", target: "c", strength: 0.1 },
+    { source: "d", target: "e", strength: 0.2 },  // ties d's other tie: broken by name
+  ];
+  const keep = ctx.strongestPairings(nodes, edges);
+  const k = (e) => `${e.source}-${e.target}`;
+  assert.deepEqual(keep.map(k).sort(), ["a-b", "a-c", "c-d", "d-e"]);
+  for (const n of nodes) assert.ok(keep.some((e) => e.source === n.tag || e.target === n.tag), `${n.tag} has a line`);
+  assert.ok(!keep.some((e) => k(e) === "b-c"), "a tie that is nobody's strongest is left for the hold view");
+  assert.deepEqual(ctx.strongestPairings(nodes, edges.slice().reverse()).map(k).sort(), keep.map(k).sort(),
+    "the same graph draws the same lines whatever order the edges arrive in");
+});
+
+test("the chart source holds no stray control characters", () => {
+  // Two separator escapes were once written out as raw NUL / 0x01 bytes. They
+  // still ran, but git treated the file as binary and its diffs went blank.
+  const bad = [...SRC].map((ch, i) => [ch.charCodeAt(0), i]).filter(([c]) => c < 32 && c !== 9 && c !== 10 && c !== 13);
+  assert.deepEqual(bad, []);
 });
