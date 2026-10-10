@@ -1,0 +1,9 @@
+<!doctype html><html><!-- Phone-width check: headless browsers and desktop windows will not size below ~500px, so a 390px
+     iframe is the reliable way to see the phone layout. The title reports scrollWidth/innerWidth per page. -->
+<body style="margin:0;background:#333;display:flex;gap:20px;padding:20px">
+<iframe src="liner-notes.html" width="390" height="1400" style="border:0;flex:none"></iframe>
+<iframe src="sleeve.html" width="390" height="1400" style="border:0;flex:none"></iframe>
+<iframe src="groove.html" width="390" height="1400" style="border:0;flex:none"></iframe>
+<script>
+setTimeout(()=>{document.title=[...document.querySelectorAll('iframe')].map(f=>{const d=f.contentDocument.documentElement;return f.src.split('/').pop()+':'+d.scrollWidth+'/'+f.contentWindow.innerWidth}).join(' ')},6000)
+</script></body></html>

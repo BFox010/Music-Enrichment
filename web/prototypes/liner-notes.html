@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liner Notes · Listening Atlas prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..700;1,9..144,300..700&family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --ink: #16130f;        /* page */
+    --ink-2: #1f1b16;      /* raised surface */
+    --rule: #39332b;
+    --paper: #efe8dc;      /* primary text */
+    --paper-2: #b9b0a2;    /* secondary text */
+    --dust: #8a8173;       /* muted */
+    --vermilion: #ec5a3a;  /* the one accent: peaks, selection, focus */
+    --serif: 'Fraunces', Georgia, serif;
+    --sans: 'Geist', system-ui, sans-serif;
+    --mono: 'Geist Mono', ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--ink); }
+  body {
+    margin: 0; background: var(--ink); color: var(--paper);
+    font: 400 16px/1.55 var(--sans); -webkit-font-smoothing: antialiased;
+  }
+  a { color: inherit; }
+  :focus-visible { outline: 2px solid var(--vermilion); outline-offset: 3px; border-radius: 2px; }
+  .wrap { max-width: 1240px; margin: 0 auto; padding: 0 32px; }
+
+  /* masthead */
+  .mast { display: flex; align-items: baseline; justify-content: space-between; gap: 24px;
+          padding: 28px 0 18px; border-bottom: 1px solid var(--rule); flex-wrap: wrap; }
+  .mast h1 { margin: 0; font: 600 28px/1 var(--serif); letter-spacing: -0.01em; font-variation-settings: "opsz" 144; }
+  .mast nav { display: flex; gap: 22px; font-size: 14px; color: var(--paper-2); flex-wrap: wrap; }
+  .mast nav a { text-decoration: none; padding: 4px 0; }
+  .mast nav a[aria-current] { color: var(--paper); box-shadow: inset 0 -2px var(--vermilion); }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr); gap: 56px;
+          align-items: end; padding: 64px 0 56px; }
+  .hero h2 { margin: 0 0 28px; font: 400 clamp(48px, 7.2vw, 104px)/0.95 var(--serif);
+             letter-spacing: -0.035em; font-variation-settings: "opsz" 144; }
+  .hero h2 em { font-style: italic; color: var(--vermilion); }
+  .lede { max-width: 34em; margin: 0; font: 400 20px/1.5 var(--serif); color: var(--paper-2);
+          font-variation-settings: "opsz" 24; }
+  .lede strong { color: var(--paper); font-weight: 500; }
+  figure.portrait { margin: 0; }
+  .portrait .frame { aspect-ratio: 4 / 5; background: var(--ink-2); overflow: hidden; position: relative; }
+  .portrait img { width: 100%; height: 100%; object-fit: cover; display: block;
+                  filter: grayscale(0.25) contrast(1.05); }
+  .portrait figcaption { margin-top: 12px; font-size: 14px; color: var(--paper-2); }
+  .portrait figcaption b { color: var(--paper); font-weight: 500; }
+
+  .totals { display: flex; gap: 40px; flex-wrap: wrap; padding: 20px 0; border-top: 1px solid var(--rule);
+            border-bottom: 1px solid var(--rule); font-size: 15px; color: var(--paper-2); }
+  .totals span b { display: block; font: 500 30px/1.1 var(--serif); color: var(--paper);
+                   font-variant-numeric: lining-nums tabular-nums; }
+
+  section { padding: 64px 0 8px; }
+  section > h3 { margin: 0 0 6px; font: 500 34px/1.1 var(--serif); letter-spacing: -0.02em; }
+  section > p.dek { margin: 0 0 28px; color: var(--paper-2); max-width: 46em; }
+
+  /* hour histogram */
+  .clock { position: relative; }
+  .bars { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 3px; align-items: end; height: 220px;
+          border-bottom: 1px solid var(--rule); }
+  .bar { position: relative; height: 100%; display: flex; align-items: flex-end; cursor: default; }
+  .bar i { display: block; width: 100%; background: var(--paper-2); opacity: 0.55;
+           border-radius: 3px 3px 0 0; transform-origin: bottom; transition: opacity .15s; }
+  .bar.peak i { background: var(--vermilion); opacity: 1; }
+  .bar:hover i, .bar:focus-visible i { opacity: 1; }
+  .hours { display: grid; grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 3px; margin-top: 8px;
+           font: 400 12px var(--mono); color: var(--dust); }
+  .hours span { white-space: nowrap; }
+  .hours span:not(:nth-child(6n+1)) { visibility: hidden; }
+  .annot { position: absolute; font: italic 400 17px var(--serif); color: var(--paper); white-space: nowrap;
+           transform: translateX(-100%); padding-right: 10px; }
+  .annot { opacity: 0; transition: opacity .4s .5s; }
+  .clock.go .annot { opacity: 1; }
+  .annot::after { content: ""; position: absolute; right: 0; top: 50%; width: 6px; height: 1px; background: var(--paper-2); }
+
+  .week { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 12px; margin-top: 36px; }
+  .day { font-size: 14px; color: var(--paper-2); }
+  .day b { display: block; font: 500 22px/1.2 var(--serif); color: var(--paper); font-variant-numeric: tabular-nums; }
+  .day .meter { height: 3px; background: var(--rule); margin-top: 8px; }
+  .day .meter i { display: block; height: 100%; background: var(--paper-2); }
+  .day.peak .meter i { background: var(--vermilion); }
+
+  /* rotation: cover grid */
+  .covers { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 32px 24px; }
+  .cover .art { aspect-ratio: 1; background: var(--ink-2); overflow: hidden; display: grid; place-items: center;
+                font: 500 40px var(--serif); color: var(--dust); }
+  .cover img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .4s cubic-bezier(.2,.7,.2,1); }
+  .cover:hover img { transform: scale(1.035); }
+  .cover h4 { margin: 12px 0 2px; font: 500 17px/1.25 var(--serif); }
+  .cover p { margin: 0; font-size: 14px; color: var(--paper-2); }
+  .cover p .n { color: var(--dust); font-family: var(--mono); font-size: 13px; }
+
+  /* artists ranked */
+  .ranked { list-style: none; margin: 0; padding: 0; columns: 2; column-gap: 56px; }
+  .ranked li { break-inside: avoid; display: grid; grid-template-columns: 44px 52px 1fr auto; gap: 14px;
+               align-items: center; padding: 12px 0; border-bottom: 1px solid var(--rule); }
+  .ranked .pos { font: italic 400 26px var(--serif); color: var(--dust); }
+  .ranked .face { width: 52px; height: 52px; border-radius: 50%; overflow: hidden; background: var(--ink-2); }
+  .ranked .face img { width: 100%; height: 100%; object-fit: cover; }
+  .ranked .who { font: 500 18px/1.2 var(--serif); }
+  .ranked .who small { display: block; font: 400 13px var(--sans); color: var(--dust); }
+  .ranked .plays { font: 400 15px var(--mono); color: var(--paper-2); font-variant-numeric: tabular-nums; }
+
+  /* seasons */
+  .seasons { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; }
+  .season h4 { margin: 0; font: italic 400 26px var(--serif); }
+  .season .pct { font: 400 56px/1 var(--serif); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+  .season.top .pct { color: var(--vermilion); }
+  .season p { margin: 6px 0 0; font-size: 14px; color: var(--paper-2); }
+
+  footer { padding: 72px 0 48px; color: var(--dust); font-size: 13px; }
+
+  .tip { position: fixed; pointer-events: none; z-index: 10; background: var(--paper); color: var(--ink);
+         font: 500 13px/1.3 var(--sans); padding: 6px 9px; border-radius: 4px; opacity: 0; transition: opacity .1s; }
+
+  /* the one orchestrated moment: headline settles, then the day's bars rise left to right */
+  @media (prefers-reduced-motion: no-preference) {
+    .hero h2, .lede { animation: rise .9s cubic-bezier(.2,.7,.2,1) both; }
+    .lede { animation-delay: .15s; }
+    .bars.go .bar i { animation: grow .7s cubic-bezier(.2,.7,.2,1) both; animation-delay: calc(var(--i) * 28ms); }
+  }
+  @keyframes rise { from { opacity: 0; transform: translateY(18px); } }
+  @keyframes grow { from { transform: scaleY(0); } }
+
+  @media (max-width: 900px) {
+    .wrap { padding: 0 16px; }
+    .hero { grid-template-columns: 1fr; gap: 32px; padding: 40px 0; }
+    .portrait .frame { aspect-ratio: 16 / 11; }
+    .covers { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
+    .ranked { columns: 1; }
+    .seasons { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .week { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 6px; }
+    .day b { font-size: 16px; }
+    .bars { height: 160px; gap: 2px; }
+    .hours { gap: 2px; }
+    .annot { font-size: 15px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <h1>Listening Atlas</h1>
+    <nav aria-label="Sections">
+      <a href="#" aria-current="page">Overview</a><a href="#">Genres &amp; moods</a><a href="#">Albums</a>
+      <a href="#">Trajectory</a><a href="#">Seasons</a><a href="#">Tracks</a>
+    </nav>
+  </header>
+
+  <div class="hero">
+    <div>
+      <h2 id="headline">&nbsp;</h2>
+      <p class="lede" id="lede"></p>
+    </div>
+    <figure class="portrait">
+      <div class="frame" id="portrait"></div>
+      <figcaption id="portrait-cap"></figcaption>
+    </figure>
+  </div>
+
+  <div class="totals" id="totals"></div>
+
+  <section aria-labelledby="h-clock">
+    <h3 id="h-clock">When the music plays</h3>
+    <p class="dek" id="clock-dek"></p>
+    <div class="clock">
+      <div class="bars" id="bars"></div>
+      <div class="hours" id="hours" aria-hidden="true"></div>
+    </div>
+    <div class="week" id="week"></div>
+  </section>
+
+  <section aria-labelledby="h-rot">
+    <h3 id="h-rot">The rotation</h3>
+    <p class="dek">The twelve tracks you've played most.</p>
+    <div class="covers" id="covers"></div>
+  </section>
+
+  <section aria-labelledby="h-art">
+    <h3 id="h-art">Who you keep coming back to</h3>
+    <p class="dek">Artists ranked by plays, with how many of their tracks are in your library.</p>
+    <ol class="ranked" id="ranked"></ol>
+  </section>
+
+  <section aria-labelledby="h-sea">
+    <h3 id="h-sea">The year, by season</h3>
+    <p class="dek">Share of all plays that landed in each season.</p>
+    <div class="seasons" id="seasons"></div>
+  </section>
+
+  <footer>Prototype A — Liner Notes. Real data from tracks.jsonl and scrobbles.jsonl; artwork from the Deezer and iTunes caches.</footer>
+</div>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+const fmt = n => n.toLocaleString('en-US');
+const hourName = h => h === 0 ? 'midnight' : h === 12 ? 'noon' : (h % 12) + (h < 12 ? 'am' : 'pm');
+const DOW = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const argmax = a => a.indexOf(Math.max(...a));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const initials = s => s.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+const img = (src, alt) => src ? `<img src="${esc(src)}" alt="${esc(alt)}" loading="lazy" decoding="async">` : esc(initials(alt));
+
+const tip = document.getElementById('tip');
+function showTip(e, html) {
+  tip.innerHTML = html; tip.style.opacity = 1;
+  const r = e.currentTarget.getBoundingClientRect();
+  tip.style.left = Math.min(innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2) + 'px';
+  tip.style.top = (r.top - tip.offsetHeight - 8) + 'px';
+}
+const hideTip = () => { tip.style.opacity = 0; };
+
+fetch('data.json').then(r => r.json()).then(d => {
+  const total = d.byHour.reduce((a, b) => a + b, 0);
+  const peakH = argmax(d.byHour), peakD = argmax(d.byDow);
+  const seasons = Object.entries(d.bySeason);
+  const topSeason = seasons.reduce((a, b) => b[1] > a[1] ? b : a);
+  const since = Object.entries(d.byYear).find(([, n]) => n / total > 0.02)[0];
+  const a0 = d.topArtists[0];
+
+  document.getElementById('headline').innerHTML = `You're a <em>${hourName(peakH)}</em> listener.`;
+  document.getElementById('lede').innerHTML =
+    `Since ${since} you've logged <strong>${fmt(d.meta.scrobbles)} plays</strong> across ${fmt(d.meta.artists)} artists. ` +
+    `${DOW[peakD]}s run hottest, ${topSeason[0]} takes ${Math.round(topSeason[1] / total * 100)}% of the year, ` +
+    `and nobody has had your ear like <strong>${esc(a0.name)}</strong>.`;
+  document.getElementById('portrait').innerHTML = img(a0.image, a0.name);
+  document.getElementById('portrait-cap').innerHTML = `<b>${esc(a0.name)}</b>, your most-played artist: ${fmt(a0.plays)} plays over ${a0.tracks} tracks.`;
+
+  document.getElementById('totals').innerHTML = [
+    [fmt(d.meta.scrobbles), 'plays'], [fmt(d.meta.tracks), 'tracks in the library'],
+    [fmt(d.meta.artists), 'artists'], [(d.meta.scrobbles / d.meta.tracks).toFixed(1), 'plays per track'],
+  ].map(([v, l]) => `<span><b>${v}</b>${l}</span>`).join('');
+
+  const night = d.byHour.slice(18).concat(d.byHour.slice(0, 2)).reduce((a, b) => a + b, 0);
+  document.getElementById('clock-dek').textContent =
+    `Plays by hour of day. ${Math.round(night / total * 100)}% of everything happens between 6pm and 2am; the quietest hour is ${hourName(argmax(d.byHour.map(v => -v)))}.`;
+
+  const max = Math.max(...d.byHour);
+  const bars = document.getElementById('bars');
+  bars.innerHTML = d.byHour.map((v, h) =>
+    `<div class="bar${h === peakH ? ' peak' : ''}" tabindex="0" style="--i:${h}" data-h="${h}" aria-label="${hourName(h)}: ${fmt(v)} plays"><i style="height:${(v / max * 100).toFixed(1)}%"></i></div>`).join('');
+  const peakBar = bars.children[peakH];
+  const annot = document.createElement('div');
+  annot.className = 'annot';
+  annot.textContent = `${hourName(peakH)}, ${fmt(d.byHour[peakH])} plays`;
+  bars.parentElement.appendChild(annot);
+  const placeAnnot = () => {
+    annot.style.left = peakBar.offsetLeft + 'px';
+    annot.style.top = (bars.offsetHeight * (1 - d.byHour[peakH] / max) + 4) + 'px';
+  };
+  placeAnnot(); addEventListener('resize', placeAnnot);
+  for (const b of bars.children) {
+    const h = +b.dataset.h;
+    const on = e => showTip(e, `${hourName(h)} · ${fmt(d.byHour[h])} plays`);
+    b.addEventListener('mouseenter', on); b.addEventListener('focus', on);
+    b.addEventListener('mouseleave', hideTip); b.addEventListener('blur', hideTip);
+  }
+  new IntersectionObserver((es, o) => { if (es[0].isIntersecting) { bars.classList.add('go'); bars.parentElement.classList.add('go'); o.disconnect(); } }, { threshold: 0.3 }).observe(bars);
+  document.getElementById('hours').innerHTML = d.byHour.map((_, h) => `<span>${hourName(h).replace('midnight', '12am')}</span>`).join('');
+
+  const dmax = Math.max(...d.byDow);
+  document.getElementById('week').innerHTML = d.byDow.map((v, i) =>
+    `<div class="day${i === peakD ? ' peak' : ''}">${DOW[i].slice(0, 3)}<b>${fmt(v)}</b><div class="meter"><i style="width:${(v / dmax * 100).toFixed(1)}%"></i></div></div>`).join('');
+
+  document.getElementById('covers').innerHTML = d.topTracks.map(t =>
+    `<article class="cover"><div class="art">${img(t.cover, t.track)}</div><h4>${esc(t.track)}</h4><p>${esc(t.artist)} <span class="n">${fmt(t.plays)}×</span></p></article>`).join('');
+
+  document.getElementById('ranked').innerHTML = d.topArtists.map((a, i) =>
+    `<li><span class="pos">${i + 1}</span><span class="face">${a.image ? img(a.image, a.name) : ''}</span><span class="who">${esc(a.name)}<small>${a.tracks} tracks in library</small></span><span class="plays">${fmt(a.plays)}</span></li>`).join('');
+
+  document.getElementById('seasons').innerHTML = seasons.map(([k, v]) =>
+    `<div class="season${k === topSeason[0] ? ' top' : ''}"><h4>${k[0].toUpperCase() + k.slice(1)}</h4><div class="pct">${Math.round(v / total * 100)}%</div><p>${fmt(v)} plays</p></div>`).join('');
+});
+</script>
+</body>
+</html>

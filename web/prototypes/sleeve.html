@@ -1,0 +1,301 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Sleeve · Listening Atlas prototype</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,300..900&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --night: #0c0b10;                 /* fallback page colour under the artwork */
+    --glass: rgba(14, 13, 19, 0.52);
+    --glass-line: rgba(255, 255, 255, 0.09);
+    --text: #f7f5f2;
+    --text-2: rgba(247, 245, 242, 0.72);
+    --muted: rgba(247, 245, 242, 0.5);
+    --accent: #f0b35a;                /* replaced live by the colour of the sleeve on screen */
+    --font: 'Archivo', system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { background: var(--night); }
+  /* no body background: it would paint over the z-index:-1 artwork backdrop */
+  body { margin: 0; color: var(--text); font: 400 16px/1.5 var(--font); -webkit-font-smoothing: antialiased;
+         min-height: 100vh; overflow-x: hidden; }
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+  button { font: inherit; color: inherit; }
+
+  /* the backdrop is the artwork itself: two layers so a new sleeve can crossfade in */
+  .backdrop { position: fixed; inset: 0; z-index: -1; overflow: hidden; }
+  /* fed a 64px thumbnail: upscaling already smears it, so a small blur finishes the job
+     at a fraction of the paint cost of blurring a full-size sleeve across the viewport */
+  .backdrop div { position: absolute; inset: -40px; background-size: cover; background-position: center;
+                  filter: blur(28px) saturate(1.5) brightness(0.5);
+                  transition: opacity 1.1s ease; opacity: 0; will-change: opacity; }
+  .backdrop div.on { opacity: 1; }
+  .backdrop::after { content: ""; position: absolute; inset: 0;
+                     background: linear-gradient(180deg, rgba(12,11,16,.15) 0%, rgba(12,11,16,.55) 55%, rgba(12,11,16,.9) 100%); }
+
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 32px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 20px; padding: 22px 0; flex-wrap: wrap; }
+  header h1 { margin: 0; font-size: 17px; font-weight: 800; font-stretch: 125%; letter-spacing: 0.01em; }
+  header nav { display: flex; gap: 22px; font-size: 14px; color: var(--text-2); flex-wrap: wrap; }
+  header nav a { color: inherit; text-decoration: none; }
+  header nav a[aria-current] { color: var(--text); }
+
+  /* hero */
+  .hero { display: grid; grid-template-columns: minmax(260px, 440px) 1fr; gap: 56px; align-items: end; padding: 48px 0 36px; }
+  .sleeve { aspect-ratio: 1; width: 100%; border-radius: 6px; overflow: hidden; background: rgba(255,255,255,.06);
+            box-shadow: 0 40px 80px -30px rgba(0,0,0,.8), 0 0 0 1px rgba(255,255,255,.06); display: grid; place-items: center;
+            font-size: 64px; font-weight: 800; color: var(--muted); }
+  .sleeve img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .rank { font-size: 15px; color: var(--text-2); margin-bottom: 10px; }
+  .rank b { color: var(--accent); font-weight: 700; transition: color .8s; }
+  .title { margin: 0; font-weight: 850; font-stretch: 125%; letter-spacing: -0.02em; line-height: 0.92;
+           font-size: clamp(44px, 6.4vw, 96px); text-wrap: balance; overflow-wrap: anywhere; }
+  .feat { margin: 10px 0 0; font-size: 18px; color: var(--text-2); }
+  .artist { margin: 18px 0 0; font-size: 26px; font-weight: 500; font-stretch: 100%; }
+  .count { margin-top: 28px; display: flex; align-items: baseline; gap: 12px; }
+  .count b { font-size: 64px; font-weight: 300; font-stretch: 62%; line-height: 1; font-variant-numeric: tabular-nums; color: var(--accent); transition: color .8s; }
+  .count span { color: var(--text-2); }
+
+  /* the crate: pick a sleeve and the page re-tints around it */
+  .crate { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 10px; padding: 8px 0 48px; }
+  .crate button { padding: 0; border: 0; background: rgba(255,255,255,.06); aspect-ratio: 1; border-radius: 4px;
+                  overflow: hidden; cursor: pointer; opacity: .55; transition: opacity .25s, transform .25s cubic-bezier(.2,.7,.2,1);
+                  font-weight: 800; color: var(--muted); }
+  .crate button img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .crate button:hover { opacity: .9; transform: translateY(-4px); }
+  .crate button[aria-pressed="true"] { opacity: 1; transform: translateY(-8px); box-shadow: 0 0 0 2px var(--accent), 0 16px 30px -12px rgba(0,0,0,.8); }
+
+  .glass { background: var(--glass); border: 1px solid var(--glass-line); border-radius: 18px;
+           backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); padding: 28px; }
+  .glass h3 { margin: 0 0 4px; font-size: 22px; font-weight: 750; font-stretch: 112%; }
+  .glass .dek { margin: 0 0 22px; color: var(--text-2); font-size: 15px; }
+
+  .row { display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; }
+  .bars { display: grid; gap: 3px; align-items: end; height: 170px; }
+  .bars.h { grid-template-columns: repeat(24, minmax(0, 1fr)); }
+  .bars.d { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; }
+  .bars div { height: 100%; display: flex; align-items: flex-end; }
+  .bars i { display: block; width: 100%; border-radius: 4px 4px 0 0; background: var(--text); opacity: .28;
+            transition: background .8s, opacity .2s, height .6s cubic-bezier(.2,.7,.2,1); }
+  .bars .peak i { background: var(--accent); opacity: 1; }
+  .bars div:hover i { opacity: .7; }
+  .axis { display: grid; margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .axis.h { grid-template-columns: repeat(24, minmax(0, 1fr)); gap: 3px; }
+  .axis span { white-space: nowrap; }
+  .axis.h span:not(:nth-child(6n+1)) { visibility: hidden; }
+  .axis.d { grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 10px; text-align: center; }
+
+  .faces { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 14px; margin-top: 20px; }
+  .face { position: relative; aspect-ratio: 3 / 4; border-radius: 12px; overflow: hidden; background: rgba(255,255,255,.06); }
+  .face img { width: 100%; height: 100%; object-fit: cover; display: block; transition: transform .5s cubic-bezier(.2,.7,.2,1); }
+  .face:hover img { transform: scale(1.05); }
+  .face figcaption { position: absolute; inset: auto 0 0 0; padding: 40px 12px 12px;
+                     background: linear-gradient(transparent, rgba(0,0,0,.82)); }
+  .face b { display: block; font-size: 16px; font-weight: 700; line-height: 1.15; }
+  .face span { font-size: 13px; color: var(--text-2); }
+
+  .totals { display: flex; gap: 36px; flex-wrap: wrap; padding: 36px 0 60px; color: var(--text-2); font-size: 14px; }
+  .totals b { display: block; font-size: 30px; font-weight: 300; font-stretch: 62%; color: var(--text); font-variant-numeric: tabular-nums; }
+
+  .tip { position: fixed; pointer-events: none; z-index: 10; background: var(--text); color: #111;
+         font-size: 13px; font-weight: 600; padding: 6px 9px; border-radius: 6px; opacity: 0; transition: opacity .1s; }
+
+  @media (prefers-reduced-motion: no-preference) {
+    .hero.swap .sleeve { animation: drop .7s cubic-bezier(.2,.7,.2,1); }
+    .hero.swap .title, .hero.swap .artist, .hero.swap .feat { animation: slide .6s cubic-bezier(.2,.7,.2,1) both; }
+    .hero.swap .artist { animation-delay: .06s; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .backdrop div, .bars i, .crate button, .rank b, .count b { transition: none; }
+  }
+  @keyframes drop { from { transform: translateY(-14px) rotate(-1.5deg); opacity: .4; } }
+  @keyframes slide { from { transform: translateX(-16px); opacity: 0; } }
+
+  @media (max-width: 900px) {
+    .wrap { padding: 0 16px; }
+    .hero { grid-template-columns: 1fr; gap: 24px; padding: 20px 0 24px; }
+    .sleeve { max-width: 320px; }
+    .crate { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+    .row { grid-template-columns: 1fr; }
+    .faces { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .glass { padding: 20px 16px; }
+    .bars { height: 130px; }
+    .bars.h, .axis.h { gap: 2px; }
+  }
+</style>
+</head>
+<body>
+<div class="backdrop" aria-hidden="true"><div></div><div></div></div>
+<div class="wrap">
+  <header>
+    <h1>Listening Atlas</h1>
+    <nav aria-label="Sections">
+      <a href="#" aria-current="page">Overview</a><a href="#">Genres &amp; moods</a><a href="#">Albums</a>
+      <a href="#">Trajectory</a><a href="#">Seasons</a><a href="#">Tracks</a>
+    </nav>
+  </header>
+
+  <div class="hero" id="hero" aria-live="polite">
+    <div class="sleeve" id="sleeve"></div>
+    <div>
+      <div class="rank" id="rank"></div>
+      <h2 class="title" id="title"></h2>
+      <p class="feat" id="feat"></p>
+      <p class="artist" id="artist"></p>
+      <div class="count"><b id="plays"></b><span>plays</span></div>
+    </div>
+  </div>
+
+  <div class="crate" id="crate" role="group" aria-label="Your twelve most-played tracks — choose one"></div>
+
+  <div class="row">
+    <div class="glass">
+      <h3>Your day</h3>
+      <p class="dek" id="day-dek"></p>
+      <div class="bars h" id="hours"></div>
+      <div class="axis h" id="hours-axis" aria-hidden="true"></div>
+    </div>
+    <div class="glass">
+      <h3>Your week</h3>
+      <p class="dek" id="week-dek"></p>
+      <div class="bars d" id="days"></div>
+      <div class="axis d" aria-hidden="true"><span>M</span><span>T</span><span>W</span><span>T</span><span>F</span><span>S</span><span>S</span></div>
+    </div>
+  </div>
+
+  <div class="glass" style="margin-top:20px">
+    <h3>The artists in heaviest rotation</h3>
+    <p class="dek">Ranked by plays.</p>
+    <div class="faces" id="faces"></div>
+  </div>
+
+  <div class="totals" id="totals"></div>
+</div>
+<div class="tip" id="tip" role="status"></div>
+
+<script>
+const fmt = n => n.toLocaleString('en-US');
+const hourName = h => h === 0 ? 'midnight' : h === 12 ? 'noon' : (h % 12) + (h < 12 ? 'am' : 'pm');
+const DOW = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+const argmax = a => a.indexOf(Math.max(...a));
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const initials = s => s.split(/\s+/).slice(0, 2).map(w => w[0]).join('').toUpperCase();
+const img = (src, alt) => src ? `<img src="${esc(src)}" alt="${esc(alt)}" crossorigin="anonymous" decoding="async">` : esc(initials(alt));
+const thumb = u => u.replace(/\/\d+x\d+-000000/, '/64x64-000000').replace(/\/\d+x\d+bb\./, '/64x64bb.');
+const splitFeat = t => { const m = t.match(/^(.*?)\s*[\(\[]((?:feat|with|ft)\.?[^\)\]]*)[\)\]](.*)$/i); return m ? [m[1] + m[3], m[2]] : [t, '']; };
+
+// A sleeve's colour, lifted to a lightness that reads on the darkened backdrop.
+const accentCache = new Map();
+function accentOf(url) {
+  if (!url) return Promise.resolve('#f0b35a');
+  if (accentCache.has(url)) return accentCache.get(url);
+  const p = new Promise(res => {
+    const im = new Image(); im.crossOrigin = 'anonymous';
+    im.onload = () => {
+      try {
+        const c = document.createElement('canvas'); c.width = c.height = 24;
+        const g = c.getContext('2d'); g.drawImage(im, 0, 0, 24, 24);
+        const px = g.getImageData(0, 0, 24, 24).data;
+        let best = null, bestScore = -1;
+        for (let i = 0; i < px.length; i += 4) {
+          const [r, gr, b] = [px[i], px[i + 1], px[i + 2]];
+          const mx = Math.max(r, gr, b), mn = Math.min(r, gr, b);
+          const sat = mx ? (mx - mn) / mx : 0, score = sat * (mx / 255);
+          if (score > bestScore) { bestScore = score; best = [r, gr, b]; }
+        }
+        if (bestScore < 0.15) return res('#e9e4dc');  // a grey sleeve gets a neutral accent, not a forced hue
+        const [h, s] = rgbToHsl(...best);
+        res(`hsl(${h} ${Math.max(55, s)}% 68%)`);
+      } catch { res('#f0b35a'); }
+    };
+    im.onerror = () => res('#f0b35a');
+    im.src = url;
+  });
+  accentCache.set(url, p);
+  return p;
+}
+function rgbToHsl(r, g, b) {
+  r /= 255; g /= 255; b /= 255;
+  const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+  if (mx === mn) return [0, 0, l * 100];
+  const d = mx - mn, s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+  const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+  return [Math.round(h * 60), Math.round(s * 100), l * 100];
+}
+
+const tip = document.getElementById('tip');
+function bindTip(el, html) {
+  const on = () => { tip.innerHTML = html; tip.style.opacity = 1; const r = el.getBoundingClientRect();
+    tip.style.left = Math.max(8, Math.min(innerWidth - tip.offsetWidth - 8, r.left + r.width / 2 - tip.offsetWidth / 2)) + 'px';
+    tip.style.top = (r.top - tip.offsetHeight - 8) + 'px'; };
+  el.tabIndex = 0;
+  el.addEventListener('mouseenter', on); el.addEventListener('focus', on);
+  el.addEventListener('mouseleave', () => tip.style.opacity = 0); el.addEventListener('blur', () => tip.style.opacity = 0);
+}
+
+fetch('data.json').then(r => r.json()).then(d => {
+  const tracks = d.topTracks;
+  const layers = document.querySelectorAll('.backdrop div');
+  let layer = 0, current = -1;
+
+  function select(i) {
+    if (i === current) return;
+    current = i;
+    const t = tracks[i], [main, feat] = splitFeat(t.track);
+    const hero = document.getElementById('hero');
+    hero.classList.remove('swap'); void hero.offsetWidth; hero.classList.add('swap');
+    document.getElementById('sleeve').innerHTML = img(t.cover, `${t.track} cover`);
+    document.getElementById('rank').innerHTML = i === 0 ? '<b>Your most-played track</b>' : `<b>No. ${i + 1}</b> of your most-played tracks`;
+    document.getElementById('title').textContent = main;
+    document.getElementById('feat').textContent = feat;
+    document.getElementById('artist').textContent = t.artist;
+    document.getElementById('plays').textContent = fmt(t.plays);
+    if (t.cover) {
+      layer ^= 1;
+      layers[layer].style.backgroundImage = `url("${thumb(t.cover)}")`;
+      layers[layer].classList.add('on'); layers[layer ^ 1].classList.remove('on');
+    }
+    accentOf(t.cover).then(c => { if (current === i) document.documentElement.style.setProperty('--accent', c); });
+    crate.querySelectorAll('button').forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)));
+  }
+
+  const crate = document.getElementById('crate');
+  crate.innerHTML = tracks.map(t => `<button type="button" aria-pressed="false" aria-label="${esc(t.track)} by ${esc(t.artist)}, ${fmt(t.plays)} plays">${img(t.cover, t.track)}</button>`).join('');
+  crate.querySelectorAll('button').forEach((b, i) => {
+    b.addEventListener('click', () => select(i));
+    b.addEventListener('keydown', e => {
+      const step = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (step) { const n = (i + step + tracks.length) % tracks.length; crate.children[n].focus(); select(n); e.preventDefault(); }
+    });
+  });
+  tracks.forEach(t => accentOf(t.cover));  // warm the colour cache so switching re-tints instantly
+  select(0);
+
+  const total = d.byHour.reduce((a, b) => a + b, 0);
+  const peakH = argmax(d.byHour), peakD = argmax(d.byDow);
+  const hmax = Math.max(...d.byHour), dmax = Math.max(...d.byDow);
+  document.getElementById('day-dek').textContent = `Plays by hour. It peaks at ${hourName(peakH)}.`;
+  document.getElementById('week-dek').textContent = `${DOW[peakD]} leads the week.`;
+  const hours = document.getElementById('hours');
+  hours.innerHTML = d.byHour.map((v, h) => `<div class="${h === peakH ? 'peak' : ''}"><i style="height:${(v / hmax * 100).toFixed(1)}%"></i></div>`).join('');
+  [...hours.children].forEach((el, h) => bindTip(el, `${hourName(h)}: ${fmt(d.byHour[h])} plays`));
+  document.getElementById('hours-axis').innerHTML = d.byHour.map((_, h) => `<span>${hourName(h).replace('midnight', '12am')}</span>`).join('');
+  const days = document.getElementById('days');
+  days.innerHTML = d.byDow.map((v, i) => `<div class="${i === peakD ? 'peak' : ''}"><i style="height:${(v / dmax * 100).toFixed(1)}%"></i></div>`).join('');
+  [...days.children].forEach((el, i) => bindTip(el, `${DOW[i]}: ${fmt(d.byDow[i])} plays`));
+
+  document.getElementById('faces').innerHTML = d.topArtists.slice(0, 12).map(a =>
+    `<figure class="face" style="margin:0">${a.image ? img(a.image, a.name) : ''}<figcaption><b>${esc(a.name)}</b><span>${fmt(a.plays)} plays</span></figcaption></figure>`).join('');
+
+  document.getElementById('totals').innerHTML = [
+    [fmt(d.meta.scrobbles), 'plays'], [fmt(d.meta.tracks), 'tracks'], [fmt(d.meta.artists), 'artists'],
+    [Math.round(Math.max(...Object.values(d.bySeason)) / total * 100) + '%', 'of plays in ' + Object.entries(d.bySeason).reduce((a, b) => b[1] > a[1] ? b : a)[0]],
+  ].map(([v, l]) => `<span><b>${v}</b>${l}</span>`).join('');
+});
+</script>
+</body>
+</html>

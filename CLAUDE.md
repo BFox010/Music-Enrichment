@@ -59,7 +59,7 @@ Two things look like playlist machinery but are not:
 |---|---|
 | `pipeline/` | Enrichment phases. One module per phase, driven by `pipeline_manifest.yaml` |
 | `app/` | FastAPI serving layer — `main.py` routes, `metrics.py` aggregations, `query.py` track table, `data.py` in-memory load |
-| `web/` | React SPA. `.jsx` sources compile to `app.bundle.js` |
+| `web/` | React SPA. `.jsx` sources compile to `app.bundle.js`. Visual brief: `web/DESIGN.md` |
 | `scripts/` | Operational helpers (view generation, label queues, eval harnesses) |
 | `scripts/archive/` | One-off utilities kept for provenance. Not imported by anything |
 | `tests/` | pytest suite, self-contained (no network, no secrets) |
@@ -124,6 +124,10 @@ uvicorn app.main:app                  # dashboard at http://127.0.0.1:8000
 npm install && npm run build          # compile web/*.jsx → web/app.bundle.js
 npm run dev                           # same, watch mode
 ```
+
+**Before any visual change under `web/`, read `web/DESIGN.md`** — the shared
+brief (principles, banned defaults, quality floor) that keeps the dashboard one
+look whichever agent is editing it. New visual ideas start in `web/prototypes/`.
 
 **After editing any `web/*.jsx`, run `npm run build` and commit the regenerated
 `web/app.bundle.js`.** There is no in-browser transpile — an un-rebuilt bundle
