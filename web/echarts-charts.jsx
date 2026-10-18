@@ -707,7 +707,7 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
         <div className="card">
           <div className="card-head norule">
             <h3 className="card-title">{fx.label} × {fy.label}</h3>
-            <div style={cardTools}>
+            <div style={{ ...cardTools, flexShrink: 1 }}>
               {[["X", xKey, setXKey, yKey], ["Y", yKey, setYKey, xKey]].map(([axisName, value, set, other]) => (
                 <label className="fb-sort af-pick" key={axisName}>
                   <span className="af-pick-label">{axisName}</span>
@@ -1269,7 +1269,7 @@ function ForgottenFavoritesPage({ active, refreshVersion = 0 }) {
         <div className="card">
           <div className="card-head">
             <h3 className="card-title">Faded from rotation</h3>
-            <div style={cardTools}>
+            <div style={{ ...cardTools, flexShrink: 1 }}>
               <label className="fb-sort af-pick">
                 <span className="af-pick-label">Peak ≥</span>
                 <select value={minPeak} onChange={(e) => setMinPeak(+e.target.value)} aria-label="Minimum plays in the peak year">
