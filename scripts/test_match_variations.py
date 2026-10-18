@@ -1,7 +1,7 @@
 """Diagnostic: try artist/track name variations against Last.fm for the tracks the
 pipeline couldn't match at all (no MusicBrainz ID, no tags).
 
-Generates up to 5 variations per track and records which one hits, so the winning
+Generates up to 7 variations per track and records which one hits, so the winning
 normalisation rule can be added to the pipeline permanently.
 
 Results -> inputs/match_variation_results.csv (gitignored).
@@ -29,7 +29,7 @@ import os
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from pipeline._http import RateLimitedClient
+from pipeline._http import RateLimitedClient, classify_lastfm
 from pipeline.config import LASTFM_API_ROOT, INPUTS_DIR, CACHE_DIR
 
 VARIATION_CACHE  = CACHE_DIR / "match_variations.json"
@@ -107,7 +107,6 @@ def generate_variations(artist: str, track: str) -> list[dict]:
          "artist": clean_artist, "track": clean_track_feat},
     ]
 
-    # De-duplicate: skip variations identical to a prior one
     seen: set[tuple[str, str]] = set()
     unique: list[dict] = []
     for v in variations:
@@ -131,7 +130,7 @@ def _query_lastfm(client: RateLimitedClient, api_key: str, artist: str, track: s
         "format": "json",
         "autocorrect": "1",
     }
-    return client.get(LASTFM_API_ROOT, params, cache_key)
+    return client.get(LASTFM_API_ROOT, params, cache_key, classify=classify_lastfm)
 
 
 def _is_hit(response: dict) -> bool:
@@ -160,7 +159,7 @@ def main(limit: int | None = None) -> None:
         print("ERROR: LASTFM_API_KEY not set in .env")
         sys.exit(1)
 
-    # Load the 308 genuine misses
+    # No tag source and no MBID: the tracks enrichment missed entirely.
     no_source_no_mbid: list[dict] = []
     with open(TRACKS_JSONL, encoding="utf-8") as fh:
         for line in fh:
@@ -223,7 +222,6 @@ def main(limit: int | None = None) -> None:
 
     client.flush()
 
-    # Write CSV
     with open(RESULTS_CSV, "w", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=["original_artist", "original_track",
                                                   "variation", "query_artist",

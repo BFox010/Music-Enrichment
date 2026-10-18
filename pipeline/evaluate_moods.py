@@ -3,14 +3,8 @@
 Answers "for which moods can audio features reproduce the owner's judgement at
 all?" by k-fold cross-validation over the audit-labeled tracks, and derives the
 allowlist the centroid path is permitted to emit. Current numbers live in
-``mood_eval.json`` — nothing here hard-codes which moods pass.
-
-The finding: the features recover only what is near a direct function of tempo or
-rhythm. Anything semantic (Happy, Sad, Love) collapses, and even Slow never
-clears the bar at any calibration setting.
-
-Replaces a hand-maintained suppression list that had drifted into banning the
-best-predicted moods and permitting the worst.
+``mood_eval.json`` — nothing here hard-codes which moods pass. Semantic moods
+(Happy, Sad, Love) don't clear the bar; don't reintroduce a hand-maintained list.
 
 Usage:
     python -m pipeline.evaluate_moods
@@ -39,10 +33,9 @@ log = get_logger(__name__)
 MOOD_EVAL_PATH: Path = REPO_ROOT / "mood_eval.json"
 
 # The centroid may emit a mood only if its cross-validated *precision* clears this.
-# Precision, not F1: the errors aren't symmetric on a dashboard — a false tag is a
-# wrong statement shown as fact, a missing one is an honest gap the labeling queue
-# can fill. F1 would trade the first away to buy the second.
-# 0.45 sits in a natural gap in the measured spread (see mood_eval.json).
+# Precision, not F1: a false tag is a wrong statement shown as fact, a missing one
+# an honest gap the labeling queue can fill. 0.45 sits in a natural gap in the
+# measured spread (see mood_eval.json).
 ALLOWLIST_MIN_PRECISION: float = 0.45
 
 # Folds and seed are fixed so the report is reproducible across runs; a shifting
@@ -74,7 +67,7 @@ def cross_validate(
     disabled — measures the features' raw ability to recover the owner's
     judgement, not the effect of current policy.
 
-    Returns ``{per_mood: {mood: {...}}, macro_f1, exact_match, n}``.
+    Returns ``{per_mood: {mood: {...}}, macro_f1, exact_match, n, folds, seed}``.
     """
     # Imported here rather than at module scope: classify_moods imports this
     # module for the allowlist, so a top-level import would be circular.

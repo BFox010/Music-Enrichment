@@ -15,8 +15,9 @@ so every reader is unchanged; only ``source`` differs.
 ``time_signature`` is the one Exportify field ReccoBeats lacks. Left unset rather
 than guessed — nothing downstream reads it.
 
-Never overwrites an existing ``audio_features`` block without ``--force``: that
-block is Exportify data acquired at real cost.
+Never overwrites an existing ``audio_features`` block except under ``--force``:
+that block is Exportify data acquired at real cost. ``--force-errors`` only
+re-fetches cached failures.
 
 Usage:
     python -m pipeline.enrich_audio_features
@@ -32,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pipeline._http import FORCE_OFF, RateLimitedClient
+from pipeline._http import FORCE_ALL, FORCE_OFF, RateLimitedClient
 from pipeline.config import (
     RECCOBEATS_API_ROOT,
     RECCOBEATS_CACHE,
@@ -49,8 +50,7 @@ from pipeline.schema import read_jsonl, write_jsonl
 
 log = get_logger(__name__)
 
-# Phase 5 (iTunes availability) is the immediate predecessor — 5a resolved the
-# ISRCs further upstream, ahead of 4e, so its output is no longer adjacent.
+# Phase 5 (iTunes availability) is the immediate predecessor; 5a runs ahead of 4e.
 _INPUT_PRIORITY = [
     TRACKS_WITH_AVAILABILITY_PATH,
     TRACKS_RESOLVED_PATH,
@@ -145,13 +145,14 @@ def enrich(
         force=force,
     )
 
+    # Don't widen this to any force mode: --force-errors would replace every
+    # Exportify block, which nothing can re-acquire.
     candidates = [
         t for t in work
-        if t.get("isrc") and (force != FORCE_OFF or not t.get("audio_features"))
+        if t.get("isrc") and (force == FORCE_ALL or not t.get("audio_features"))
     ]
-    # ReccoBeats echoes ISRCs upper-cased, and the resolve map is keyed that way;
-    # a row carrying a lower-case code (Exportify's CSV column, pre-#37) matched
-    # nothing and silently never got features.
+    # Must stay upper-cased: the resolve map is keyed by ReccoBeats' upper-cased
+    # echo, so a lower-case code silently never gets features.
     for t in candidates:
         t["isrc"] = t["isrc"].strip().upper()
     client.warn_if_forced(len(candidates))

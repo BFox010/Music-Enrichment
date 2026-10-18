@@ -159,6 +159,12 @@ class TestIsrcVetoRespectsProvenance:
                           isrc_source="deezer")
         assert is_credit_variant(a, b)
 
+    def test_conflicting_spotify_search_isrcs_do_not_veto(self):
+        """Phase B's ISRC also comes from a name search (#133)."""
+        a, b = self._pair(a_source="musicbrainz", isrc="GBAAA0000002",
+                          isrc_source="spotify_search")
+        assert is_credit_variant(a, b)
+
     def test_unknown_provenance_is_treated_as_decisive(self):
         """A wrong veto leaves a visible duplicate; a wrong merge sums plays."""
         a, b = self._pair(isrc="GBAAA0000002")

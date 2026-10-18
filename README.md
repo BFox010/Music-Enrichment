@@ -69,7 +69,7 @@ of just the fields the UI renders. The full `tracks.jsonl` stays available for
 download and through `/api/*`.
 
 Load-time profile: [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md).
-Visual-polish backlog: [docs/WOW_FACTOR_IDEAS.md](docs/WOW_FACTOR_IDEAS.md).
+Visual-polish research (2026-08, partly built): [docs/WOW_FACTOR_IDEAS.md](docs/WOW_FACTOR_IDEAS.md).
 
 ## API
 
@@ -143,10 +143,9 @@ for running it standalone.
 
 **Phase 6's mood labels:** `mood_audit.csv` at the repo root is the canonical
 hand-labelled set (#66) and the only one a fresh clone has. The older
-`inputs/existing_audit.csv` is gitignored and no longer authoritative — but note
-that the code still *prefers* it when present, which is #83's F-06. If you
-restore a local copy, reconcile it into `mood_audit.csv` rather than letting a
-run train on labels no reviewer can see.
+`inputs/existing_audit.csv` is gitignored and never authoritative: if it is
+present, Phase 6 logs a warning and ignores it (#83/F-06). Reconcile any local
+edits into `mood_audit.csv`.
 
 ```bash
 python -m pipeline.run_full_pipeline
@@ -182,23 +181,22 @@ MusicBrainz and AcousticBrainz alike, which keeps the audio-feature source
 swappable. `spotify_id` is stored because ReccoBeats also accepts it, not as the
 identifier of record.
 
-B is the **last-resort resolver**. Phases 5a/5b (issue #37) implement the
-cheaper routes — MusicBrainz `musicbrainz_id` → ISRC needing no auth, then
-Deezer name search, then ReccoBeats for the feature vector itself — and run
-first in the chain. B stays in the manifest, `optional: true`, for whatever
-those two don't resolve; retire it outright once they reach adequate coverage.
-See the module docstring.
+B is the **last-resort resolver**. Phases 5a/5b (issue #37) are the primary
+route: MusicBrainz `musicbrainz_id` → ISRC needing no auth, then Deezer name
+search, then ReccoBeats for the feature vector itself. B runs earlier in the
+chain (after A) but needs Spotify credentials and skips without them. It stays
+in the manifest, `optional: true`, for whatever 5a/5b don't resolve. See the
+module docstring.
 
 ### On phases 3a/3c and 7
 
 These look like playlist machinery. They aren't:
 
 - **3a/3b/3c** exist to acquire *audio features*. The playlist detour was
-  always a means, never a feature. #37 superseded them there — ReccoBeats
-  returns features for 98.7% of the tracks Exportify covers (measured
-  2026-08-24) — but they are **not** retirable: the Exportify CSV is also the
-  only bulk source of `explicit`, `release_year`, and `spotify_id`, which
-  otherwise fall to ~4%, ~4%, and 0%.
+  always a means, never a feature. #37 superseded them for audio features, but
+  they are **not** retirable: the Exportify CSV is also the only bulk source of
+  `explicit`, `release_year` and `spotify_id`. The measurement behind that is in
+  [docs/capture_coverage_2026-08-24.md](docs/capture_coverage_2026-08-24.md).
 - **Phase 7** produces `saturation_tier` and `curation_state` — dashboard-facing
   curation metadata. Its `playlists` field is a grouping label read out of
   `taste_profile.md`, not a generated playlist.
@@ -212,15 +210,18 @@ Every phase that hits an external API:
 
 - Caches every response — **successes and failures** — to `.cache/<api>.json`,
   and skips anything already cached.
-- **Expires negative entries.** A genuine `not_found` after
-  `HTTP_NEGATIVE_TTL_SECONDS` (30 days); anything transient (`max_retries`,
-  `invalid_json`) after `HTTP_TRANSIENT_TTL_SECONDS` (6 hours). A network blip
-  heals itself on the next run instead of freezing that track permanently. Cache
-  entries written before this format carry no timestamp and count as expired.
+- **Expires error entries.** A stable negative (`not_found`, `bad_request`) after
+  `HTTP_NEGATIVE_TTL_SECONDS` (30 days); a transient one (`auth_error`,
+  `max_retries`, `invalid_json`, in-band rate limits) after
+  `HTTP_TRANSIENT_TTL_SECONDS` (6 hours). A network blip heals itself on the
+  next run instead of freezing that track permanently.
+- **Known gap (#109):** an API that answers "no match" with a 200 and an empty
+  result is cached as a *success*, which never expires. Only `--force` re-asks.
 - **Is crash-safe** — flushes its cache from a `finally`, so an interrupted run
   keeps every response it already paid for at the rate limit.
-- Retries with exponential backoff up to `HTTP_MAX_RETRIES` (5), and logs
-  failures without aborting the run.
+- Retries 429/408/425 and 5xx with exponential backoff up to
+  `HTTP_MAX_RETRIES`. Any other 4xx fails fast; a 401/403 is logged at ERROR for
+  each cache key it hits and is not retried within the run.
 - Logs a cache summary (entries, cached `not_found` vs transient, hits/misses/
   refetches) so a low coverage number traces back to genuine no-match versus a
   cached failure.
@@ -231,13 +232,15 @@ Every phase that hits an external API:
 | `--force` | Bypass the cache entirely. Slow — each phase logs an ETA first. |
 
 Both dispatch off the manifest's `accepts_force` flag, so a phase only receives
-them if its callable actually takes `force=`.
+them if its callable actually takes `force=`. Phase B does not.
 
 Shared HTTP layer: [pipeline/_http.py](pipeline/_http.py). Rate limits and TTLs:
 [pipeline/config.py](pipeline/config.py).
 
-Every enrichment phase writes per-field provenance — `source`, `retrieved_at`,
-`pipeline_phase`, `confidence`.
+Provenance is uneven. 5a and B write `isrc_source`/`isrc_retrieved_at`, 5b stamps
+`retrieved_at` on the feature vector, Phase 6 writes `mood_source`, and only 4d
+writes a full block (`source`, `retrieved_at`, `confidence`). Check a field
+before assuming it carries provenance.
 
 ## Schema
 
@@ -266,8 +269,10 @@ Canonical track identity, used for every cross-phase join:
 3. Normalized artist + track (`artist_normalized` + `track_normalized`)
 4. Fallback hash
 
-**All phases must preserve `canonical_track_id`.** No phase may drop or overwrite
-it.
+**Only Phase 4e writes `canonical_track_id`**, recomputing it every run, so it
+moves as better identifiers arrive. Every other phase must carry it through
+untouched. Phase 8 matches on the id and then the name pair, so a moved id
+doesn't orphan a row (#108).
 
 ## Where files live
 
@@ -306,11 +311,13 @@ human judgement; JSONL is the derived index, regenerated each run.
 | [generate_library_js.py](scripts/generate_library_js.py) | Static offline snapshot for the `file://` workflow |
 | [build_frontend.mjs](scripts/build_frontend.mjs) | esbuild JSX → `web/app.bundle.js` |
 
-**After any full pipeline run, `apply_bass_labels.py --apply` must follow Phase
+**After any full pipeline run, run `apply_bass_labels.py --apply` after Phase
 8.** Heavy Bass cannot come from the centroid — the 9 audio features carry no
 bass descriptor, so the measured allowlist withholds it — and the owner's
-hand-reviewed verdicts are a durable overlay, not a pipeline output. Skipping
-the re-apply loses them.
+hand-reviewed verdicts are a durable overlay, not a pipeline output. Phase 8's
+rank merge keeps `manual` labels already in `tracks.jsonl`, but a new row, or
+one whose identity changed, only gets its verdict back from the overlay. The
+overlay's own gaps are #111.
 
 [scripts/archive/](scripts/archive/README.md) holds one-off utilities kept for
 provenance. Nothing imports them.
@@ -344,7 +351,7 @@ every push to `main` and every pull request
 - [CLAUDE.md](CLAUDE.md) — agent orientation: invariants, conventions, gotchas
 - [docs/apple-music-xml.md](docs/apple-music-xml.md) — iTunes XML field mapping
 - [PERFORMANCE_MAP.md](PERFORMANCE_MAP.md) — load-time and compute profile
-- [docs/WOW_FACTOR_IDEAS.md](docs/WOW_FACTOR_IDEAS.md) — visual-polish backlog
+- [docs/WOW_FACTOR_IDEAS.md](docs/WOW_FACTOR_IDEAS.md) — visual-polish research shortlist (2026-08)
 
 Provenance — decisions and dated measurements, kept because the reasoning is not
 recoverable from the code:
@@ -359,10 +366,10 @@ recoverable from the code:
   [docs/claude_mood_verdicts_2026-08-25.jsonl](docs/claude_mood_verdicts_2026-08-25.jsonl)
   — the raw label verdicts the two overlays replay from
 
-Open work is tracked in [#77](https://github.com/BFox010/Music-Enrichment/issues/77)
-(pipeline data quality), [#83](https://github.com/BFox010/Music-Enrichment/issues/83)
-(orchestration safety and identity-alias gaps), and the dashboard issues. Figures
-in an issue body are a snapshot of its filing date — re-measure before
-implementing.
+Open work is tracked in GitHub issues. The epics are
+[#97](https://github.com/BFox010/Music-Enrichment/issues/97) (the 2026-09-25 code
+audit) and [#77](https://github.com/BFox010/Music-Enrichment/issues/77) (pipeline
+data quality). Figures in an issue body are a snapshot of its filing date —
+re-measure before implementing.
 
 The git log is the authoritative history.

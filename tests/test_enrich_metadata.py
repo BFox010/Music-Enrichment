@@ -1,6 +1,6 @@
-"""Tests for pipeline.enrich_metadata._extract_lastfm_fields.
+"""Tests for pipeline.enrich_metadata.
 
-Note: tests do NOT hit the Last.fm API. They only exercise pure response parsing.
+Note: tests do NOT hit the Last.fm API: pure response parsing, plus enrich() over fake clients.
 """
 
 from __future__ import annotations
@@ -234,7 +234,7 @@ class TestPopularityGapFill:
         assert written[0]["duration_ms"] == 180000
 
     def test_existing_duration_is_never_overwritten(self, monkeypatch) -> None:
-        """Exportify/ReccoBeats values must win over Last.fm's gap-fill."""
+        """Exportify/iTunes XML values must win over Last.fm's gap-fill."""
         track = _track_row(0)
         track["duration_ms"] = 200000
         response = {"track": {"mbid": "x", "duration": "999999"}}
@@ -322,3 +322,18 @@ class TestExportMbidSurvivesAFailedLookup:
         written = self._run(monkeypatch, [_track_row(1)], {"_error": "not_found"})
         assert written[0]["musicbrainz_id"] is None
         assert written[0]["artist_mbid"] is None
+
+
+class TestArtistBlockSpansTheWholeLibrary:
+    def test_limit_does_not_shrink_the_artist_block(self, monkeypatch) -> None:
+        """A tag naming an artist beyond the limit= slice is still noise (#136)."""
+        response = {"track": {"toptags": {"tag": [{"name": "Artist 1"}, {"name": "rock"}]}}}
+        monkeypatch.setenv("LASTFM_API_KEY", "test-key")
+        monkeypatch.setattr(mod, "RateLimitedClient", lambda *a, **kw: _FakeClient(response))
+        with tempfile.TemporaryDirectory() as tmp:
+            inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "out.jsonl"
+            inp.write_text("".join(json.dumps(_track_row(n)) + "\n" for n in range(2)),
+                           encoding="utf-8")
+            mod.enrich(input_path=inp, output_path=out, limit=1)
+            rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+        assert rows[0]["lastfm_tags"] == ["rock"]

@@ -6,6 +6,8 @@ import json
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from tests.conftest import close_run_log_handlers
 
 from pipeline.classify_moods import (
@@ -198,7 +200,7 @@ class TestClassifyTrack:
     def test_allowlist_gates_output(self) -> None:
         """Only moods on the allowlist are emitted by the centroid path.
 
-        The allowlist is derived from cross-validated F1 (pipeline.
+        The allowlist is derived from cross-validated precision (pipeline.
         evaluate_moods) rather than hand-maintained, but the gating mechanism
         itself is what this covers.
         """
@@ -321,7 +323,7 @@ class TestAuditAndClaudeIO:
 
 
 class TestOwnerLabelRecovery:
-    """inputs/ is gitignored, so a fresh clone has no audit CSV.
+    """With mood_audit.csv absent, the tracks file is the only copy of owner labels.
 
     Without recovery the phase would find no owner labels, fall through to the
     centroid for every row, and destroy every hand-made judgement in the
@@ -772,3 +774,90 @@ class TestStaleCentroidDistanceIsCleared:
             rows = self._run(Path(tmp))
         assert rows[0]["mood_source"] == "audit"
         assert rows[0]["mood_distance"] is None
+
+
+def _classify_in(monkeypatch, root: Path, library: list[dict], *, tracks_name: str | None,
+                 audit_csv: str | None = None, **kwargs) -> tuple[dict, dict]:
+    """Run classify() with REPO_ROOT at ``root``; ``tracks_name=None`` passes no
+    tracks_path. Returns (stats, rows by track_normalized)."""
+    import pipeline.classify_moods as cm
+
+    monkeypatch.setattr(cm, "REPO_ROOT", root)
+    monkeypatch.setattr(cm, "CLAUDE_BATCH_PATH", root / "claude_mood_batch.jsonl")
+    if audit_csv is not None:
+        (root / "mood_audit.csv").write_text(audit_csv, encoding="utf-8")
+    if tracks_name is not None:
+        (root / tracks_name).write_text(
+            "".join(json.dumps(r) + "\n" for r in library), encoding="utf-8")
+        kwargs["tracks_path"] = root / tracks_name
+    out = root / "out.jsonl"
+    stats = cm.classify(output_path=out, claude_results_path=root / "none.jsonl",
+                        run_log_path=root / "run.log", **kwargs)
+    rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+    return stats, {r["track_normalized"]: r for r in rows}
+
+
+def _row(track: str, **extra) -> dict:
+    return {"artist": "Band", "track": track, "artist_normalized": "band",
+            "track_normalized": track.lower(), "audio_features": _features(), **extra}
+
+
+class TestInputSelection:
+    """#132: the orchestrator hands Phase 6 this run's chain as ``tracks_path``."""
+
+    def test_explicit_tracks_path_beats_a_leftover_deeper_intermediate(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        (tmp_path / "tracks_with_features.jsonl").write_text(
+            json.dumps(_row("Stale")) + "\n", encoding="utf-8")
+        _, rows = _classify_in(monkeypatch, tmp_path, [_row("Fresh")],
+                               tracks_name="tracks_with_availability.jsonl")
+        assert set(rows) == {"fresh"}
+
+    def test_a_missing_explicit_tracks_path_is_not_replaced(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        (tmp_path / "tracks_with_features.jsonl").write_text(
+            json.dumps(_row("Stale")) + "\n", encoding="utf-8")
+        with pytest.raises(FileNotFoundError):
+            _classify_in(monkeypatch, tmp_path, [], tracks_name=None,
+                         tracks_path=tmp_path / "tracks_resolved.jsonl")
+
+    def test_standalone_fallback_follows_manifest_order(self, monkeypatch, tmp_path) -> None:
+        """5a writes tracks_with_isrcs.jsonl before 4e, so 4e's output is deeper."""
+        for name in ("tracks_with_isrcs.jsonl", "tracks_resolved.jsonl"):
+            (tmp_path / name).write_text(
+                json.dumps(_row(name.split(".")[0])) + "\n", encoding="utf-8")
+        _, rows = _classify_in(monkeypatch, tmp_path, [], tracks_name=None)
+        assert set(rows) == {"tracks_resolved"}
+
+
+class TestManualLabelsSurvivePhase6:
+    """#134: ``manual`` outranks every Phase 6 outcome (MOOD_SOURCE_RANK)."""
+
+    MANUAL = {"mood_tags": ["Dance", "Heavy Bass"], "mood_source": "manual",
+              "mood_confidence": "high"}
+
+    def test_manual_row_keeps_tags_source_and_confidence(self, monkeypatch, tmp_path) -> None:
+        stats, rows = _classify_in(monkeypatch, tmp_path, [_row("Drop", **self.MANUAL)],
+                                   tracks_name="tracks_with_features.jsonl")
+        assert {k: rows["drop"][k] for k in self.MANUAL} == self.MANUAL
+        assert stats["owner_preserved"] == 1
+
+    def test_manual_row_beats_its_own_audit_row(self, monkeypatch, tmp_path) -> None:
+        """The audit lacks the Heavy Bass overlay, so letting it win drops the tag."""
+        stats, rows = _classify_in(
+            monkeypatch, tmp_path, [_row("Drop", **self.MANUAL)],
+            tracks_name="tracks_with_features.jsonl",
+            audit_csv="artist,track,mood_tags\nBand,Drop,Dance\n")
+        assert rows["drop"]["mood_tags"] == ["Dance", "Heavy Bass"]
+        assert rows["drop"]["mood_source"] == "manual"
+        assert stats["audit_unmatched"] == 0
+
+    def test_manual_rows_do_not_train_the_centroid(self, monkeypatch, tmp_path) -> None:
+        """Only ``audit`` is ground truth; a twin of a manual row stays unlabelled."""
+        stats, rows = _classify_in(
+            monkeypatch, tmp_path, [_row("Drop", **self.MANUAL), _row("Twin")],
+            tracks_name="tracks_with_features.jsonl")
+        assert rows["twin"]["mood_source"] is None
+        assert stats["classified_centroid"] == 0

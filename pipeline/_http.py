@@ -4,8 +4,9 @@ Each client instance owns its own rate limit and cache file.
 
 Cache: a flat JSON dict keyed by ``cache_key``. Successes stored raw as the API
 returned them; failures as ``{"_error": <reason>, "_cached_at": <epoch>}``, whose
-timestamp is what lets the entry expire. Pre-``_cached_at`` entries load fine and
-read as expired, so upgrading buys one free retry over poisoned keys.
+timestamp is what lets the entry expire. An entry without ``_cached_at`` reads
+as expired. Only failures expire: a 200 carrying an empty result (a search miss)
+is a success and is cached permanently until ``--force`` (#109).
 """
 
 from __future__ import annotations
@@ -41,20 +42,14 @@ FORCE_MODES = (FORCE_OFF, FORCE_ERRORS, FORCE_ALL)
 KIND_NOT_FOUND = "not_found"
 KIND_TRANSIENT = "transient"
 
-# ``_error`` values that are as stable as a 404 and so share its long TTL. A
-# 400 describes the request itself, which will not answer differently tomorrow.
-#
-# ``auth_error`` is deliberately NOT here. It is deterministic *within a run*,
-# so it is never retried there (see ``get``) — but the whole point of surfacing
-# it is that the operator goes and fixes the credential, and a 30-day entry
-# would then keep serving the refusal long after the key works again. The 6 h
-# transient TTL fails fast now and heals on the next day's run.
+# ``_error`` values as stable as a 404, sharing its long TTL. Don't add
+# ``auth_error``: it is never retried within a run (see ``get``), but a 30-day
+# entry would keep serving the refusal long after the operator fixes the
+# credential. The 6 h transient TTL lets the fix land on the next run.
 _STABLE_ERRORS = frozenset({"not_found", "bad_request"})
 
-# Statuses worth retrying. Everything else 4xx is deterministic — retrying it
-# spends the full ~8-11s backoff ladder per cache key to arrive at the same
-# refusal, which is how a single expired Discogs token turned a run into hours
-# of doing nothing.
+# Statuses worth retrying. Every other 4xx is deterministic — retrying it spends
+# the full ~8-11s backoff ladder per cache key to reach the same refusal.
 _RETRYABLE_STATUSES = frozenset({408, 425, 429})
 
 
@@ -79,8 +74,8 @@ def _is_expired(
 ) -> bool:
     """True if ``entry`` is a failure whose TTL has elapsed.
 
-    Successes never expire here — phases needing freshness enforce it themselves
-    (check_apple_music via ``apple_music_checked_at``). A missing ``_cached_at``
+    Successes never expire here, an empty search result included (#109) —
+    phases needing freshness must enforce it themselves. A missing ``_cached_at``
     or one in the future counts as expired, so a skewed clock can't pin an entry.
     """
     kind = _error_kind(entry)
@@ -95,19 +90,10 @@ def _is_expired(
     return (now - cached_at) > ttl
 
 
-# Last.fm answers an error in the body rather than (only) the status line:
-# {"error": 6, "message": "Track not found"} for a genuine miss, {"error": 29}
-# for a rate limit, {"error": 4/10/26} for a failed, invalid or suspended key.
-# Cached as successes, the throttle and key cases never expire, so one burst of
-# 29s freezes those tracks' enrichment until --force.
-#
-# Split on what would have to change for the answer to change. These describe
-# the *request* — 2 invalid service, 3 invalid method, 5 invalid format,
-# 6 invalid parameters (the "no such track" case, and the common one),
-# 7 invalid resource — so they are stable no-matches on the 30 d TTL.
-# Everything else (4/9/10/26 key and session, 8/11/16 service, 29 rate limit)
-# is transient: the operator fixes the key or the service recovers, and the
-# next run must see that rather than a month-old refusal.
+# Last.fm signals errors in the body ({"error": 6} no such track, 29 rate limit,
+# 4/10/26 bad key). Codes describing the *request* (2, 3, 5, 6, 7) are stable
+# no-matches on the 30 d TTL; everything else (key, session, service, rate
+# limit) is transient, so a fixed key or recovered service shows on the next run.
 LASTFM_STABLE_ERROR_CODES = frozenset({2, 3, 5, 6, 7})
 
 
@@ -125,11 +111,8 @@ class RateLimitedClient:
     """Rate-limited HTTP client with exponential backoff and a JSON disk cache.
 
     ``user_agent`` is required by MusicBrainz. ``flush_every`` is the minimum
-    number of new entries between disk writes — the actual threshold grows
-    with cache size (see ``_next_flush_threshold``) so a large run doesn't
-    pay for a full rewrite on every small batch. ``force`` is one of
-    ``FORCE_MODES``. ``negative_ttl``/``transient_ttl`` are injectable so
-    tests need not sleep.
+    new entries between disk writes (see ``_next_flush_threshold``). ``force``
+    is one of ``FORCE_MODES``. The TTLs are injectable so tests need not sleep.
     """
 
     def __init__(
@@ -184,8 +167,8 @@ class RateLimitedClient:
     def flush(self) -> None:
         """Write the cache to disk.
 
-        Never raises: this is called from ``finally`` blocks in every phase, and
-        a write failure there must not mask the exception that got us there.
+        Never raises: the API phases call this from ``finally`` blocks, and a
+        write failure there must not mask the exception that got us there.
         """
         try:
             self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,22 +255,13 @@ class RateLimitedClient:
         timeout: float = 15.0,
         classify: Callable[[Any], str | None] | None = None,
     ) -> Any:
-        """GET ``url`` with ``params``, caching the JSON response under ``cache_key``.
+        """GET ``url``, caching the JSON response under ``cache_key``. A failure
+        is cached and returned as ``{"_error": "<reason>", "_cached_at": <epoch>}``.
 
-        On a failure, caches and returns ``{"_error": "<reason>",
-        "_cached_at": <epoch>}`` so callers can short-circuit and so the entry
-        expires on a later run.
-
-        ``classify`` inspects a 200 body and returns an error kind for it, or
-        ``None`` if the body is a genuine success. Several APIs here signal
-        failure *in band*: Deezer answers a rate-limited request with HTTP 200
-        and ``{"error": {"code": 4, "message": "Quota limit exceeded"}}``, and
-        Last.fm can do the same with ``{"error": 29}``. Without this hook those
-        bodies were stored as successes -- and successes never expire, so a
-        burst of quota errors during Phase 5a marked every affected track "no
-        ISRC" permanently while the caller saw a clean miss rather than a
-        failure. Return ``"transient"`` for a quota/rate error (6 h TTL) or
-        ``"not_found"`` for a real no-such-record (30 d).
+        ``classify`` maps a 200 body to ``"transient"`` (quota/rate, 6 h TTL),
+        ``"not_found"`` (30 d) or ``None`` (success). An API that signals failure
+        in band (Deezer ``{"error": {"code": 4}}``, Last.fm ``{"error": 29}``)
+        needs one, or its failures are cached as successes, which never expire.
         """
         if not self._should_refetch(cache_key):
             return self.cache[cache_key]
@@ -322,9 +296,9 @@ class RateLimitedClient:
                     result = {"_error": "not_found"}
                     break
                 if r.status_code in (401, 403):
-                    # Deterministic and operator-actionable. Logged at ERROR
-                    # because the useful signal is "your credential is dead",
-                    # not 3,000 individual misses at DEBUG.
+                    # Deterministic and operator-actionable, so ERROR, not
+                    # DEBUG. Fires once per cache key: there is no circuit
+                    # breaker, so a dead credential still costs every key (#109).
                     log.error("HTTP %s for %s — credential rejected; not retrying",
                               r.status_code, cache_key)
                     result = {"_error": "auth_error", "_status": r.status_code}
@@ -374,15 +348,9 @@ class RateLimitedClient:
     def _next_flush_threshold(self) -> int:
         """Dirty-entry count needed to trigger the next flush.
 
-        A fixed ``flush_every`` rewrites the *whole*, ever-growing cache dict
-        every N new entries, so cumulative bytes written over a large
-        first-time run scale with roughly ``final_size**2 / flush_every``.
-        Scaling the threshold with the cache's current size instead — flush
-        after it grows another ~10%, floored at ``flush_every`` so small
-        caches behave exactly as before — is the amortized-doubling trick
-        array growth uses: total bytes written for the whole run become
-        ``O(size * log(size))`` instead of quadratic, while every flush still
-        writes the same single plain JSON file CLAUDE.md documents (no new
-        format, no extra files, no change to how a cache is read).
+        Every flush rewrites the whole cache, so a fixed ``flush_every`` makes a
+        large first run's total bytes written quadratic. Flushing after ~10%
+        growth (floored at ``flush_every``) makes it ``O(size * log(size))``
+        while keeping the single plain JSON file format.
         """
         return max(self.flush_every, int(len(self.cache) * 0.1))

@@ -17,15 +17,13 @@ fix it rather than building toward it.
 
 Two things look like playlist machinery but are not:
 
-- **Phases 3a/3b/3c** (TuneMyMusic → Exportify) acquire *audio features*. The
-  playlist round-trip was a means of getting them, not a feature — #37
-  replaced it with 5a/5b (MusicBrainz/Deezer → ISRC, then ReccoBeats), and
-  3a/3b/3c now sit in the manifest only as an optional legacy fallback.
+- **Phases 3a/3b/3c** (TuneMyMusic → Exportify) acquire *audio features* and
+  three other fields. The playlist round-trip was a means, not a feature. See
+  *Pipeline chain*.
 - **Phase 7** (`apply_taste_profile`) produces `saturation_tier` and
   `curation_state` — dashboard-facing curation metadata. Its `playlists` field
   is a grouping label read out of `taste_profile.md`, not a generated playlist.
-  (`blacklisted` was a third such field until #63 removed it — a
-  playlist-generator leftover with no consumer; see `docs/blacklist_archive_2026-08.md`.)
+  Don't reintroduce `blacklisted`; #63 removed it as a playlist-era leftover.
 
 ## Invariants
 
@@ -34,7 +32,9 @@ Two things look like playlist machinery but are not:
    view over them.
 2. **Markdown is truth for human judgement.** `taste_profile.md` is hand-edited
    and never written by the pipeline; JSONL is the derived index, regenerated
-   each run.
+   each run. One exception: Phase 8 keeps an existing `curation_state`
+   (`HUMAN_EDITED_FIELDS`), so deleting an entry from the markdown doesn't clear
+   it. That ownership conflict is #107.
 3. **Phases 1 and 8 are additive.** The owner's export is a partial pull ("today
    back to the last pull"), so ingest merges and dedupes rather than overwriting.
    A write that would leave fewer rows than are on disk is refused
@@ -43,12 +43,14 @@ Two things look like playlist machinery but are not:
    a phase called with `limit=` — would otherwise rewrite `tracks.jsonl` short
    and take every curated field on the dropped rows with it. Both take
    `allow_shrink=True` for a deliberate shrink.
-4. **`canonical_track_id` is preserved by every phase.** No phase may drop or
-   overwrite it. Identity priority: MusicBrainz recording MBID → ISRC →
-   normalized artist+track → fallback hash. **Phase 4e sets it** — on every
-   row, singletons included — which is why 5a resolves ISRCs before 4e runs:
-   an id derived from a normalized name moves whenever normalization improves,
-   and a moved id orphans the row's human-edited fields at the Phase 8 merge.
+4. **Only Phase 4e writes `canonical_track_id`.** Every other phase must carry
+   it through untouched. Identity priority: MusicBrainz recording MBID → ISRC →
+   normalized artist+track → fallback hash. 4e recomputes it on every row, every
+   run, so it is not stable: it moves `norm:` → `isrc:` → `mbid:` as identifiers
+   arrive, and Phase 8 overwrites the stored id with the new one. That is why 5a
+   resolves ISRCs before 4e, and why Phase 8 also matches on the name pair
+   (`update_tracks._candidate_keys`). Don't key human edits on the id alone
+   (#108).
 5. **The manifest drives the orchestrator.** Adding a phase means adding it to
    `pipeline_manifest.yaml` *and* implementing the module. The anti-drift test in
    `tests/test_pipeline_manifest.py` fails otherwise.
@@ -106,14 +108,11 @@ the primary route now — MusicBrainz `musicbrainz_id` → ISRC, needing no auth
 then Deezer name search, then ReccoBeats for the feature vector. B stays in the
 manifest, `optional: true`, for whatever those miss.
 
-**3a/3b/3c cannot be retired, despite #37 superseding them for audio features.**
-Measured 2026-08-24: ReccoBeats returns features for 98.7% of the tracks
-Exportify covers, so it *does* replace them there. But `inputs/exportify.csv`
-carries no ISRC column and is the only bulk source of three other fields —
-`explicit` and `release_year` (otherwise only the iTunes XML, ~4% of rows) and
-`spotify_id` (otherwise only Phase B, which needs credentials). Dropping 3c
-trades a ~1.5pt audio-feature gain for collapsing three fields from ~69% to
-near zero. Retiring it needs a replacement source for those first.
+**Don't retire 3a/3b/3c**, even though #37 superseded them for audio features.
+`inputs/exportify.csv` is the only bulk source of `explicit`, `release_year`
+(otherwise only the iTunes XML) and `spotify_id` (otherwise only Phase B, which
+needs credentials). Retiring 3c needs a replacement source for those first. The
+measurement is in `docs/capture_coverage_2026-08-24.md`.
 
 ## Commands
 
@@ -148,21 +147,23 @@ Every phase that touches an external API:
 - Fails fast on a deterministic 4xx. Only 429/408/425 and 5xx go round the
   backoff ladder; a 400/401/403 is a property of the request or the credential,
   so retrying it spends ~10 s per cache key to reach the same refusal. A 401/403
-  is logged once at ERROR — the useful signal is "the credential is dead".
+  is logged at ERROR, once per cache key, and not retried within the run.
 - Classifies **in-band** errors via `RateLimitedClient.get(..., classify=)`.
-  Deezer answers a rate-limited request with HTTP 200 and
-  `{"error": {"code": 4}}`, Last.fm with `{"error": 29}`. Cached on status alone
-  those bodies were stored as successes — which never expire — so one quota
-  burst froze the affected tracks until `--force`, and the caller read it as a
-  clean miss. `classify_lastfm` lives in `_http.py`; Deezer's is
-  `resolve_isrcs._classify_deezer`. **An API that signals failure in the body
-  needs a classifier, or its failures become permanent.**
+  Deezer answers a rate limit with HTTP 200 and `{"error": {"code": 4}}`,
+  Last.fm with `{"error": 29}`. **An API that signals failure in the body needs a
+  classifier, or its failures are cached as successes, which never expire.**
+  `classify_lastfm` lives in `_http.py`; Deezer's is `resolve_isrcs._classify_deezer`.
+- **Known gap (#109):** a 200 with an empty result ("no match") is a success, so
+  it never expires either. Only `--force` re-asks.
 - Flushes its cache from a `finally`, so an interrupted run keeps every response
   it already paid for at the rate limit.
 - Honours `--force-errors` (re-fetch cached failures only) and `--force` (bypass
-  cache entirely), dispatched off the manifest's `accepts_force` flag.
-- Writes per-field provenance: `source`, `retrieved_at`, `pipeline_phase`,
-  `confidence`.
+  cache entirely), dispatched off the manifest's `accepts_force` flag. Phase B
+  predates this and takes neither.
+- Records where what it adds came from, at least a source and a retrieval date
+  (as `isrc_source`/`isrc_retrieved_at` do). Existing phases are uneven: only 4d
+  writes a full block, and nothing writes `pipeline_phase`. Don't assume a field
+  has provenance; check.
 
 Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.py`.
 
@@ -184,13 +185,36 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
 
 - **Data structures:** plain `list[dict]` and `collections.Counter`. Not pandas,
   despite it being in `requirements.txt`.
-- **Comments explain *why*, not *what*.** If the code tells the whole story, no
-  comment. Keep the ones carrying a constraint that isn't visible locally.
-- **Don't hardcode coverage numbers into docs.** They drift the moment new
-  scrobbles land. Compute them when asked.
+- **Comments: see the section below.**
+- **Don't hardcode coverage numbers or row counts into docs or comments.** They
+  drift the moment new scrobbles land. Compute them when asked. A dated file in
+  `docs/` is a snapshot and may carry its figures.
 - **Branches:** `claude/*`, `feat/*`, `fix/*`. One concern per branch per PR.
 - CI runs the full pytest suite on push to `main` and every PR
   (`.github/workflows/ci.yml`).
+
+## Comments
+
+Agents treat comments as instructions, so a wrong comment does more harm than a
+missing one.
+
+- **A comment your change makes false is yours to fix in the same PR.** So is one
+  you find false while working nearby: fix it or delete it.
+- **Warnings are the comments that matter.** Write them in one or two lines that
+  name the failure and the forbidden change: "Don't X: Y breaks". Never delete a
+  warning to shorten a block; compress it.
+- **Comments explain *why*, not *what*.** If the code tells the whole story, no
+  comment.
+- **Ceilings:** 4 lines for an inline block, 8 for a function or class docstring,
+  12 for a module docstring. Never longer than the code being explained. Longer
+  text adds cost without adding protection.
+- **No history, chronology, or measurement logs** ("used to", "before #NN", row
+  counts). Those go stale first. Git and `docs/` hold the story. A short pointer
+  like `(#83/F-02)` may mark a ruled decision.
+- **Keep per-site traps in the file, next to the code.** Moved into CLAUDE.md
+  they protect less, and an agent tends to refuse the task instead of finding the
+  safe way round.
+- **A trap where a wrong change corrupts data needs a test, not just a comment.**
 
 ## Gotchas
 
@@ -214,36 +238,30 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
   one. Trust order lives once, in `MOOD_SOURCE_RANK` (`pipeline/config.py`):
   `manual` > `audit` > `claude_batch` > `centroid` > `inherited` > unset.
   Don't re-encode it locally — `update_tracks._merge_with_existing()` consults
-  it directly (#83/F-02 replaced the ad hoc rule it used to carry).
+  it directly (#83/F-02).
 - **`mood_audit.csv` at the repo root is the canonical label file** (#66) and
   Phase 6's unconditional default (`classify()`'s `audit_path` resolves to it
   when omitted). The older `inputs/existing_audit.csv` is gitignored and never
   authoritative — if it's present too, Phase 6 logs a warning and ignores it
   rather than silently training on it; reconcile any local edits into
   `mood_audit.csv` instead. To use the legacy file deliberately, pass
-  `audit_path=INPUT_EXISTING_AUDIT` explicitly (#83/F-06 — this used to be
-  reversed: the gitignored file silently won whenever it existed).
+  `audit_path=INPUT_EXISTING_AUDIT` explicitly (#83/F-06).
   `tests/test_data_integrity.py` asserts the committed audit still reaches the
-  committed library — the drift it caught went unnoticed because every other
-  test builds its own fixtures.
+  committed library; every other test builds its own fixtures.
 - **Dashboard mutating endpoints require a token.** `POST /api/refresh`,
   `/api/lastfm/sync`, `/api/reload` need `X-Dashboard-Token`. The SPA fetches it
   from same-origin `GET /api/config`. Set `DASHBOARD_TOKEN` to keep it stable
   across restarts.
-- **`/tracks.min.jsonl` is served from memory, so its ETag is a hash of the
-  served body** — never `tracks.jsonl`'s mtime+size, and not the bare snapshot
-  generation either: that counter restarts at 1 in every process, so a restart
-  over changed data handed out the old ETag (#103). Deriving it
-  from the file let the two diverge: a CLI pipeline run with the server up moved
-  the file but not the snapshot, so a client got a fresh ETag with the stale
-  body and cached it, and the `/api/reload` that finally refreshed the snapshot
-  left the file untouched, so the revalidation 304'd. `/tracks.jsonl` is a
-  `FileResponse`, where ETag and body both come from disk, and is fine as is.
+- **`/tracks.min.jsonl` is served from memory, so its ETag must be a hash of the
+  served body.** Don't derive it from `tracks.jsonl`'s mtime+size: a CLI pipeline
+  run with the server up moves the file but not the snapshot, and clients cache
+  a stale body under a fresh ETag. Don't use the snapshot generation either: it
+  restarts at 1 in every process (#103). `/tracks.jsonl` is a `FileResponse`,
+  where ETag and body both come from disk, and is fine as is.
 - **The mutating routes are coroutines, so every blocking call inside them needs
-  `asyncio.to_thread`.** They had to become `async def` to hold the mutation
-  lock, which took them out of the threadpool FastAPI runs `def` handlers in —
-  so `data.reload()`, `ingest_from_records()` and `export_pending()` each stall
-  the whole event loop for their duration (~0.1-0.6 s on the committed data),
+  `asyncio.to_thread`.** They are `async def` to hold the mutation lock, which
+  takes them out of FastAPI's threadpool. A bare `data.reload()`,
+  `ingest_from_records()` or `export_pending()` stalls the whole event loop,
   including the SPA's own `/api/lastfm/status` polling.
 - **Pin any new HTTP client's logger in `configure_logging`.** Root is set to
   DEBUG with a FileHandler, Last.fm takes its API key as a *query parameter*,
@@ -253,19 +271,16 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
 - **No CORS middleware, deliberately.** The dashboard is same-origin; allowing
   all origins would let any site read the full listening history over the tunnel.
 
-## Open audits
+## Open work
 
-Three tracking issues hold the known-unfixed work. Read the relevant one before
-filing a finding — it is probably already there, and several have been
-re-measured since filing.
+Known-unfixed work lives in GitHub issues. Search them before filing a finding;
+it is probably already there. The umbrella issues are
+[#97](https://github.com/BFox010/Music-Enrichment/issues/97) (the 2026-09-25 code
+audit, one sub-issue per finding) and
+[#77](https://github.com/BFox010/Music-Enrichment/issues/77) (pipeline data
+quality). Read the issues themselves for what remains; a list copied here goes
+stale within days.
 
-| Issue | Scope | Remaining |
-|---|---|---|
-| [#77](https://github.com/BFox010/Music-Enrichment/issues/77) | Pipeline data quality (23 Aug) | #68, #70, #75, #76 |
-| [#83](https://github.com/BFox010/Music-Enrichment/issues/83) | Orchestration safety, mood precedence, alias gaps (26 Aug) | all of it; tracking only, nothing scheduled |
-| [#42](https://github.com/BFox010/Music-Enrichment/issues/42) | Phase A joins the iTunes XML on name, matching ~3% | the whole issue |
-
-**Re-measure before implementing.** Three of #77's items had premises that had
-gone stale by the time they were worked (#72's 310-row payoff was 0 rows by
-then); the re-measurement is what surfaced four further defects nobody had
-filed. Coverage figures in an issue body are a snapshot of its filing date.
+**Re-measure before implementing.** Figures in an issue body are a snapshot of
+its filing date, and premises go stale. One #77 item's 310-row payoff was 0 rows
+by the time it was worked.

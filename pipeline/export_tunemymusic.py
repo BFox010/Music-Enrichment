@@ -2,8 +2,10 @@
 
 Reads tracks_skeleton.jsonl (artist/track/album is all this needs) and writes a
 CSV TuneMyMusic can import. The playlist it creates is a *means*: the owner runs
-Exportify against it to obtain audio features, which land via Phase 3b/3c. No
-playlist is produced as a deliverable. Issue #37 plans to remove this detour.
+Exportify against it, and the result lands via Phase 3b/3c. No playlist is
+produced as a deliverable. Optional legacy fallback since #37 (5a/5b) took over
+audio features; it can't be retired yet, because Exportify is the only bulk
+source of explicit, release_year and spotify_id.
 
 Usage:
     python -m pipeline.export_tunemymusic

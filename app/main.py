@@ -27,6 +27,7 @@ load_dotenv(REPO_ROOT / ".env")
 import app.data as data
 import app.metrics as metrics
 import app.query as query
+from app.lastfm_sync import read_last_sync
 
 app = FastAPI(title="Music Dashboard")
 
@@ -256,6 +257,7 @@ def lastfm_status():
         "first_scrobbled_at": first,
         "configured": bool(os.getenv("LASTFM_USERNAME") and os.getenv("LASTFM_API_KEY")),
         "username": os.getenv("LASTFM_USERNAME"),
+        "last_sync": read_last_sync(),
     }
 
 
@@ -270,8 +272,8 @@ async def lastfm_sync():
         async with exclusive_mutation("sync"):
             result = await _sync(SCROBBLES_PATH)
             # A sync that added nothing to a snapshot already matching the file
-            # needs no reload; reloading bumped the generation, so every client
-            # re-downloaded ~1.3 MB to get the same bytes (#105).
+            # needs no reload: it would re-parse both files and rebuild every
+            # generation-keyed cache to produce the same bytes (#105).
             if result.get("new") == 0 and result.get("in_memory_before") == result.get("total"):
                 return result
             # Same reasoning as api_reload: this handler is a coroutine (it has
@@ -303,7 +305,7 @@ def _conditional_file(path, request: Request, media_type: str):
 
     A bare ``FileResponse`` does not handle ``304`` on its own, so repeat
     visits would re-download megabytes. The ETag is derived from the file's
-    mtime+size, so it changes after a ``reload()``/sync and keeps data fresh
+    mtime+size, so it changes whenever a sync or pipeline run rewrites the file
     while making unchanged repeat loads a cheap ``304``.
     """
     if not path.exists():
@@ -344,7 +346,7 @@ def serve_tracks_min_jsonl(request: Request):
     renders (see app.query.project_min_track). ~44% smaller gzipped than the full
     /tracks.jsonl. Full data stays available there and via /api/*.
 
-    Both the ETag and the body come from the in-memory snapshot's generation.
+    Both the ETag and the body come from the in-memory snapshot.
     Deriving the ETag from tracks.jsonl's mtime+size instead — as this used to —
     let the two diverge: the file changes on disk whenever the documented CLI
     workflow runs the pipeline while uvicorn is up, so the client got a fresh

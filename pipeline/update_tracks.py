@@ -302,7 +302,7 @@ def _merge_with_existing(new: dict, existing: dict | None) -> dict:
     # Mood is one provenance bundle — tags, source, confidence, and distance
     # must all come from whichever side wins, never mixed across sources.
     # MOOD_SOURCE_RANK (pipeline/config.py) is the single trust order both this
-    # module and classify_moods consult; a tie favors the fresh row, matching
+    # module and resolve_identity consult; a tie favors the fresh row, matching
     # the "new wins by default" rule the loop above already applies.
     #
     # Only arbitrate when the new row actually carries the bundle. An

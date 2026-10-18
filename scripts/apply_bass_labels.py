@@ -1,17 +1,11 @@
 """Apply owner-reviewed Heavy Bass labels to tracks.jsonl (durable overlay).
 
 Heavy Bass can never come from the centroid: the 9 audio features carry no bass
-descriptor, so evaluate_moods measures its precision under the allowlist bar and
-derive_allowlist withholds it. This layers the owner's hand-reviewed verdicts back
-on, recovering the recall that withholding gives up. (The verdicts predate the
-measured allowlist and were made against a hand-kept suppression list;
-measurement reached the same verdict independently — see
-docs/mood_centroid_decisions.md.)
-
-Verdicts live in a version-controlled CSV (artist, track, decision); only
-``decision == "keep"`` is applied. Each kept row gets "Heavy Bass" ADDED to its
-mood_tags (co-moods preserved, nothing pruned) and is marked owner-owned
-(mood_source="manual", mood_confidence="high") so it survives a Phase 6 re-run.
+descriptor, so evaluate_moods.derive_allowlist withholds it. This layers the
+owner's verdicts (docs/mood_centroid_decisions.md) back on. Only
+``decision == "keep"`` rows of the CSV apply: "Heavy Bass" is ADDED to
+mood_tags (co-moods kept) and the row marked mood_source="manual",
+mood_confidence="high" so it survives a Phase 6 re-run.
 
 Run it LAST, after Phase 8, so the overlay sits on fresh pipeline output.
 Idempotent.

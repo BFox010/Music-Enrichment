@@ -55,14 +55,14 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "musicbrainz_id": None,
     "artist_mbid": None,
     "isrc": None,
-    # Which resolver found the isrc (Phase 5a). None for an Exportify-sourced
-    # ISRC, which predates the field.
+    # Which resolver found the isrc (Phase 5a). None for an ISRC from Exportify
+    # (3c) or Spotify (B).
     "isrc_source": None,
     "isrc_retrieved_at": None,
     "apple_music_available": None,
     "apple_music_id": None,
     "apple_music_checked_at": None,
-    # Audio features (Phase 3c)
+    # Audio features (Phase 3c or 5b)
     "audio_features": None,  # full block when present, else None
     # Genres / tags
     "genres": [],
@@ -84,7 +84,7 @@ FIELD_DEFAULTS: dict[str, Any] = {
     "mood_confidence": None,
     # Nearest-centroid distance, so the UI can show fit. Centroid rows only.
     "mood_distance": None,
-    # Every (artist_normalized, track_normalized) Phase 4e folded into this row.
+    # Every (artist_normalized, track_normalized) Phase 2 or 4e folded into this row.
     # scrobbles.jsonl is never rewritten; aggregation resolves old credits here.
     "identity_aliases": [],
     # Listening / counts
@@ -318,7 +318,7 @@ def compute_canonical_track_id(row: dict[str, Any]) -> str:
 
 
 def fill_defaults(row: dict[str, Any]) -> dict[str, Any]:
-    """New dict with every schema field populated. Existing non-None values win;
+    """New dict with every schema field populated. Existing values win, None too;
     mutable defaults are fresh per call; unknown fields survive at the end.
 
     Also stamps _schema_version and computes canonical_track_id when empty.

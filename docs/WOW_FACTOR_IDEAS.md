@@ -3,7 +3,7 @@
 Research pass over open-source portfolio pieces, animated component libraries,
 and 2026 web-design writeups, filtered down to things that fit **this** app:
 React 18 (UMD) + esbuild, ECharts, `themes.css` custom properties, a worker-fed
-data layer, and ~2,700 tracks / ~13,700 scrobbles.
+data layer, and ~2,700 tracks / ~13,700 scrobbles at the time (2026-08).
 
 Selection rule used throughout: **the effect must carry information or reduce
 friction.** Nothing that only exists to be looked at, nothing that fights the

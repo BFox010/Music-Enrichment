@@ -15,7 +15,8 @@ today:**
 
 Everything in Part II was measured against the **2,730-track / 13,669-scrobble**
 library. The library has grown since, so absolute milliseconds there run low —
-the complexity columns still hold.
+the complexity columns still hold. Part I's figures are as measured when the
+sweep shipped; the bundle has grown since.
 
 **Confidence legend:** ✅ measured (real run) · ⚠️ estimated / derived (static or
 extrapolated) · 🔴 could not measure (reason given).
@@ -42,8 +43,10 @@ separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_fron
    `ensureECharts()` injects the ~1 MB library on demand. The dashboard prefetches it
    during idle time after first paint and loads it immediately on first chart-view open,
    so it no longer competes with the initial data fetch and never blocks first paint.
-   `useEChart` is resilient (waits for `window.echarts`), so charts still render. Verified:
-   ECharts requested exactly once, ~686 ms in (after the ~160 ms FCP); all charts render.
+   `useEChart` waits on `ensureECharts()`'s promise, so a chart mounted before the
+   library arrives draws when it lands, and a CDN failure is reported rather than
+   left blank (#113). Verified at ship time: ECharts requested exactly once, ~686 ms in
+   (after the ~160 ms FCP); all charts render.
 4. All scripts `defer`; data transfer was already gzipped (see correction in Observations).
 
 ### Results (headless, instant local network — CPU-bound costs)
@@ -66,7 +69,8 @@ separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_fron
 (new build tooling), `.gitignore` (`node_modules/`). Build: `npm install && npm run build`.
 
 ### Further optional wins (not done)
-- Self-host / subset Google Fonts (currently 5 render-blocking families).
+- Self-host / subset Google Fonts. They no longer block first paint (`index.html`
+  loads them as `media="print"` and swaps on load), but five families still download.
 - Code-split per view if the bundle grows.
 
 *(Done — lazy ECharts: implemented as on-demand + idle prefetch; see item 3 above.)*
@@ -85,7 +89,7 @@ separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_fron
 > - **Observation #2** flags that same removed build as a live problem.
 >
 > The backend tables, the load-order map, and the method are still broadly
-> representative — against a library ~20% smaller than today's.
+> representative, against a smaller library than today's.
 
 ## Measurement environment
 
@@ -93,7 +97,7 @@ separately as gzipped bytes. Harnesses: `perf_temp/measure_load.js`, `build_fron
 |---|---|
 | Host | Linux 6.18.5, Python 3.11.15, Node v22.22.2 |
 | Deps | Installed fresh from `requirements.txt` for this run (fastapi 0.136, uvicorn 0.49, httpx 0.28, pandas 3.0, pytest 9.0). ✅ |
-| Dataset | `tracks.jsonl` = 4.32 MB / 2,730 records · `scrobbles.jsonl` = 3.86 MB / 13,669 records (the committed data **at the time of this run** — now 3,336 / 16,549) |
+| Dataset | `tracks.jsonl` = 4.32 MB / 2,730 records · `scrobbles.jsonl` = 3.86 MB / 13,669 records (the committed data **at the time of this run**) |
 | Credentials | **None** — `LASTFM_API_KEY`/`DISCOGS_TOKEN` unset, no `.cache/`, no `inputs/` files |
 | Method | `python -X importtime`, `cProfile`, `tracemalloc`/`getrusage`, throwaway timing harnesses, Node V8 micro-bench. All scratch artifacts live in `perf_temp/`. |
 

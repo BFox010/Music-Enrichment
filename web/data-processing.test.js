@@ -290,3 +290,46 @@ test("preferences survive blocked storage", () => {
     globalThis.localStorage = saved;
   }
 });
+
+// #90: chip dot and chart line share a colour keyed to the artist, so a toggle
+// must never repaint anyone else.
+test("colour slots: new picks take the lowest free slot", () => {
+  assert.deepEqual(assignColorSlots(null, ["A", "B", "C"], 8), { A: 0, B: 1, C: 2 });
+});
+
+test("colour slots: deselecting frees only that slot, survivors keep theirs", () => {
+  const first = assignColorSlots(null, ["A", "B", "C", "D"], 8);
+  const dropped = assignColorSlots(first, ["A", "C", "D"], 8);
+  assert.deepEqual(dropped, { A: 0, C: 2, D: 3 });
+  const added = assignColorSlots(dropped, ["E", "A", "C", "D"], 8);
+  assert.deepEqual(added, { A: 0, C: 2, D: 3, E: 1 }, "E reuses B's freed slot");
+});
+
+test("colour slots: eight picks from eight colours never collide", () => {
+  const s = assignColorSlots({ x: 5 }, ["a", "b", "c", "d", "e", "f", "g", "h"], 8);
+  assert.equal(new Set(Object.values(s)).size, 8);
+  assert.equal(s.x, undefined, "an unselected artist holds no slot");
+});
+
+test("colour slots: past the palette, extras share without moving anyone", () => {
+  const eight = assignColorSlots(null, ["a", "b", "c", "d", "e", "f", "g", "h"], 8);
+  const nine = assignColorSlots(eight, ["a", "b", "c", "d", "e", "f", "g", "h", "i"], 8);
+  for (const k of Object.keys(eight)) assert.equal(nine[k], eight[k]);
+  assert.equal(nine.i, 0);
+});
+
+test("picker chips: selected first by play count, then the filter's matches", () => {
+  const ranked = ["Alpha", "Beta", "Gamma", "Delta", "Epsilon"].map((name, i) => ({ name, total: 50 - i }));
+  const sel = new Set(["Epsilon", "Beta"]);
+  const all = orderPickerChips(ranked, sel, "", 10);
+  assert.deepEqual(all.chips.map((a) => a.name), ["Beta", "Epsilon", "Alpha", "Gamma", "Delta"]);
+  assert.deepEqual(all.picked.map((a) => a.name), ["Beta", "Epsilon"]);
+
+  const filtered = orderPickerChips(ranked, sel, "ta", 10);
+  assert.deepEqual(filtered.chips.map((a) => a.name), ["Beta", "Epsilon", "Delta"],
+    "a selected chip stays visible even when the filter excludes it");
+
+  const capped = orderPickerChips(ranked, sel, "", 3);
+  assert.deepEqual(capped.chips.map((a) => a.name), ["Beta", "Epsilon", "Alpha"]);
+  assert.equal(capped.hidden, 2);
+});

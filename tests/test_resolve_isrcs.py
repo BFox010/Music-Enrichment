@@ -279,9 +279,9 @@ class TestEnrichPersistsIsrc:
         assert stats["unresolved"] == 1
 
     def test_does_not_touch_canonical_track_id(self, monkeypatch, tmp_path) -> None:
-        """canonical_track_id is computed once, in Phase 4e, before this phase
-        ever runs. A newly resolved ISRC must not re-key a track that Phase 4e
-        already clustered under a norm:/mbid: id — CLAUDE.md invariant 4."""
+        """canonical_track_id is owned by Phase 4e, which runs after this phase
+        and computes it from the ISRC resolved here. This phase must not set or
+        re-key an id already on the row — CLAUDE.md invariant 4."""
         stats, rows = self._run(
             monkeypatch, tmp_path,
             [{"artist": "A", "track": "B", "musicbrainz_id": "mb-1",

@@ -115,7 +115,8 @@ class TestFetchAudioFeatures:
 
 class TestEnrichPersistsFeatures:
     @staticmethod
-    def _run(monkeypatch, tmp_path, tracks, track_ids=None, features_by_id=None):
+    def _run(monkeypatch, tmp_path, tracks, track_ids=None, features_by_id=None,
+             force=eaf.FORCE_OFF):
         src = tmp_path / "in.jsonl"
         src.write_text("".join(json.dumps(t) + "\n" for t in tracks), encoding="utf-8")
         out = tmp_path / "out.jsonl"
@@ -136,7 +137,7 @@ class TestEnrichPersistsFeatures:
             eaf, "_fetch_audio_features",
             lambda client, track_id: (features_by_id or {}).get(track_id),
         )
-        stats = eaf.enrich(input_path=src, output_path=out)
+        stats = eaf.enrich(input_path=src, output_path=out, force=force)
         rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
         return stats, {r["track"]: r for r in rows}
 
@@ -167,6 +168,33 @@ class TestEnrichPersistsFeatures:
         assert rows["B"]["audio_features"] == existing
         assert stats["already_had"] == 1
         assert stats["resolved"] == 0
+
+    def test_force_errors_keeps_existing_audio_features(self, monkeypatch, tmp_path) -> None:
+        """--force-errors re-fetches cached failures only (#136)."""
+        from pipeline._http import FORCE_ERRORS
+        existing = {"source": "exportify", "danceability": 0.1}
+        stats, rows = self._run(
+            monkeypatch, tmp_path,
+            [{"artist": "A", "track": "B", "isrc": "USABC1234567",
+              "audio_features": existing}],
+            track_ids={"USABC1234567": "rb1"},
+            features_by_id={"rb1": {"danceability": 0.99}},
+            force=FORCE_ERRORS,
+        )
+        assert rows["B"]["audio_features"] == existing
+        assert stats["already_had"] == 1
+
+    def test_force_all_replaces_existing_audio_features(self, monkeypatch, tmp_path) -> None:
+        from pipeline._http import FORCE_ALL
+        _, rows = self._run(
+            monkeypatch, tmp_path,
+            [{"artist": "A", "track": "B", "isrc": "USABC1234567",
+              "audio_features": {"source": "exportify", "danceability": 0.1}}],
+            track_ids={"USABC1234567": "rb1"},
+            features_by_id={"rb1": {"danceability": 0.99}},
+            force=FORCE_ALL,
+        )
+        assert rows["B"]["audio_features"]["danceability"] == 0.99
 
     def test_no_isrc_is_skipped_without_a_request(self, monkeypatch, tmp_path) -> None:
         stats, rows = self._run(monkeypatch, tmp_path, [{"artist": "A", "track": "B"}])

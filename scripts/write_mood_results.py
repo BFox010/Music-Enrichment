@@ -1,17 +1,12 @@
 """Emit ``inputs/claude_mood_results.jsonl`` from the committed Claude verdicts.
 
-Phase 6 queues every track it cannot classify to ``inputs/claude_mood_batch.jsonl``;
-Claude labels them and the verdicts are committed under ``docs/`` as
-``claude_mood_verdicts_<date>.jsonl``. This replays those files into the results
-file Phase 6 reads, applying them at ``mood_source="claude_batch"``,
-``mood_confidence="high"``.
+Phase 6 queues the tracks it cannot classify to ``inputs/claude_mood_batch.jsonl``;
+the Claude verdicts are committed as ``docs/claude_mood_verdicts_<date>.jsonl``.
+This replays them into the results file Phase 6 applies as ``claude_batch``.
 
-Verdicts are keyed by (artist_normalized, track_normalized), not by position in
-the batch: ``inputs/`` is gitignored and the batch is regenerated on every Phase 6
-run, so a positional key silently mislabels the whole library the next time the
-queue changes size.
-
-Later files win on a repeated key, so a re-review supersedes an older verdict.
+Keys must stay (artist_normalized, track_normalized), never batch position: the
+batch is regenerated every Phase 6 run, so a positional key mislabels the
+library once the queue changes size. Later files win on a repeated key.
 
     python scripts/write_mood_results.py            # replay every docs/ verdict file
     python scripts/write_mood_results.py --check    # validate only, write nothing

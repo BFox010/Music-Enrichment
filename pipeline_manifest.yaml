@@ -12,14 +12,16 @@
 #   callable    Function name within the module (null for manual phases)
 #   inputs      List of file paths relative to repo root (documentation + tests)
 #   outputs     List of file paths relative to repo root
-#   depends_on  List of phase IDs that must succeed before this phase runs
+#   depends_on  Phase IDs this phase reads from; must appear earlier in the list
+#               (validated). Not enforced at runtime: dependents of a skipped
+#               or failed optional phase still run.
 #   schema_version  Expected _schema_version on output records
 #   resumable   Whether the phase can safely be re-run from scratch
 #   manual      true = operator action required; orchestrator pauses here
-#   requires_file   Skip (not abort) if this path is missing at runtime
-#   optional    true = skip gracefully on ImportError (module not yet built),
-#               and for a manual phase, don't pause the run when its output
-#               is missing — mark it SKIPPED and continue instead
+#   requires_file   If this path is missing: SKIPPED when optional, else FAILED
+#   optional    true = a missing module, input file, credential or
+#               requires_file is SKIPPED, a failure doesn't stop the run, and a
+#               manual phase with no output is SKIPPED instead of pausing
 #   accepts_force   true = the callable takes force= and honours --force /
 #                   --force-errors (API phases only; anti-drift tested against
 #                   the real signature)
@@ -168,9 +170,8 @@ phases:
     callable: derive
     inputs:
       # 4b is optional (it needs a DISCOGS_TOKEN); this phase is not. When 4b
-      # drops out, derive() falls back through tracks_with_metadata.jsonl the
-      # way its sibling phases do, and skips a discogs file an earlier run left
-      # behind rather than re-deriving from stale tags.
+      # drops out the orchestrator hands 4c Phase 4's output; run standalone,
+      # derive() falls back to tracks_with_metadata.jsonl over a stale discogs file.
       - tracks_with_discogs.jsonl
     outputs:
       - tracks_with_genres.jsonl
@@ -192,14 +193,10 @@ phases:
     resumable: true
     optional: true
 
-  # 5a runs here, ahead of 4e, despite the "5" in its id. Execution order is
-  # this list's order — the id is a stable label that --start-from, depends_on
-  # and every existing issue reference use, so it was not renumbered when the
-  # phase moved. 4e clusters on `isrc` as a strong identifier (resolve_identity
-  # `_cluster`), and with 5a downstream it never saw one: identity fell back to
-  # normalized names, which meant a change to normalize_artist re-keyed tracks
-  # and orphaned their human-edited fields. Resolving ISRCs first makes
-  # canonical_track_id durable for the ~95% of rows that get one.
+  # 5a must stay ahead of 4e despite its id (ids are stable labels; list order
+  # is execution order). 4e clusters on `isrc`; without it identity falls back
+  # to normalized names, which re-key when normalization changes and orphan
+  # human-edited fields.
   - id: "5a"
     name: "ISRC resolution (MusicBrainz -> Deezer)"
     module: pipeline.resolve_isrcs
@@ -257,10 +254,9 @@ phases:
     callable: classify
     inputs:
       - tracks_with_features.jsonl
-      # mood_audit.csv (repo root) is canonical (#66), the only copy a fresh
-      # clone has, and since #83's F-06 the unconditional runtime default. The
-      # gitignored legacy path is no longer an input — Phase 6 warns and ignores
-      # it unless audit_path=INPUT_EXISTING_AUDIT is passed explicitly.
+      # mood_audit.csv (repo root) is canonical and the runtime default (#66,
+      # #83/F-06). Phase 6 warns about and ignores inputs/existing_audit.csv
+      # unless audit_path=INPUT_EXISTING_AUDIT is passed explicitly.
       - mood_audit.csv
     outputs:
       - tracks_with_moods.jsonl

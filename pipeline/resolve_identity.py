@@ -134,13 +134,13 @@ def _conflicts(a: dict, b: dict, field: str) -> bool:
     return bool(va and vb and va != vb)
 
 
-# Sources whose ISRC is too fuzzy to veto a shape match. Deezer's comes from a
-# name search: two title variants of one recording routinely land on different
-# releases (disagreed with MusicBrainz on 8.7% of a 150-track sample), and letting
-# that veto splits pairs the credit evidence got right.
+# Sources whose ISRC is too fuzzy to veto a shape match. Deezer's and Spotify's
+# come from a name search: two title variants of one recording routinely land on
+# different releases (disagreed with MusicBrainz on 8.7% of a 150-track sample),
+# and letting that veto splits pairs the credit evidence got right.
 # Unknown provenance counts as trusted — a wrong veto leaves a visible duplicate,
 # a wrong merge silently folds two recordings and sums their plays.
-_FUZZY_ISRC_SOURCES = frozenset({"deezer"})
+_FUZZY_ISRC_SOURCES = frozenset({"deezer", "spotify_search"})
 
 
 def _isrc_vetoes_merge(a: dict, b: dict) -> bool:
@@ -156,7 +156,7 @@ def is_credit_variant(a: dict, b: dict) -> bool:
     """``_shape_matches`` plus no decisive conflicting identifier.
 
     Conflicting ISRC from an exact join ⇒ two different recordings sharing a
-    title. A Deezer ISRC lacks that weight; see ``_isrc_vetoes_merge``.
+    title. A name-search ISRC lacks that weight; see ``_isrc_vetoes_merge``.
 
     A conflicting MBID is weaker — Last.fm hands out different recording MBIDs
     for one recording under different credit strings — so it depends on which

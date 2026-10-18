@@ -124,7 +124,7 @@ class TestMoodSourceRankPrecedence:
             winner, tags = existing, ["Existing"]
         else:
             # Ties and new-wins both resolve to the fresh row — ties are
-            # deliberately not preserved-by-default (see module docstring).
+            # deliberately not preserved-by-default (see _merge_with_existing).
             winner, tags = new, ["New"]
 
         assert merged["mood_source"] == winner["mood_source"]
@@ -369,7 +369,7 @@ class TestUpdate:
 
 
 class TestMergeSurvivesRenormalization:
-    """The merge keys on canonical_track_id, not the normalized name pair.
+    """The merge keys on canonical_track_id first, not only the normalized name pair.
 
     Normalization is expected to improve, and each improvement rewrites
     artist_normalized/track_normalized. Keying the merge on those strings
@@ -434,10 +434,10 @@ class TestMergeSurvivesRenormalization:
     def test_promoted_identity_still_merges_by_name(self) -> None:
         """Phase 5a resolving an ISRC moves the id *computed* from a source row.
 
-        The source rows carry no canonical_track_id — the intermediates don't
-        propagate it — so the merge computes one, and a freshly resolved ISRC
+        A source row from before Phase 4e carries no canonical_track_id, so the
+        merge computes one, and a freshly resolved ISRC
         makes that computed key jump from norm: to isrc:. The stored id is
-        sticky (merge rule 4 keeps the existing value, and fill_defaults only
+        sticky (merge rule 3 keeps the existing value, and fill_defaults only
         computes when absent), so the two disagree and the name pair is what
         keeps the row from being orphaned.
         """

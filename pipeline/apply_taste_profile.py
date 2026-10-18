@@ -2,7 +2,7 @@
 
 Parses the human-edited ``taste_profile.md`` and derives per-track:
   - saturation_tier  (1, 2, 3, or None)
-  - playlists        (list of slugs)
+  - playlists        (list of slugs: grouping labels, not generated playlists)
   - curation_state   ("locked", "approved", "rejected", or None)
 
 Re-runs every pipeline pass — the markdown is the source of truth, the
@@ -40,7 +40,6 @@ from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
-# Output is the same as the input — taste profile mutates in-place.
 OUTPUT_PATH: Path = REPO_ROOT / "tracks_with_taste.jsonl"
 
 # Profile entries that matched no track, written out so the owner can see what
@@ -95,13 +94,8 @@ def _split_track_artist(item: str) -> tuple[str | None, str]:
 
 
 def parse_taste_profile(markdown: str) -> dict:
-    """Public entry point.
-
-    The v4 "rich" format (tier tables, inline dot-lists, playlist prose) had its
-    own parser until #68 removed it: the committed profile never matched its
-    gate, and its slug map targeted playlists from the retired
-    playlist-generator taxonomy.
-    """
+    """Public entry point. Only the simple format is supported; the v4 "rich"
+    format's parser was removed in #68."""
     return parse_simple_taste_profile(markdown)
 
 
@@ -358,8 +352,9 @@ def apply(
         for candidate in (
             TRACKS_WITH_MOODS_PATH,
             REPO_ROOT / "tracks_with_features.jsonl",
-            REPO_ROOT / "tracks_with_isrcs.jsonl",
             TRACKS_WITH_AVAILABILITY_PATH,
+            REPO_ROOT / "tracks_resolved.jsonl",
+            REPO_ROOT / "tracks_with_isrcs.jsonl",
             TRACKS_WITH_METADATA_PATH,
             TRACKS_PATH,
         ):
@@ -402,9 +397,8 @@ def apply(
     stats["recovered_via_variation"] = recovered
     stats["unmatched_entries"] = len(unmatched)
 
-    # A profile entry that matches nothing is a typo, a renamed credit, or a
-    # track never scrobbled — and they were indistinguishable while the phase
-    # only counted what it set. Name them so the profile can't rot unnoticed.
+    # An entry that matches nothing is a typo, a renamed credit, or a track never
+    # scrobbled. Name them so the profile can't rot unnoticed.
     _write_unmatched(unmatched)
     if unmatched:
         log.warning(

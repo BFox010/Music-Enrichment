@@ -1,32 +1,13 @@
 /* Presentational chart components. All styling via themes.css classNames + CSS vars. */
 const { useMemo, useState, useRef, useLayoutEffect } = React;
 
-/* genre color ramp — derived from --accent at runtime via CSS color-mix-ish.
-   We use fixed hues that read well on dark and harmonize per theme accent. */
-function useGenreColors(genres) {
-  return useMemo(() => {
-    const hues = [262, 192, 152, 28, 330, 50, 280, 210, 96];
-    const map = {};
-    genres.forEach((g, i) => { map[g] = `oklch(0.72 0.13 ${hues[i % hues.length]})`; });
-    return map;
-  }, [genres.join("|")]);
-}
-
 /* ── mood colour identity ──
-   Genres get their hues from position in a ranked list; moods cannot, because
-   the same mood has to be the same colour on every surface — a bar, a chip, a
-   table cell — and those surfaces rank differently or not at all. So moods are
-   pinned by name.
-
-   Fourteen categories is well past the ~8 a flat categorical palette can keep
-   apart, so they are grouped into six families that share a hue and separate
-   on lightness. The family is the thing you read at a glance ("warm = energy,
-   blue = low"); the shade only has to distinguish members once you are looking
-   at one family. Lightness also carries meaning inside a family — Heavy Bass
-   is the dark end of the warm ramp, Dark the dark end of the blue one.
-
-   Same oklch() authoring as useGenreColors, so ambient.js can parse these too
-   if the backdrop is ever pointed at moods. */
+   Pinned by name, not by rank position like genres: a mood must be the same
+   colour on every surface (bar, chip, table cell), and those rank differently.
+   Fourteen moods are too many for a flat categorical palette, so they form six
+   hue families separated by lightness; lightness carries meaning within a
+   family (Heavy Bass is the dark end of warm, Dark of blue).
+   Same oklch() authoring as dashboard.jsx's genreColorMap, so ambient.js can parse them. */
 const MOOD_COLORS = {
   // tender — rose
   "Love":       "oklch(0.74 0.16 12)",
@@ -419,6 +400,60 @@ function AudioFeatureExtremes({ tracks, n = 100 }) {
 }
 
 /* ── Seasonal favorites: 4-up genres/moods/tracks per season ── */
+const SEASON_TOP_TRACKS = 20;
+
+/* Which edges of a scroll box hide rows, so the fade marks a scroll region and
+   not the end of the list. Rows are fixed-height, so the count alone moves the
+   scroll extent. */
+function useScrollEdges(ref, rowCount) {
+  const [edges, setEdges] = useState({ above: false, below: false });
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return undefined;
+    const update = () => {
+      const above = el.scrollTop > 1;
+      const below = el.scrollTop + el.clientHeight < el.scrollHeight - 1;
+      setEdges((p) => (p.above === above && p.below === below ? p : { above, below }));
+    };
+    update();
+    el.addEventListener("scroll", update, { passive: true });
+    // The page mounts hidden (0 height); showing it resizes the box.
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(update) : null;
+    if (ro) ro.observe(el);
+    return () => { el.removeEventListener("scroll", update); if (ro) ro.disconnect(); };
+  }, [rowCount]);
+  return edges;
+}
+
+function SeasonTracks({ tracks, label }) {
+  const ref = useRef(null);
+  const { above, below } = useScrollEdges(ref, tracks.length);
+  const tmax = tracks.length ? tracks[0][1] : 1;
+  const scrolls = above || below;
+  return (
+    <div ref={ref} className={"tracklist mini-tl" + (above ? " more-above" : "") + (below ? " more-below" : "")}
+         tabIndex={scrolls ? 0 : undefined} role={scrolls ? "region" : undefined} aria-label={scrolls ? label : undefined}>
+      {tracks.length ? tracks.map(([key, plays], i) => {
+        const parts = key.split(" — ");
+        const artist = parts.shift(); const title = parts.join(" — ");
+        return (
+          <div className="trk" key={key}>
+            <span className="trk-rank num">{i + 1}</span>
+            <div style={{ minWidth: 0 }}>
+              <div className="trk-name">{title || artist}</div>
+              <div className="trk-artist">{title ? artist : ""}</div>
+            </div>
+            <div className="trk-plays">
+              <div className="mini"><span style={{ width: (plays / tmax) * 100 + "%" }}></span></div>
+              <span className="pc num">{plays}</span>
+            </div>
+          </div>
+        );
+      }) : <div className="dr-empty">—</div>}
+    </div>
+  );
+}
+
 function SeasonalFavorites({ drill }) {
   const order = [["winter", "❄", "Winter"], ["spring", "✿", "Spring"], ["summer", "☀", "Summer"], ["fall", "🍂", "Fall"]];
   if (!drill || !drill.season) {
@@ -428,8 +463,7 @@ function SeasonalFavorites({ drill }) {
     <div className="grid g-2 seasonal-grid">
       {order.map(([key, glyph, name]) => {
         const s = drill.season[key] || { genres: {}, moods: {}, tracks: {}, total: 0 };
-        const genres = _topN(s.genres, 4), moods = _topN(s.moods, 4), tracks = _topN(s.tracks, 5);
-        const tmax = tracks.length ? tracks[0][1] : 1;
+        const genres = _topN(s.genres, 4), moods = _topN(s.moods, 4), tracks = _topN(s.tracks, SEASON_TOP_TRACKS);
         return (
           <div className={"card season-card season-" + key} key={key}>
             <div className="card-head norule">
@@ -445,25 +479,7 @@ function SeasonalFavorites({ drill }) {
               {moods.length ? moods.map(([m, n]) => <span className="tagchip mood-chip" key={m} style={{ "--mood": moodColor(m) }}>{m}<span className="tc-n num">{n}</span></span>) : <span className="dr-empty">—</span>}
             </div>
             <div className="season-sub">Most played</div>
-            <div className="tracklist mini-tl">
-              {tracks.length ? tracks.map(([label, plays], i) => {
-                const parts = label.split(" — ");
-                const artist = parts.shift(); const title = parts.join(" — ");
-                return (
-                  <div className="trk" key={label}>
-                    <span className="trk-rank num">{i + 1}</span>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="trk-name">{title || artist}</div>
-                      <div className="trk-artist">{title ? artist : ""}</div>
-                    </div>
-                    <div className="trk-plays">
-                      <div className="mini"><span style={{ width: (plays / tmax) * 100 + "%" }}></span></div>
-                      <span className="pc num">{plays}</span>
-                    </div>
-                  </div>
-                );
-              }) : <div className="dr-empty">—</div>}
-            </div>
+            <SeasonTracks tracks={tracks} label={name + " most played"} />
           </div>
         );
       })}
@@ -473,11 +489,10 @@ function SeasonalFavorites({ drill }) {
 
 /* ── Mood distribution ── */
 function MoodBars({ items, max, activeKey, onPick }) {
-  /* Each bar is split into the share you labelled by hand and the share a
-     classifier inferred. Worth showing plainly: the classifier is only allowed
-     to emit the few moods it can actually predict, so those moods draw on one
-     more source than the withheld ones do. Without the split, that asymmetry
-     would read as a fact about your taste. */
+  /* Each bar splits the curated share (OWNER_MOOD_SOURCES in dashboard.jsx)
+     from the classifier-inferred share. The classifier may emit only the moods
+     it can predict, so those draw on one more source than the withheld ones;
+     without the split that asymmetry reads as a fact about your taste. */
   const ref = useFlipRows(items.map((m) => m.key).join("|"));
   return (
     <div className="moods" ref={ref}>
@@ -601,4 +616,4 @@ function CoverageBars({ rows, total }) {
   );
 }
 
-Object.assign(window, { MOOD_COLORS, moodColor, HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, useGenreColors, DrillPanel, SeasonalFavorites });
+Object.assign(window, { MOOD_COLORS, moodColor, HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, DrillPanel, SeasonalFavorites });

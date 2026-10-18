@@ -41,11 +41,8 @@ from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
-# Input preference — deepest first. Prefer the Phase 3c audio output (carries
-# audio_features + spotify_id forward so the chain stays linear and every field
-# reaches Phase 8), falling back to Phase B's output, then the Phase A apple
-# output, then the skeleton. Phase B was missing, so its ISRCs and spotify_ids
-# never reached Phase 4 when 3c didn't run (#98).
+# Standalone-CLI fallback, deepest first. Don't drop Phase B's output: when 3c
+# doesn't run, B's ISRCs and spotify_ids would never reach Phase 4 (#98).
 _INPUT_PRIORITY = [
     TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_SPOTIFY_PATH,
@@ -95,7 +92,6 @@ def _extract_lastfm_fields(response: Any) -> dict[str, Any]:
         toptags = [toptags]
     tags = [t.get("name") for t in toptags if isinstance(t, dict) and t.get("name")]
 
-    # MBIDs
     track_mbid = track.get("mbid") or None
     artist = track.get("artist") or {}
     artist_mbid = artist.get("mbid") if isinstance(artist, dict) else None
@@ -124,16 +120,12 @@ def _response_is_usable(response: Any) -> bool:
 def _apply_lastfm_fields(track: dict, fields: dict[str, Any], usable: bool) -> None:
     """Merge Phase 4's findings, never trading a known value for a blank.
 
-    Phase 2 seeds ``musicbrainz_id``/``artist_mbid`` from the export's own mbid,
-    so thousands of rows arrive already carrying one. Assigning unconditionally
-    let a single transient Last.fm error discard an identifier this phase never
-    fetched — and with it re-key ``canonical_track_id``, which is ``mbid:`` for
-    most of the library (CLAUDE.md invariant 4). Gap-fill instead, the same
-    discipline ``update_tracks._merge_with_existing`` applies at Phase 8.
+    Don't assign the MBIDs unconditionally: Phase 2 seeds them from the export,
+    and a transient Last.fm error would discard one and re-key
+    ``canonical_track_id`` (CLAUDE.md invariant 4).
 
-    Tags are different: a successful re-run legitimately prunes them to nothing
-    once ``tag_filter`` learns a new noise rule, so an empty list is only
-    refused when the response itself failed.
+    Tags may go empty on a successful response (``tag_filter`` can prune them
+    all), so an empty list is only refused when the response itself failed.
     """
     for field in ("musicbrainz_id", "artist_mbid"):
         incoming = fields.get(field)
@@ -172,21 +164,13 @@ def _lookup_with_variations(
 ) -> tuple[dict[str, Any], Any, str]:
     """Query Last.fm for a track, retrying through name variations.
 
-    Tries ``original`` first (preserving the existing cache key so prior runs
-    still hit cache), then the measured recovery rules — strip_feat,
-    strip_parens, first_artist.
+    ``original`` keeps the bare cache key so prior runs still hit cache. Retries
+    continue **while the tags are empty**, even once an MBID has landed: Phase
+    4c derives genres from tags (#75). Fields accumulate across variations.
 
-    Retries continue **while the tags are empty**, whether or not an MBID has
-    already landed (#75). Stopping at the first *actionable* response let an
-    MBID with zero tags end the search on exactly the rows whose tags are
-    missing — and tags are what Phase 4c derives genres from, so the gap
-    propagated. Fields are accumulated across the variations tried rather than
-    taken from one: the MBID from whichever query answered first, the tags from
-    whichever query found any.
-
-    Returns ``(fields, response, variation_label)``, where the response is the
-    one that supplied the tags, else the original query's — so the caller can
-    still classify a genuine error or no-match.
+    Returns ``(fields, response, variation_label)``; the response is the one
+    that supplied the tags, else the original's, so the caller can still
+    classify a genuine error or no-match.
     """
     base_key = f"{track['artist_normalized']}|{track['track_normalized']}"
     merged: dict[str, Any] | None = None
@@ -248,7 +232,7 @@ def enrich(
     Parameters
     ----------
     input_path: Path | None
-        Defaults to ``tracks_with_apple.jsonl`` if it exists, otherwise skeleton.
+        Defaults to the first existing of ``_INPUT_PRIORITY``.
     limit: int | None
         Process only the first N tracks (debug/dry-run). None = all.
     force: str
@@ -279,15 +263,13 @@ def enrich(
             line = line.strip()
             if line:
                 tracks.append(json.loads(line))
+    # Noise-tag filtering drops artist-name-as-tag entries using the library's own
+    # artist set. Don't build it after the limit= slice: a debug run's set is partial.
+    artist_block = build_artist_block(tracks)
+    log.info("Artist-name block set: %d names", len(artist_block))
     if limit is not None:
         tracks = tracks[:limit]
     log.info("Tracks to enrich: %d", len(tracks))
-
-    # Noise-tag filtering needs the library's own artist set so it can drop
-    # artist-name-as-tag entries (built from the full track list, not the
-    # possibly-truncated debug slice would miss artists — so use all tracks).
-    artist_block = build_artist_block(tracks)
-    log.info("Artist-name block set: %d names", len(artist_block))
 
     client = RateLimitedClient(
         LASTFM_CACHE,
@@ -344,7 +326,6 @@ def enrich(
                 track["lastfm_listeners"] = lastfm_listeners
             if lastfm_playcount is not None:
                 track["lastfm_playcount"] = lastfm_playcount
-            # Initialise downstream fields if absent
             track.setdefault("genres", [])
             track.setdefault("discogs_styles", [])
             enriched.append(track)

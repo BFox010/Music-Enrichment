@@ -1,4 +1,5 @@
-/* Pure transforms shared by dashboard.jsx and data-worker.js (via importScripts).
+/* Pure transforms shared by dashboard.jsx and data-worker.js (via importScripts);
+   motion.js and ambient.js also use readPref/writePref.
    No React/DOM/JSX — must run inside a Web Worker.
    Loaded as <script defer> BEFORE app.bundle.js; these top-level decls are globals. */
 
@@ -24,18 +25,10 @@ function seasonKeyOf(d) {
   return `${d.getUTCFullYear()}-${season}`;
 }
 
-/* Timeframe anchor.
-
-   These windows used to be computed from the browser clock at module load.
-   That silently broke whenever the library was not synced today: with data
-   ending 2026-05-07 and a clock reading 2026-08-16, "This month" and "Last
-   month" matched nothing and the dashboard rendered as though no music had
-   ever been played.
-
-   The anchor now follows the data. If the newest scrobble is recent the wall
-   clock is used, which keeps "this month" meaning the real current month for
-   anyone syncing regularly; otherwise windows are measured back from the last
-   day with data, and `stale` lets the UI say so out loud. */
+/* Timeframe anchor. Don't anchor on the wall clock alone: a library not synced
+   recently then matches nothing in "This month" and reads as no listening.
+   Recent data uses the wall clock; otherwise windows count back from the last
+   day with data, and `stale` lets the UI say so. */
 const FRESH_WITHIN_DAYS = 7;
 
 /* Seeded from the wall clock so the object is coherent before any data has
@@ -82,12 +75,10 @@ function computeAnchor(scrobbleRows) {
   return ANCHOR;
 }
 
-/* computeAnchor() runs wherever processLibrary() runs, which is normally the
-   worker — a separate realm with its own ANCHOR. The main thread reads ANCHOR
-   for the year KPIs, the filter bar and the "data through" note, so without
-   this it kept its wall-clock seed: "This month" counted the data's month
-   under the current month's label, and the stale note never rendered (#102).
-   The worker posts its ANCHOR back and the main thread adopts it here. */
+/* computeAnchor() normally runs in the worker, a separate realm with its own
+   ANCHOR. The main thread must adopt the worker's copy here, or its KPIs,
+   filter bar and "data through" note keep the wall-clock seed and label the
+   data's month as the current one (#102). */
 function adoptAnchor(a) {
   if (!a) return ANCHOR;
   Object.assign(ANCHOR, a);
@@ -113,10 +104,9 @@ function anchorPeriodKey(tf) {
   }
 }
 
-/* Preferences. localStorage throws, rather than returning null, when site
-   storage is blocked, and every read here ran during first render, so a blocked
-   browser got a blank page (#113). A failed read means "no preference"; a
-   failed write is dropped. */
+/* Preferences. localStorage throws when site storage is blocked, and these
+   reads run during first render, so an unguarded call blanks the page (#113).
+   A failed read means "no preference"; a failed write is dropped. */
 function readPref(key) {
   try { return localStorage.getItem(key); } catch (e) { return null; }
 }
@@ -126,10 +116,9 @@ function writePref(key, value) {
 
 /* The library state after a load (live fetch, refresh or file drop).
    processLibrary() returns drill and cube only when it had both tracks and
-   scrobbles, because both are cross-joins of the two. A single-file drop used
-   to keep the previous load's cube and drill: the "This month" KPI read the new
-   tracks while the charts read the old cube, and drill-down rows were
-   attributed through the old track indices (#113). They are cleared instead.
+   scrobbles, since both cross-join the two. Don't carry the previous load's
+   drill/cube over a single-file load: its track indices point into the old
+   tracks, so the charts and drill-down disagree with the KPIs (#113).
    Returns null when the load produced nothing. */
 function loadedState(prevData, result) {
   if (!result || (!result.nt && !result.ns)) return null;
@@ -183,8 +172,7 @@ function normalizeTrack(raw, i) {
 }
 
 /* "2016–2026" from aggregateScrobbles()'s byYear, or "" when there is none.
-   The app bar read meta.scrobbleRange, which only the sample library sets,
-   so live data always showed "—" (#120). */
+   meta.scrobbleRange is set only by the sample library (#120). */
 function scrobbleYearRange(byYear) {
   const years = Object.keys(byYear || {}).map(Number).filter((y) => y > 0);
   if (!years.length) return "";
@@ -225,15 +213,12 @@ function trackKey(o) {
   return a + "\x00" + t;
 }
 
-/* The credit variants Phase 4e folded into a track (identity_aliases, carried
-   through by /api/tracks.min once F-03 added it to MIN_TRACK_FIELDS). A play
-   logged under a historical artist credit only matches the current display
-   name through one of these — without them, browser joins undercount in
-   exactly the cases the server's alias-aware app.metrics._track_index()
-   already handles, so charts and KPIs disagree.
-
-   Kept separate from the primary key because the two carry different
-   authority when they collide; see buildTrackIndex. */
+/* The credit variants Phase 4e folded into a track (identity_aliases, shipped
+   in /tracks.min.jsonl via MIN_TRACK_FIELDS, F-03). A play logged under a
+   historical artist credit matches the current row only through one of these;
+   without them the browser undercounts where app.metrics._track_index() does
+   not. Kept apart from the primary key: the two carry different authority
+   when they collide (see buildTrackIndex). */
 function aliasKeys(o) {
   const keys = [];
   const aliases = o.identity_aliases;
@@ -247,14 +232,12 @@ function aliasKeys(o) {
   }
   return keys;
 }
-/* Alias-aware key → track-array-index map. Collision arbitration mirrors
-   app.metrics._track_index() line for line, because the two must resolve any
-   given scrobble to the same track or the dashboard contradicts the API:
-   a primary key is assigned unconditionally (so owning a name outright always
-   beats another track merely claiming it as an alias, whatever the row order),
-   while an alias only fills a key nothing has claimed yet. Treating both as
-   first-writer-wins let an earlier row's alias shadow a later row's own name —
-   the exact server/client divergence F-03 exists to remove. */
+/* Alias-aware key → track-array-index map. Collision arbitration must match
+   app.metrics._track_index(), or the dashboard and the API credit a scrobble
+   to different tracks: a primary key is assigned unconditionally (owning a
+   name beats another row's alias, whatever the row order), while an alias only
+   fills a key nothing has claimed. Don't make both first-writer-wins: an
+   earlier row's alias would shadow a later row's own name (F-03). */
 function buildTrackIndex(rawTracks) {
   const idx = new Map();
   for (let i = 0; i < rawTracks.length; i++) {
@@ -268,12 +251,10 @@ function buildTrackIndex(rawTracks) {
   return idx;
 }
 
-/* Windowed counts per *track*, not per key. Each scrobble is resolved through
-   the shared index to exactly one track — the same one-scrobble-one-track rule
-   app.metrics._lookup() applies — so a key two rows both claim (one owns the
-   name, the other lists it as an alias) is credited once, to the row the index
-   picked. Accumulating per key and then summing every key a track claims
-   double-counted those plays into both rows. */
+/* Windowed counts per *track*, not per key: each scrobble resolves through the
+   shared index to exactly one track, as in app.metrics._lookup(). Don't
+   accumulate per key and sum each track's keys: a key two rows claim (one's
+   name, the other's alias) would be counted into both. */
 function buildPlayWindows(scrobbleRows, idx) {
   computeAnchor(scrobbleRows);
   const map = new Map();
@@ -317,8 +298,8 @@ function attachWindows(rawTracks, scrobbleRows) {
 }
 
 /* Cross-join scrobbles → tracks to count genres/moods/tracks per time slice
-   (season, hour-of-day, day-of-week). Powers the overview drill-downs and the
-   Seasonal Favorites page. Computed once at load from the in-memory rows. */
+   (season, hour-of-day, day-of-week). Powers the Seasonal Favorites page; the
+   overview drill-down reads the cube instead. Computed once at load. */
 function buildDrill(rawTracks, scrobbleRows) {
   if (!rawTracks || !scrobbleRows || !scrobbleRows.length) return null;
   // Same index, same arbitration as the windows and the cube, so a scrobble
@@ -353,18 +334,13 @@ function buildDrill(rawTracks, scrobbleRows) {
 }
 
 /* ── scrobble cube ──
-   The overview charts cross-filter, so each re-aggregates whenever the timeframe
-   or another chart's selection changes. Pre-baked buckets (byHour / byDow /
+   The overview charts cross-filter, and pre-baked buckets (byHour / byDow /
    buildDrill) cannot answer "hours, but only on Tuesdays, this month", so the
-   per-scrobble facts are kept as parallel typed arrays instead of objects.
-
-   Transferable to the main thread with no structured-clone cost, and a full
-   re-aggregation is one linear pass over contiguous memory — sub-millisecond,
-   so filtering stays instant.
-
-   `tf` is a bitmask of which timeframe windows each scrobble falls in, computed
-   from the same ANCHOR that drives playInWindow(). That is what keeps the charts
-   numerically consistent with the KPI row. */
+   per-scrobble facts are kept as parallel typed arrays: transferable from the
+   worker without a structured clone, and re-aggregated in one linear pass.
+   `tf` is a bitmask of the timeframe windows each scrobble falls in, computed
+   from the same ANCHOR as playInWindow(), which keeps the charts consistent
+   with the KPI row. */
 
 const TF_BITS = {
   year_this: 1, year_last: 2, season_this: 4, season_last: 8,
@@ -488,4 +464,40 @@ function processLibrary(rawTracks, scrobbleRows) {
     nt = rawTracks.map(normalizeTrack);
   }
   return { nt, ns, drill, cube };
+}
+
+/* Trajectory picker colour slots, as { name: slotIndex }. A newly selected
+   artist takes the lowest free slot; a deselected one frees only its own.
+   Never reassign a surviving artist's slot: that recolours its line when
+   someone else is toggled. Hashing names instead collides at 8 picks. */
+function assignColorSlots(prev, selectedNames, size) {
+  const next = {};
+  const used = new Array(size).fill(0);
+  for (const n of selectedNames) {
+    const s = prev ? prev[n] : undefined;
+    if (s != null && s < size) { next[n] = s; used[s]++; }
+  }
+  for (const n of selectedNames) {
+    if (next[n] != null) continue;
+    let slot = used.indexOf(0);
+    // More picks than colours: share the least-used slot rather than move anyone.
+    if (slot < 0) slot = used.indexOf(Math.min(...used));
+    next[n] = slot;
+    used[slot]++;
+  }
+  return next;
+}
+
+/* Picker chips: selected artists first, then the filter's matches, each group
+   in the input's (play-count) order. Selected chips ignore the filter so a
+   pick can always be clicked off; `limit` caps only the unselected tail. */
+function orderPickerChips(ranked, selected, query, limit) {
+  const q = (query || "").trim().toLowerCase();
+  const picked = [], rest = [];
+  for (const a of ranked) {
+    if (selected && selected.has(a.name)) picked.push(a);
+    else if (!q || a.name.toLowerCase().includes(q)) rest.push(a);
+  }
+  const room = Math.max(0, limit - picked.length);
+  return { chips: picked.concat(rest.slice(0, room)), picked, hidden: Math.max(0, rest.length - room) };
 }

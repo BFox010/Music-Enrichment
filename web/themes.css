@@ -182,6 +182,8 @@ a { color: inherit; }
 .sync-stat { font-family: var(--kpi-family); font-size: 32px; color: var(--text);
              font-weight: var(--display-weight); letter-spacing: var(--display-spacing); }
 .sync-sub  { font-size: 12.5px; color: var(--muted-s); margin-top: 4px; }
+.sync-last { margin-top: 12px; }
+.sync-last b { color: var(--text-2); }
 .sync-hint {
   margin-top: 18px; padding: 14px 16px; border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--warn) 10%, var(--panel));
@@ -200,6 +202,7 @@ a { color: inherit; }
   background: var(--accent); color: var(--accent-ink);
   border: 0; cursor: pointer; transition: opacity .15s;
 }
+.sync-card .btn-sync { margin-top: 18px; }
 .btn-sync:hover { opacity: .88; }
 .btn-sync:disabled { opacity: .45; cursor: default; }
 .btn-sync svg { width: 16px; height: 16px; }
@@ -285,6 +288,7 @@ a { color: inherit; }
 }
 .btn:hover { color: var(--text); border-color: var(--faint); }
 .btn svg { width: 15px; height: 15px; }
+.btn.btn-icon { padding: 9px 11px; }
 
 /* search */
 .search { position: relative; display: flex; align-items: center; }
@@ -751,11 +755,31 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .season-sub:first-of-type { margin-top: 4px; }
 .season-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .season-chips .tagchip { cursor: default; padding: 4px 9px; font-size: 12px; }
-.mini-tl { margin-top: 2px; }
+/* Equal rows keep the four cards one height whatever each season holds. */
+.seasonal-grid { grid-auto-rows: 1fr; }
+/* Five and a half rows: the cut-off row and the fade both read as "scroll". */
+.mini-tl { margin-top: 2px; max-height: 278px; overflow-y: auto; overscroll-behavior: contain;
+           scrollbar-width: thin; scrollbar-color: var(--line) transparent; border-radius: var(--radius-sm); }
+.mini-tl::-webkit-scrollbar { width: 6px; }
+.mini-tl::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.mini-tl:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.mini-tl.more-below { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent);
+                      mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent); }
+.mini-tl.more-above { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px);
+                      mask-image: linear-gradient(to bottom, transparent, #000 28px); }
+.mini-tl.more-above.more-below { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 44px), transparent);
+                                 mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 44px), transparent); }
 .mini-tl .trk { padding: 6px 4px; }
 .mini-tl .trk-plays .mini { width: 44px; }
 
 /* artist picker */
+/* Trajectory series colours, one per picker slot; the chart reads them as
+   resolved hex, so keep them hex: ECharts can't parse oklch(). Validated as
+   a set (CVD + contrast) on --panel and on white, so they hold on either. */
+:root {
+  --artist-1: #3987e5; --artist-2: #d95926; --artist-3: #199e70; --artist-4: #c98500;
+  --artist-5: #d55181; --artist-6: #008300; --artist-7: #9085e9; --artist-8: #e66767;
+}
 .artist-picker { margin-bottom: 18px; }
 .ap-search { position: relative; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .ap-search > svg { position: absolute; left: 12px; width: 14px; height: 14px; color: var(--muted-s); pointer-events: none; }
@@ -769,9 +793,14 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .ap-chip { appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--panel-2); color: var(--muted-s); font-size: 12.5px; font-family: var(--font-body); transition: all .14s; }
 .ap-chip:hover { border-color: var(--faint); color: var(--text-2); }
 .ap-chip .ap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: background .14s; }
-.ap-chip.on { background: color-mix(in oklab, var(--accent) 18%, var(--panel)); border-color: var(--accent); color: var(--text); }
-.ap-chip.on .ap-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.ap-chip.on { background: color-mix(in oklab, var(--ap-color, var(--accent)) 16%, var(--panel)); border-color: var(--ap-color, var(--accent)); color: var(--text); }
+.ap-chip.on .ap-dot { background: var(--ap-color, var(--accent)); box-shadow: 0 0 8px var(--ap-color, var(--accent)); }
 .ap-more { margin: 9px 2px 0; font-size: 11.5px; color: var(--muted-s); }
+
+/* audio-features axis pickers (the select itself is .fb-sort's) */
+.af-pick { gap: 6px; }
+.af-pick-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; }
+.af-pick select option:disabled { color: var(--faint); }
 
 /* listening calendar */
 .echart-wrap.cal { width: 100%; min-height: 220px; }

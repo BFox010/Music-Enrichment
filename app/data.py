@@ -23,18 +23,11 @@ logger = logging.getLogger(__name__)
 class Snapshot:
     """One consistent generation of the in-memory library.
 
-    ``tracks`` and ``scrobbles`` are always published together as a single
-    unit: ``load()`` builds both lists in local variables first and publishes
-    them with one reassignment of the module-level reference below, which is
-    the one operation here that's atomic under the GIL. FastAPI runs sync
-    route handlers in a threadpool, so without this a reader could otherwise
-    see a new track set paired with a still-old scrobble set (or vice versa)
-    if a ``reload()`` landed between two separate global reads.
-
-    A computation that needs both collections should call ``get_snapshot()``
-    once and read both off the result, rather than calling ``get_tracks()``
-    and ``get_scrobbles()`` separately — those aren't guaranteed to land on
-    the same generation either, for the same reason.
+    ``load()`` builds both lists first and publishes them with one reassignment
+    of the module-level reference, the only step here atomic under the GIL.
+    Sync handlers run in a threadpool, so two separate global reads could pair
+    new tracks with old scrobbles across a ``reload()``. Code needing both must
+    call ``get_snapshot()`` once, not ``get_tracks()`` + ``get_scrobbles()``.
     """
 
     tracks: list[dict]
@@ -58,7 +51,7 @@ _generation_counter = 0
 def _load_jsonl(path: Path) -> tuple[list[dict], int]:
     """Load a JSONL file, skipping malformed lines instead of crashing.
 
-    This module loads at import time, so a single bad line must not take down
+    ``app.main`` loads at import time, so a single bad line must not take down
     the whole API. Unparseable rows are logged and skipped. Returns the parsed
     rows plus the number of rows skipped, so callers can surface corruption.
     """

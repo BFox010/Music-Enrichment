@@ -40,12 +40,12 @@ allowlist is derived by `pipeline.evaluate_moods` and lives in `mood_eval.json`.
 
 ## How to re-derive (reproducible)
 
-```bash
-python scripts/eval_mood_centroids.py          # human-readable report
-python scripts/eval_mood_centroids.py --json    # machine-readable
-```
+`scripts/eval_mood_centroids.py`, the report this section describes, never landed on
+`main`. Today's measurement is `python -m pipeline.evaluate_moods`, which writes the
+per-mood precision and the allowlist to `mood_eval.json`. The rest of this section
+records how the original report worked.
 
-The report needs **no** audit CSV — it derives `human` vs `centroid` purely from
+The report needed **no** audit CSV — it derives `human` vs `centroid` purely from
 `mood_source` + `genres` + `audio_features` already in `tracks.jsonl`, so it runs in any
 environment (including the cloud container without the gitignored input CSVs). Two triggers:
 
@@ -84,7 +84,7 @@ Replaced the qualitative spot-check with `scripts/eval_mood_centroids.py`. Evide
 | **Moody** | Centroid tempo mean **138 BPM** vs human 128; **100%** of centroid-Moody is >105 BPM. Keys on low valence, ignores tempo → drags in fast intense tracks (e.g. *Blinding Lights*, 171 BPM). | **gate**: tempo < 125 |
 | **Slow** | Centroid mean 98 BPM (genuinely slow) but **~30%** of centroid-Slow is >105 BPM — the global 1.6 threshold is too loose. (Also the Group C "drift" never cleaned from tracks.jsonl.) | **gate**: tempo < 105 |
 
-**Thresholds** (`SLOW_TEMPO_MAX=105`, `MOODY_TEMPO_MAX=125`) are tunable — re-check
+**Thresholds** (`SLOW_TEMPO_MAX=105`, `MOODY_TEMPO_MAX=125`; both removed along with the treatments dict) were tunable — re-check
 `pct>105` and the centroid/human tempo gap in the report after any change.
 
 **Applied (historical):** a since-removed `scripts/cleanup_centroid_moods.py --apply`
@@ -92,7 +92,11 @@ scrubbed existing centroid tags in place (Heavy Bass −464, Moody −239, Slow 
 fully cleared), leaving audit/Claude tags untouched. It shared its policy function with
 the classifier of the day, so a Phase 6 re-run converged to the same result.
 
-## Open follow-ups (not yet acted on)
+## Open follow-ups (superseded)
+
+Both items below assumed the hand-kept treatments. The measured allowlist in
+`mood_eval.json` now decides each mood on cross-validated precision, so neither applies
+as written.
 
 - **Fast → gate?** Currently *suppressed* (Group B), but it's tempo-correlated (human-Fast
   ~147 BPM). Could migrate suppress → gate (`tempo > 140`) to recover medium-confidence Fast
@@ -144,7 +148,7 @@ Two different things share the name; for bass we only have the first:
 
 | | Status |
 |---|---|
-| Reproducible **measurement of the centroid's failure + suppression decision** | ✅ `eval_mood_centroids.py` re-derives the 8–14x genre over-tag deterministically (no randomness/network); `apply_centroid_policy()` enforces it identically across classifier, cleanup, and future re-runs. |
+| Reproducible **measurement of the centroid's failure + suppression decision** | ✅ `python -m pipeline.evaluate_moods` measures per-mood precision deterministically (fixed seed, no network) and withholds Heavy Bass via the allowlist in `mood_eval.json`, which Phase 6 reads. (Originally `eval_mood_centroids.py` and `apply_centroid_policy()`, neither of which is on `main`.) |
 | Reproducible **detection of bass itself** | ❌ None. We suppressed the only automated path because it was wrong. Heavy Bass is now 100% human/Claude labels — version-controlled, but not *calculated*. |
 
 ### Options for a reproducible bass *signal* (measured 2026-06-05)

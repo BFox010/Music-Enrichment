@@ -1,18 +1,13 @@
 """Last.fm folksonomy tag noise filtering.
 
-Drops four noise classes, keeping genres, decades, and real descriptors:
-
-  1. Radio stations   — "wsum 91.7 fm madison", "88.5 fm"
-  2. Artist-as-tag    — "kanye west" (matched against the library's own artist
-                        set, so it adapts per run)
-  3. Personal lists   — "my top songs", "my favorites"
-  4. Specific years   — "2016". Decades ("90s", "2010s") are KEPT.
+Drops radio stations ("88.5 fm"), artist-as-tag ("kanye west", matched against
+the library's own artists), personal lists ("my favorites") and specific years
+("2016"; decades like "90s" are KEPT).
 
 Biased toward *under*-blocking: a protected allowlist of genre/mood/reaction
-words guarantees real descriptors survive even when they collide with an
-artist name.
+words survives even when it collides with an artist name.
 
-Used by Phase 4 before writing, and by the cleanup that scrubs written JSONL.
+Used by Phases 4 and 4d before writing tags.
 """
 
 from __future__ import annotations

@@ -15,6 +15,8 @@
 //
 // Defaults are fenced as /*EDITMODE-BEGIN*/{...}/*EDITMODE-END*/ for the host to rewrite.
 //
+// With no host (the page is not framed), call toggleTweaks() from a page control.
+//
 // Picking a control: TweakRadio for 2-3 short options (it auto-falls back to
 // TweakSelect past ~16 chars/label); TweakSelect when options are many or long.
 // For colors curate 3-4 options rather than a free picker — an option may be a
@@ -133,6 +135,18 @@ const __TWEAKS_STYLE = `
     filter:drop-shadow(0 1px 1px rgba(0,0,0,.3))}
 `;
 
+// Not framed, window.parent is this window: posting there would message ourselves.
+const __TWK_EMBEDDED = window.parent !== window;
+const __TWK_TOGGLE_EVENT = 'tweaks:toggle';
+
+function __twkPostToHost(msg) {
+  if (__TWK_EMBEDDED) window.parent.postMessage(msg, '*');
+}
+
+function toggleTweaks() {
+  window.dispatchEvent(new Event(__TWK_TOGGLE_EVENT));
+}
+
 // ── useTweaks ──
 // Single source of truth for tweak values. setTweak persists via the host
 // (__edit_mode_set_keys → host rewrites the EDITMODE block on disk).
@@ -145,9 +159,9 @@ function useTweaks(defaults) {
     const edits = typeof keyOrEdits === 'object' && keyOrEdits !== null
       ? keyOrEdits : { [keyOrEdits]: val };
     setValues((prev) => ({ ...prev, ...edits }));
-    window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
-    // Same-window signal so in-page listeners (deck-stage rail thumbnails)
-    // can react — the parent message only reaches the host, not peers.
+    __twkPostToHost({ type: '__edit_mode_set_keys', edits });
+    // Same-window signal so in-page listeners can react — the parent message
+    // only reaches the host, not peers.
     window.dispatchEvent(new CustomEvent('tweakchange', { detail: edits }));
   }, []);
   return [values, setTweak];
@@ -157,9 +171,8 @@ function useTweaks(defaults) {
 // Floating shell. Registers the protocol listener BEFORE announcing
 // availability — if the announce ran first, the host's activate could land
 // before our handler exists and the toolbar toggle would silently no-op.
-// The close button posts __edit_mode_dismissed so the host's toolbar toggle
-// flips off in lockstep; the host echoes __deactivate_edit_mode back which
-// is what actually hides the panel.
+// The close button hides the panel and posts __edit_mode_dismissed so the
+// host's toolbar toggle flips off in lockstep.
 function TweaksPanel({ title = 'Tweaks', children }) {
   const [open, setOpen] = React.useState(false);
   const dragRef = React.useRef(null);
@@ -198,14 +211,19 @@ function TweaksPanel({ title = 'Tweaks', children }) {
       if (t === '__activate_edit_mode') setOpen(true);
       else if (t === '__deactivate_edit_mode') setOpen(false);
     };
+    const onToggle = () => setOpen((o) => !o);
     window.addEventListener('message', onMsg);
-    window.parent.postMessage({ type: '__edit_mode_available' }, '*');
-    return () => window.removeEventListener('message', onMsg);
+    window.addEventListener(__TWK_TOGGLE_EVENT, onToggle);
+    __twkPostToHost({ type: '__edit_mode_available' });
+    return () => {
+      window.removeEventListener('message', onMsg);
+      window.removeEventListener(__TWK_TOGGLE_EVENT, onToggle);
+    };
   }, []);
 
   const dismiss = () => {
     setOpen(false);
-    window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*');
+    __twkPostToHost({ type: '__edit_mode_dismissed' });
   };
 
   const onDragStart = (e) => {
@@ -303,11 +321,9 @@ function TweakRadio({ label, value, options, onChange }) {
   const valueRef = React.useRef(value);
   valueRef.current = value;
 
-  // Segments wrap mid-word once per-segment width runs out. The track is
-  // ~248px (280 panel − 28 body pad − 4 seg pad), each button loses 12px
-  // to its own padding, and 11.5px system-ui averages ~6.3px/char — so 2
-  // options fit ~16 chars each, 3 fit ~10. Past that (or >3 options), fall
-  // back to a dropdown rather than wrap.
+  // Fall back to a dropdown rather than let segments wrap mid-word: the ~248px
+  // track, less 12px padding per button, at ~6.3px/char fits ~16 chars across
+  // 2 options and ~10 across 3. Any other option count always falls back.
   const labelLen = (o) => String(typeof o === 'object' ? o.label : o).length;
   const maxLen = options.reduce((m, o) => Math.max(m, labelLen(o)), 0);
   const fitsAsSegments = maxLen <= ({ 2: 16, 3: 10 }[options.length] ?? 0);
@@ -503,5 +519,5 @@ function TweakButton({ label, onClick, secondary = false }) {
 Object.assign(window, {
   useTweaks, TweaksPanel, TweakSection, TweakRow,
   TweakSlider, TweakToggle, TweakRadio, TweakSelect,
-  TweakText, TweakNumber, TweakColor, TweakButton,
+  TweakText, TweakNumber, TweakColor, TweakButton, toggleTweaks,
 });

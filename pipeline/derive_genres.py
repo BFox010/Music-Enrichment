@@ -9,8 +9,8 @@ sources (in priority order):
 
 Maps each source against GENRE_TAG_MAP to produce a de-duplicated list of
 canonical genres (e.g. ``["Hip-Hop / Rap", "Electronic"]``).  Tracks with none
-of the three sources get ``genres: []`` — a subsequent Claude batch can fill
-those if desired.
+of the three sources get ``genres: []``; Phase 4d backfills those at artist
+level.
 
 No API calls.  Runs in seconds.
 
@@ -40,14 +40,9 @@ from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
-# Input preference — deepest in the chain first. Phase 4b (Discogs) is the
-# immediate predecessor but is optional: it is skipped without a DISCOGS_TOKEN,
-# and this phase is required. Pinning the input to 4b's output meant a run
-# without Discogs credentials either halted the whole pipeline here or, worse,
-# silently re-derived genres from a *stale* tracks_with_discogs.jsonl left by an
-# earlier run — dropping every tag Phase 4 had just fetched and every track
-# ingested since. Falling back the way every sibling phase does keeps the chain
-# linear when an optional phase drops out.
+# Deepest first. Don't pin this to 4b's output: 4b is optional (no
+# DISCOGS_TOKEN → skipped) and this phase is required, so a run without Discogs
+# would halt here or re-derive from a stale discogs file (see _pick_input).
 _INPUT_PRIORITY: list[Path] = [
     TRACKS_WITH_DISCOGS_PATH,
     TRACKS_WITH_METADATA_PATH,
@@ -76,8 +71,7 @@ GENRE_CATEGORIES: tuple[str, ...] = (
 
 # ── Tag → genre mapping ──
 # Keys are lowercase. A tag can map to multiple genres (e.g. "jazz rap" → both).
-# More specific entries take precedence when ordering matters, but since we
-# collect all matches the only risk is over-tagging — kept conservative.
+# Every matching tag contributes, so the only risk is over-tagging — kept conservative.
 GENRE_TAG_MAP: dict[str, list[str]] = {
     # Hip-Hop / Rap
     "rap":                  [HIP_HOP],
@@ -102,27 +96,25 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "drill":                [HIP_HOP],
     "grime":                [HIP_HOP],
     "abstract":             [HIP_HOP],
-    # Regional and underground hip-hop, the densest family in this library and
-    # absent from the map entirely. Every key below was taken from a census of
-    # unmapped tag occurrences on the committed data, not from imagination —
-    # trailing counts are that census (#71).
-    "underground hip hop":  [HIP_HOP],                  # 170
-    "east coast hip hop":   [HIP_HOP],                  # 58
-    "east coast rap":       [HIP_HOP],                  # 46
-    "alternative hip hop":  [HIP_HOP],                  # 44
-    "dirty south":          [HIP_HOP],                  # 53
-    "southern rap":         [HIP_HOP],                  # 38
-    "experimental hip hop": [HIP_HOP, EXPERIMENTAL],    # 56
-    "memphis rap":          [HIP_HOP],                  # 32
-    "underground rap":      [HIP_HOP],                  # 27
-    "trap rap":             [HIP_HOP],                  # 23
-    "alternative rap":      [HIP_HOP],                  # 17
-    "west coast rap":       [HIP_HOP],                  # 11
-    "thug rap":             [HIP_HOP],                  # 11
-    "horrorcore":           [HIP_HOP],                  # 41
-    "phonk":                [HIP_HOP, ELECTRONIC],      # 34
-    "trillwave":            [HIP_HOP],                  # 14
-    "hiphop":               [HIP_HOP],                  # 11 — no separator to fold
+    # Regional/underground hip-hop. This block, and the last few keys of each
+    # family below, came from a census of unmapped tags on the committed data (#71).
+    "underground hip hop":  [HIP_HOP],
+    "east coast hip hop":   [HIP_HOP],
+    "east coast rap":       [HIP_HOP],
+    "alternative hip hop":  [HIP_HOP],
+    "dirty south":          [HIP_HOP],
+    "southern rap":         [HIP_HOP],
+    "experimental hip hop": [HIP_HOP, EXPERIMENTAL],
+    "memphis rap":          [HIP_HOP],
+    "underground rap":      [HIP_HOP],
+    "trap rap":             [HIP_HOP],
+    "alternative rap":      [HIP_HOP],
+    "west coast rap":       [HIP_HOP],
+    "thug rap":             [HIP_HOP],
+    "horrorcore":           [HIP_HOP],
+    "phonk":                [HIP_HOP, ELECTRONIC],
+    "trillwave":            [HIP_HOP],
+    "hiphop":               [HIP_HOP],                  # no separator to fold
 
     # R&B / Soul
     "rnb":                  [RNB_SOUL],
@@ -141,7 +133,7 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "funk":                 [RNB_SOUL],
     "gospel":               [RNB_SOUL],
     "motown":               [RNB_SOUL],
-    "rhythm & blues":       [RNB_SOUL],                 # 12
+    "rhythm & blues":       [RNB_SOUL],
 
     # Electronic
     "electronic":           [ELECTRONIC],
@@ -171,15 +163,15 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "edm":                  [ELECTRONIC],
     "dance-pop":            [ELECTRONIC, POP],
     "disco":                [ELECTRONIC, RNB_SOUL],
-    "deep house":           [ELECTRONIC],               # 29
-    "uk garage":            [ELECTRONIC],               # 23
-    "industrial":           [ELECTRONIC, EXPERIMENTAL], # 22
-    "electro house":        [ELECTRONIC],               # 20
-    "chillwave":            [ELECTRONIC],               # 19
-    "progressive house":    [ELECTRONIC],               # 16
-    "drum n bass":          [ELECTRONIC],               # 15
-    "breakbeat":            [ELECTRONIC],               # 12
-    "alternative dance":    [ELECTRONIC],               # 11
+    "deep house":           [ELECTRONIC],
+    "uk garage":            [ELECTRONIC],
+    "industrial":           [ELECTRONIC, EXPERIMENTAL],
+    "electro house":        [ELECTRONIC],
+    "chillwave":            [ELECTRONIC],
+    "progressive house":    [ELECTRONIC],
+    "drum n bass":          [ELECTRONIC],
+    "breakbeat":            [ELECTRONIC],
+    "alternative dance":    [ELECTRONIC],
 
     # Indie / Alternative
     "indie":                [INDIE_ALT],
@@ -194,8 +186,8 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "shoegaze":             [INDIE_ALT],
     "post-rock":            [INDIE_ALT, ROCK],
     "alt-pop":              [INDIE_ALT, POP],
-    "neo-psychedelia":      [INDIE_ALT, ROCK],          # 53
-    "indie folk":           [INDIE_ALT, COUNTRY_FOLK],  # 16
+    "neo-psychedelia":      [INDIE_ALT, ROCK],
+    "indie folk":           [INDIE_ALT, COUNTRY_FOLK],
 
     # Rock
     "rock":                 [ROCK],
@@ -220,11 +212,11 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "country rock":         [ROCK, COUNTRY_FOLK],
     "art pop":              [POP, INDIE_ALT],
     "psychedelic pop":      [POP, ROCK],
-    "soft rock":            [ROCK],                     # 50
-    "math rock":            [ROCK, INDIE_ALT],          # 48
-    "punk rock":            [ROCK],                     # 22
-    "emocore":              [ROCK],                     # 17
-    "blues rock":           [ROCK],                     # 13
+    "soft rock":            [ROCK],
+    "math rock":            [ROCK, INDIE_ALT],
+    "punk rock":            [ROCK],
+    "emocore":              [ROCK],
+    "blues rock":           [ROCK],
 
     # Pop
     "pop":                  [POP],
@@ -234,9 +226,9 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "j-pop":                [POP],
     "jpop":                 [POP],
     "city pop":             [POP],
-    "sophisti-pop":         [POP],                      # 12
-    "alternative pop":      [POP, INDIE_ALT],           # 11
-    "power pop":            [POP, ROCK],                # 10
+    "sophisti-pop":         [POP],
+    "alternative pop":      [POP, INDIE_ALT],
+    "power pop":            [POP, ROCK],
 
     # Jazz
     "jazz":                 [JAZZ],
@@ -261,9 +253,9 @@ GENRE_TAG_MAP: dict[str, list[str]] = {
     "nu metal":             [METAL],
     "thrash metal":         [METAL],
     "screamo":              [METAL],
-    "deathcore":            [METAL],                    # 29
-    "alternative metal":    [METAL],                    # 14
-    "progressive metal":    [METAL],                    # 12
+    "deathcore":            [METAL],
+    "alternative metal":    [METAL],
+    "progressive metal":    [METAL],
 
     # Experimental
     "experimental":         [EXPERIMENTAL],
@@ -341,13 +333,10 @@ def derive_genres_for_track(track: dict) -> list[str]:
                 seen.add(g)
                 result.append(g)
 
-    # Priority 1: iTunes genre (most authoritative when present)
     _add(_genres_from_itunes(track.get("itunes_genre")))
 
-    # Priority 2: Discogs styles (release-level, very genre-specific)
     _add(_genres_from_tags(track.get("discogs_styles") or []))
 
-    # Priority 3: Last.fm tags (community, broader coverage)
     _add(_genres_from_tags(track.get("lastfm_tags") or []))
 
     return result
@@ -356,13 +345,9 @@ def derive_genres_for_track(track: dict) -> list[str]:
 def _pick_input() -> Path:
     """Deepest existing input, skipping a Discogs file an earlier run left behind.
 
-    The staleness check is deliberately limited to the 4b/4 pair. 4b writes its
-    output from the same Phase 4 file this phase falls back to, so a Discogs file
-    older than the metadata file means 4b did not run this time and reading it
-    would re-derive genres from tags fetched days ago, dropping every track
-    ingested since. Generalizing the rule to "newest wins" would be worse than
-    the bug: re-running phases 1-2 and resuming here makes the *skeleton* the
-    newest file, and deriving genres from it would see no tags at all.
+    A Discogs file older than the metadata file means 4b did not run this time.
+    Don't generalize this to "newest wins": resuming after re-running phases 1-2
+    makes the tagless *skeleton* the newest file.
     """
     existing = [p for p in _INPUT_PRIORITY if p.exists()]
     if not existing:
