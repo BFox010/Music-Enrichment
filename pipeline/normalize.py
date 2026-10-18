@@ -15,7 +15,7 @@ _APOSTROPHE_RE = re.compile(r"[\'‘’ʼ]")
 # Anything not word-char or whitespace → space
 _PUNCT_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
 _WHITESPACE_RE = re.compile(r"\s+")
-# feat / ft / featuring / with → "feat"
+# feat / ft / featuring → "feat"
 _FEAT_RE = re.compile(
     r"\b(?:feat\.?|ft\.?|featuring)\b",
     flags=re.IGNORECASE,
@@ -44,10 +44,8 @@ def _symbol_only_fallback(raw: str) -> str:
     """Key for a name that is nothing but punctuation or symbols ("!!!", "?").
 
     Stripping punctuation empties it, and Phase 8 refuses a row with an empty
-    normalized name — so one such scrobble, which ingest keeps forever, failed
-    every later run at Phase 8 (#106). Keep the folded symbols instead: the key
-    stays stable and distinct, and names with any word character never get here,
-    so no existing key moves.
+    normalized name (#106). Keep the folded symbols instead; names with any word
+    character never get here, so no existing key moves.
     """
     return _WHITESPACE_RE.sub(" ", _fold(raw)).strip()
 

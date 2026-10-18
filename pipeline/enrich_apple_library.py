@@ -1,4 +1,4 @@
-"""iTunes/Apple Music XML enrichment.
+"""Phase A — iTunes/Apple Music XML enrichment.
 
 Parses the iTunes library XML export and merges per-track metadata into
 tracks_skeleton.jsonl, producing tracks_with_apple.jsonl. Supplies these
@@ -43,7 +43,6 @@ from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
-# Output: a new intermediate between skeleton and audio-features
 TRACKS_WITH_APPLE_PATH = REPO_ROOT / "tracks_with_apple.jsonl"
 
 # Audio file kinds we accept (skip videos, podcasts, etc.)
@@ -127,7 +126,6 @@ def _merge_apple_blocks(blocks: list[dict]) -> dict:
     if last:
         out["itunes_last_played"] = max(last)
 
-    # For scalar fields: keep first non-null
     for key in ("duration_ms", "release_year", "itunes_genre",
                 "itunes_persistent_id", "itunes_kind"):
         for b in blocks:
@@ -135,7 +133,6 @@ def _merge_apple_blocks(blocks: list[dict]) -> dict:
                 out[key] = b[key]
                 break
 
-    # explicit: True if any record says explicit
     out["explicit"] = any(b.get("explicit") for b in blocks)
     return out
 

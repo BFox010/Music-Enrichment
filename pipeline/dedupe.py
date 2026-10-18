@@ -45,12 +45,10 @@ def _peak_year(years: list[int]) -> int:
 def _merge_skeleton_group(rows: list[dict]) -> dict:
     """Fold skeleton rows sharing an export-supplied musicbrainz_id.
 
-    Mirrors Phase 4e's strong-identifier merge — an exact MBID match is decisive,
-    and merging here means Phases 3a/4 never enrich the redundant half.
-
-    Records each source row's (artist_normalized, track_normalized) as an
-    ``identity_aliases`` entry. scrobbles.jsonl is never rewritten, so without
-    this a play logged under the merged-away key has nothing left to match.
+    Mirrors Phase 4e's strong-identifier merge, so later phases never enrich
+    the redundant half. Each source row's name pair must be kept as an
+    ``identity_aliases`` entry: scrobbles.jsonl is never rewritten, so a play
+    logged under the merged-away key would have nothing left to match.
     """
     ordered = sorted(
         rows,
@@ -123,7 +121,6 @@ def dedupe(
                 rows.append(json.loads(line))
     log.info("Read %d scrobble rows", len(rows))
 
-    # Group by composite join key
     groups: dict[str, list[dict]] = defaultdict(list)
     for row in rows:
         key = f"{row['artist_normalized']}|{row['track_normalized']}"

@@ -116,10 +116,8 @@ def _fetch_musicbrainz_artist_genres(client: RateLimitedClient, artist_mbid: str
 def _propagate_within_artist(tracks: list[dict], today: str) -> int:
     """Fill a still-empty ``genres`` from the richest sibling row by the same artist.
 
-    Whatever emptied the row — a run interrupted before it, a transient error
-    cached as a negative, an autocorrect miss on a collab credit — the answer is
-    often already in this file, on another track by the same artist. Fetching
-    per track meant no row ever consulted what a sibling had resolved.
+    Whatever emptied the row (an interrupted run, a cached transient error, an
+    autocorrect miss on a collab credit), a sibling track often has the answer.
 
     No network. Fills blanks only, so it can never overwrite a fetched value.
     Returns the number of rows filled.
@@ -130,8 +128,7 @@ def _propagate_within_artist(tracks: list[dict], today: str) -> int:
         if not genres:
             continue
         artist = track.get("artist_normalized") or ""
-        # Richest row wins; play_count then title break ties so a re-run over the
-        # same library propagates the same answer.
+        # Richest row wins; a tie keeps the first in file order.
         current = best_by_artist.get(artist)
         if current is None or len(genres) > len(current):
             best_by_artist[artist] = list(genres)
@@ -201,8 +198,8 @@ def enrich(
     log.info("Tracks: %d total, %d with no genre (backfill candidates)",
              len(tracks), len(gap))
 
-    # Built once over the whole library, as Phase 4 does — an artist-as-tag is
-    # only recognisable against the full roster, not the gap subset.
+    # Built over every loaded row, not the gap subset: an artist-as-tag is only
+    # recognisable against the full roster.
     artist_block = build_artist_block(tracks)
     log.info("Artist-name block set: %d names", len(artist_block))
 

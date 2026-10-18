@@ -53,11 +53,9 @@ _AUDIO_FEATURE_COLUMNS: dict[str, str] = {
     "time_signature": "Time Signature",
 }
 
-# Upstream outputs only, nearest first. This list used to start with Phase 5's
-# and Phase 4's outputs, which 3c runs *before*: from the second run on it read
-# the previous run's rows, so new tracks never reached tracks.jsonl and play
-# counts froze (#98). The orchestrator now passes the input explicitly; this is
-# the standalone-CLI fallback.
+# Standalone-CLI fallback; the orchestrator passes the input explicitly.
+# Upstream outputs only, nearest first. Don't add Phase 4/5 outputs: 3c runs
+# before them, so it would read a previous run's rows and freeze new tracks (#98).
 _INPUT_PRIORITY = [
     TRACKS_WITH_SPOTIFY_PATH,
     TRACKS_WITH_APPLE_PATH,
@@ -178,11 +176,8 @@ def parse_exportify_row(row: dict[str, Any]) -> dict[str, Any] | None:
             row, "Track Duration (ms)", "Duration (ms)", "Duration",
         )),
         "explicit": _b(_ci_get(row, "Explicit")),
-        # Upper-cased on the way in: an ISRC is case-insensitive, but every
-        # downstream consumer compares it as a plain string — Phase 4e clusters
-        # on it, compute_canonical_track_id keys on it, and Phase 5b looks
-        # ReccoBeats' upper-cased answer back up by it. A lower-case CSV value
-        # silently became a second identity for the same recording.
+        # Must stay upper-cased: 4e, compute_canonical_track_id and 5b compare
+        # ISRCs as plain strings, so a lower-case value is a second identity.
         "isrc": (_ci_get(row, "ISRC").strip().upper() or None),
         "release_year": _year_from_date(
             _ci_get(row, "Album Release Date", "Release Date")
@@ -194,10 +189,8 @@ def parse_exportify_row(row: dict[str, Any]) -> dict[str, Any] | None:
 def _check_energy_bug(rows: list[dict]) -> float | None:
     """Return median energy if values look correct; raise if they look ~10× off.
 
-    The prior pipeline iteration recorded median energies around 0.04, two
-    orders of magnitude below the real Spotify scale of ~0.4–0.5. This check
-    catches the same bug if it ever recurs. Returns None when no energies
-    are present (which is normal for a Spotify-IDs-only CSV).
+    The real Spotify scale has a median around 0.4–0.5. Returns None when no
+    energies are present (normal for a Spotify-IDs-only CSV).
     """
     energies = [
         r["audio_features"]["energy"]
@@ -262,7 +255,6 @@ def merge(
 
     log.info("CSV rows parsed: %d", len(csv_blocks))
 
-    # Energy sanity check — abort if scale looks broken
     median = _check_energy_bug(csv_blocks)
     if median is not None and median < 0.2:
         log.warning("Median energy %.3f is unusually low — verify Exportify output", median)
@@ -290,14 +282,13 @@ def merge(
             unmatched.append((track["artist"], track["track"]))
             continue
         matched += 1
-        # Only set audio_features if Exportify actually provided them
         if block.get("audio_features") is not None:
             track["audio_features"] = block["audio_features"]
         if block.get("spotify_id"):
             track["spotify_id"] = block["spotify_id"]
         if block.get("isrc"):
             track["isrc"] = block["isrc"]
-        # Only fill these if missing (Exportify is more authoritative than iTunes XML)
+        # Overwrite whenever Exportify has a value: it outranks the iTunes XML.
         for field in ("duration_ms", "explicit", "release_year"):
             new_value = block.get(field)
             if new_value is not None:

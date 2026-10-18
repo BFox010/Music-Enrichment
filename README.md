@@ -181,12 +181,12 @@ MusicBrainz and AcousticBrainz alike, which keeps the audio-feature source
 swappable. `spotify_id` is stored because ReccoBeats also accepts it, not as the
 identifier of record.
 
-B is the **last-resort resolver**. Phases 5a/5b (issue #37) implement the
-cheaper routes — MusicBrainz `musicbrainz_id` → ISRC needing no auth, then
-Deezer name search, then ReccoBeats for the feature vector itself — and run
-first in the chain. B stays in the manifest, `optional: true`, for whatever
-those two don't resolve; retire it outright once they reach adequate coverage.
-See the module docstring.
+B is the **last-resort resolver**. Phases 5a/5b (issue #37) are the primary
+route: MusicBrainz `musicbrainz_id` → ISRC needing no auth, then Deezer name
+search, then ReccoBeats for the feature vector itself. B runs earlier in the
+chain (after A) but needs Spotify credentials and skips without them. It stays
+in the manifest, `optional: true`, for whatever 5a/5b don't resolve. See the
+module docstring.
 
 ### On phases 3a/3c and 7
 
@@ -309,11 +309,13 @@ human judgement; JSONL is the derived index, regenerated each run.
 | [generate_library_js.py](scripts/generate_library_js.py) | Static offline snapshot for the `file://` workflow |
 | [build_frontend.mjs](scripts/build_frontend.mjs) | esbuild JSX → `web/app.bundle.js` |
 
-**After any full pipeline run, `apply_bass_labels.py --apply` must follow Phase
+**After any full pipeline run, run `apply_bass_labels.py --apply` after Phase
 8.** Heavy Bass cannot come from the centroid — the 9 audio features carry no
 bass descriptor, so the measured allowlist withholds it — and the owner's
-hand-reviewed verdicts are a durable overlay, not a pipeline output. Skipping
-the re-apply loses them.
+hand-reviewed verdicts are a durable overlay, not a pipeline output. Phase 8's
+rank merge keeps `manual` labels already in `tracks.jsonl`, but a new row, or
+one whose identity changed, only gets its verdict back from the overlay. The
+overlay's own gaps are #111.
 
 [scripts/archive/](scripts/archive/README.md) holds one-off utilities kept for
 provenance. Nothing imports them.

@@ -1,20 +1,13 @@
-"""Artist/track name variations for Last.fm lookup retries.
+"""Artist/track name variations for lookup retries (Last.fm, Deezer, Spotify).
 
-Last.fm indexes literal artist/title strings, so long ``(feat. …)`` credits and
-``A & B`` multi-artist strings miss even when the track is well tagged under a
-simpler name. scripts/test_match_variations.py measured which normalisations
-actually recover an MBID or tags across the unmatched set:
+Lookups index literal artist/title strings, so long ``(feat. …)`` credits and
+``A & B`` multi-artist strings miss even when the track exists under a simpler
+name. Cascade, by measured first-hit yield (scripts/test_match_variations.py):
+original → strip_feat → strip_parens → first_artist → first_artist+strip_feat.
+``clean_artist`` ($→S) is deliberately omitted: it recovered nothing.
 
-    strip_feat 45   first_artist 17   strip_parens 11   (clean_artist $→S: 0)
-
-Hence the cascade, ordered by first-hit yield:
-
-    original → strip_feat → strip_parens → first_artist → first_artist+strip_feat
-
-``clean_artist`` ($→S) is deliberately omitted — ``autocorrect=1`` already
-resolves it, and it recovered nothing.
-
-Shared by the pipeline and the diagnostic so the rules can't drift apart.
+Shared by Phases 4, B, 5a and 7 (pieces by 4d and 4e) so the rules can't drift
+apart. The diagnostic script keeps its own copy of the generators.
 """
 
 from __future__ import annotations
@@ -43,9 +36,7 @@ def strip_parens(track: str) -> str:
 def first_artist(artist: str) -> str:
     """Return the primary artist from a multi-artist credit.
 
-    '070 Shake & Tame Impala' → '070 Shake'
-    'JAY-Z & Kanye West'      → 'JAY-Z'
-    'A$AP Rocky, Tyler, ...'   → 'A$AP Rocky'
+    '070 Shake & Tame Impala' → '070 Shake'; 'A$AP Rocky, Tyler' → 'A$AP Rocky'.
 
     Splits on ' & ', ' x '/' X ' (before a capitalised name or $), or ',';
     Last.fm indexes collaborations under the primary artist only.

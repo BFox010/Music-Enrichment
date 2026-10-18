@@ -1,11 +1,7 @@
 """Build a mood-labeling queue, ranked by how much listening each track explains.
 
-The classifier declines to guess moods the features can't predict — honest, but
-it leaves gaps, and those gaps are not evenly weighted: a track played 100 times
-and one played once cost the same to label and are worth very different amounts.
-
-Ranks unlabeled tracks by play count so a short session buys back the largest
-share of listening, printing the share each slice covers as it goes.
+Ranks tracks without an owner label by play count, so a short labelling
+session buys back the largest share of listening, and prints the share covered.
 
 Output mirrors ``classify_moods.write_claude_batch``, so results paste straight
 back as ``inputs/claude_mood_results.jsonl``.
@@ -31,11 +27,10 @@ DEFAULT_OUT: Path = INPUTS_DIR / "mood_label_queue.jsonl"
 
 
 def needs_label(track: dict) -> bool:
-    """Anything not carrying an owner judgement is fair game for the queue.
+    """Anything whose mood_source is outside ``OWNER_LABEL_SOURCES`` is queued.
 
-    Centroid rows are included even though they have tags: those are the
-    machine's guesses, and replacing one with a real judgement is exactly the
-    point. Rows with no tags at all are included too.
+    That includes centroid rows (replacing a machine guess with a judgement is
+    the point), untagged rows, and ``manual`` rows, which the set omits.
     """
     return track.get("mood_source") not in OWNER_LABEL_SOURCES
 

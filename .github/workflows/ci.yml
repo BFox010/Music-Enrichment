@@ -38,12 +38,10 @@ jobs:
         run: npm ci
 
       - name: Run JS test suite
-        # web/data-processing.js has no module system by design (loaded as a
-        # plain global via <script> on the main thread and importScripts() in
-        # the worker), so these are node:test cases run directly with `node
-        # --test`, not a bundler-based runner. Catches the class of bug pytest
-        # never can: the browser's own join logic silently diverging from the
-        # server's (see F-03, #83).
+        # Plain `node --test`, no bundler: web/data-processing.js has no module
+        # system by design (a <script> global and importScripts() in the worker).
+        # Catches what pytest can't, e.g. the browser's join logic diverging
+        # from the server's (#83/F-03).
         run: npm test
 
       - name: Build frontend and check for stale committed output

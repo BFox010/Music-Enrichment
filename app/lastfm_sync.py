@@ -29,11 +29,10 @@ _PAGE_SIZE = 200
 # Safety cap so a since_ts=0 full-history fetch (or a misbehaving API reporting a
 # huge totalPages) can't loop unbounded. 250 pages × 200 = 50k scrobbles.
 _MAX_PAGES = 250
-# Re-fetch this far behind the newest stored play. Offline and batched
-# scrobblers submit plays late with their original timestamps, so a fetch
-# strictly after the newest stored play never saw them (#105). Last.fm refuses
-# scrobbles more than 14 days old, so nothing can arrive later than this;
-# ingest dedupes the overlap.
+# Re-fetch this far behind the newest stored play: offline scrobblers submit
+# late plays with their original timestamps, which a fetch strictly after the
+# newest play misses (#105). Last.fm refuses scrobbles over 14 days old, so
+# nothing arrives later; ingest dedupes the overlap.
 _OVERLAP_SECONDS = 14 * 86400
 
 
@@ -52,16 +51,12 @@ def get_last_scrobble_ts(scrobbles: list[dict]) -> int:
 
 
 async def _get_page(client: httpx.AsyncClient, params: dict) -> dict:
-    """One page, with the same retry ladder the pipeline's RateLimitedClient uses.
+    """One page, retrying 429, 5xx and dropped connections with backoff.
 
-    Without this a single 502/503/429 or a dropped connection from
-    ws.audioscrobbler.com aborted the whole sync. Only 429 and 5xx are retried:
-    a 4xx (bad key, malformed request) is deterministic, so retrying it just
-    burns ~10s to reach the same answer.
-
-    Every failure leaves as ``RuntimeError`` — the routes catch that and return
-    a 400/502, where an escaping ``httpx.HTTPError`` or ``ValueError`` used to
-    surface as an unhandled 500 with a traceback.
+    Any other 4xx (bad key, malformed request) is deterministic, so it fails
+    at once. Every failure leaves as ``RuntimeError``, which the routes turn
+    into a 400; don't let ``httpx.HTTPError`` or ``ValueError`` escape, or it
+    surfaces as an unhandled 500.
     """
     last_error = "unknown error"
     for attempt in range(HTTP_MAX_RETRIES):
@@ -95,8 +90,8 @@ def _latest_ts_on_disk(path: Path) -> int:
     """Unix timestamp of the newest scrobble in ``path``, or 0.
 
     Read from the file, not the server's snapshot: ``python -m app.refresh``
-    never loads one, so it fetched the entire history on every run (#105), and
-    a snapshot gone stale behind a CLI ingest would understate it too.
+    never loads one, so it would fetch the entire history every run (#105),
+    and a snapshot gone stale behind a CLI ingest would understate it too.
     """
     if not path.exists():
         return 0
@@ -121,17 +116,11 @@ async def fetch_recent_scrobbles(
 ) -> tuple[list[dict], int, bool]:
     """Fetch all pages of user.getRecentTracks since since_ts.
 
-    Paginates automatically (_PAGE_SIZE records / page).
-    Skips now-playing stubs (no date field).
-    Returns ``(raw Last.fm records, pages actually fetched, complete)`` — the
-    records not yet parsed by parse_raw_scrobble.
-
-    When the range is longer than ``_MAX_PAGES``, only the *oldest* pages are
-    fetched and ``complete`` is False. Last.fm pages newest-first, and the cap
-    used to keep pages 1..250 — the newest plays — so the next sync resumed
-    after them and the older remainder was never fetched (#105). Walking from
-    the oldest end leaves no gap: the next sync carries on from where this
-    one stopped.
+    Returns ``(raw Last.fm records, pages fetched, complete)``, skipping
+    now-playing stubs. Past ``_MAX_PAGES`` only the *oldest* pages are fetched
+    and ``complete`` is False. Don't keep the newest pages instead (Last.fm
+    pages newest-first): the next sync resumes after them and strands the
+    older remainder for good (#105).
     """
     all_records: list[dict] = []
     page = 1
@@ -190,7 +179,7 @@ async def fetch_recent_scrobbles(
 
             tracks = rt.get("track", [])
 
-            # Last.fm can return a single dict instead of a list when there's one result
+            # Last.fm returns a bare dict, not a list, when there's one result
             if isinstance(tracks, dict):
                 tracks = [tracks]
 
@@ -228,10 +217,8 @@ async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
         username, api_key, since_ts
     )
 
-    # ingest_from_records re-reads, re-normalizes and rewrites the whole
-    # scrobbles file (~540 ms on the committed history). sync() is awaited from
-    # coroutine routes, so running it inline blocked the event loop for that
-    # long on every sync and refresh.
+    # ingest_from_records rewrites the whole scrobbles file; inline, it would
+    # block the event loop of the coroutine routes awaiting sync().
     # Imported here: app.refresh imports this module at load time.
     from app.refresh import run_to_completion
     on_disk_before = _count_rows(scrobbles_path)
@@ -240,9 +227,8 @@ async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
     )
 
     return {
-        # Against the file, not the in-memory snapshot: a snapshot that was
-        # already stale before the sync made this over-report the difference as
-        # "new" rows this sync had nothing to do with.
+        # Against the file, not the in-memory snapshot: a snapshot already
+        # stale before the sync would count rows this sync didn't add as new.
         "new": total - on_disk_before,
         "fetched": len(records),
         "total": total,

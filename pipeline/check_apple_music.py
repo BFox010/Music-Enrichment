@@ -135,7 +135,7 @@ def check(
     client = RateLimitedClient(
         APPLE_MUSIC_CACHE,
         rate_per_second=ITUNES_RATE_LIMIT,
-        # MusicBrainz requires a contact in the UA; enrich_discogs and
+        # Reuses the MusicBrainz contact UA; enrich_discogs and
         # enrich_genre_backfill already take it from the environment, so
         # the address is not hardcoded into the repo here either.
         user_agent=os.getenv("MUSICBRAINZ_USER_AGENT") or "MusicEnrichment/1.0",

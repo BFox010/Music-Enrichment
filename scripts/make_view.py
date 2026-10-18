@@ -1,7 +1,7 @@
 """Generate a spreadsheet view of tracks.jsonl for analyst inspection.
 
 Output goes to ``views/`` (gitignored). JSONL remains the source of truth.
-Excel format provides filterable columns, frozen headers, and column auto-fit.
+XLSX gets an auto-filter, a frozen header row and name-based column widths.
 
 Usage:
     python scripts/make_view.py                           # full library
@@ -112,7 +112,6 @@ def _write_xlsx(rows: list[dict], path: Path) -> None:
     ws = wb.active
     ws.title = "tracks"
 
-    # Header row — bold, dark fill
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill("solid", fgColor="2F4F4F")
     for col_idx, col in enumerate(COLUMNS, start=1):
@@ -124,12 +123,10 @@ def _write_xlsx(rows: list[dict], path: Path) -> None:
         for c_idx, col in enumerate(COLUMNS, start=1):
             ws.cell(row=r_idx, column=c_idx, value=_flatten(row, col))
 
-    # Freeze top row, auto-filter, column widths
     ws.freeze_panes = "A2"
     last_col = get_column_letter(len(COLUMNS))
     ws.auto_filter.ref = f"A1:{last_col}{len(rows) + 1}"
     for c_idx, col in enumerate(COLUMNS, start=1):
-        # heuristic width based on column name length
         ws.column_dimensions[get_column_letter(c_idx)].width = max(12, min(40, len(col) + 4))
 
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -20,7 +20,7 @@ DISPLAY_COLUMNS: list[str] = [
     "first_scrobbled", "last_scrobbled",
 ]
 
-# The only raw-track fields the client reads (dashboard.jsx::normalizeTrack plus
+# The only raw-track fields the client reads (data-processing.js::normalizeTrack plus
 # the chart/explorer components). /tracks.min.jsonl projects to this set to shrink
 # the first-paint payload; tracks.jsonl and /api/* still carry every field.
 MIN_TRACK_FIELDS: tuple[str, ...] = (

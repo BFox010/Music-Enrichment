@@ -15,8 +15,9 @@ so every reader is unchanged; only ``source`` differs.
 ``time_signature`` is the one Exportify field ReccoBeats lacks. Left unset rather
 than guessed — nothing downstream reads it.
 
-Never overwrites an existing ``audio_features`` block without ``--force``: that
-block is Exportify data acquired at real cost.
+Never overwrites an existing ``audio_features`` block unless a force mode is on
+(``--force`` *or* ``--force-errors``): that block is Exportify data acquired at
+real cost.
 
 Usage:
     python -m pipeline.enrich_audio_features
@@ -49,8 +50,7 @@ from pipeline.schema import read_jsonl, write_jsonl
 
 log = get_logger(__name__)
 
-# Phase 5 (iTunes availability) is the immediate predecessor — 5a resolved the
-# ISRCs further upstream, ahead of 4e, so its output is no longer adjacent.
+# Phase 5 (iTunes availability) is the immediate predecessor; 5a runs ahead of 4e.
 _INPUT_PRIORITY = [
     TRACKS_WITH_AVAILABILITY_PATH,
     TRACKS_RESOLVED_PATH,
@@ -149,9 +149,8 @@ def enrich(
         t for t in work
         if t.get("isrc") and (force != FORCE_OFF or not t.get("audio_features"))
     ]
-    # ReccoBeats echoes ISRCs upper-cased, and the resolve map is keyed that way;
-    # a row carrying a lower-case code (Exportify's CSV column, pre-#37) matched
-    # nothing and silently never got features.
+    # Must stay upper-cased: the resolve map is keyed by ReccoBeats' upper-cased
+    # echo, so a lower-case code silently never gets features.
     for t in candidates:
         t["isrc"] = t["isrc"].strip().upper()
     client.warn_if_forced(len(candidates))

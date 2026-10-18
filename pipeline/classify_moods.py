@@ -15,7 +15,8 @@
    pastes back ``inputs/claude_mood_results.jsonl``, which wins over centroid
    output. → ``mood_source: "claude_batch"``, ``mood_confidence: "high"``.
 
-No audit CSV ⇒ writes ``tracks_with_moods.jsonl`` unpopulated, with instructions.
+No audit CSV ⇒ owner labels already on the tracks file are kept, and the
+centroid trains on the persisted ``audit`` labels instead.
 
 Usage:
     python -m pipeline.classify_moods
@@ -63,16 +64,14 @@ LINEAR_KEYS: tuple[str, ...] = (
 SCALED_KEYS: tuple[str, ...] = ("tempo", "loudness")
 ALL_KEYS: tuple[str, ...] = LINEAR_KEYS + SCALED_KEYS
 
-# Fallback only, for moods with too few training rows to calibrate. NOT the main
-# gate: 11 of 14 centroids sit within 1.6 of ~70% of the library, so a single
-# global cutoff admits nearly everything. Per-mood calibration is what discriminates.
+# Fallback only, for moods with too few training rows to calibrate. Don't make
+# it the main gate: most centroids sit within 1.6 of most of the library, so a
+# global cutoff admits nearly everything. Per-mood calibration discriminates.
 CENTROID_THRESHOLD: float = 1.6
 
 # Cutoff percentile of a mood's own training-distance distribution: accept only
 # tracks closer to the centroid than 70% of the rows the owner tagged with it.
-# Each mood judges on its own scale rather than competing for fixed slots.
-# Tuned for precision — across 0.20–0.75 a tighter radius raises precision and
-# lowers recall near-monotonically. A missing tag is recoverable from the labeling
+# Tuned for precision, not recall: a missing tag is recoverable from the labeling
 # queue; a wrong one is shown to the reader as fact.
 CALIBRATION_PERCENTILE: float = 0.30
 
@@ -109,7 +108,7 @@ def compute_global_stats(features_list: Iterable[dict]) -> dict[str, dict[str, f
 
 def to_vector(features: dict, stats: dict[str, dict[str, float]]) -> list[float]:
     """``audio_features`` → normalized fixed-order vector. Missing values become 0
-    (linear) or the global mean (scaled), contributing nothing to the distance.
+    (linear) or the global mean (scaled, so z = 0).
     """
     vec: list[float] = []
     for k in LINEAR_KEYS:
@@ -419,7 +418,7 @@ def classify(
     claude_results_path: Path = INPUT_CLAUDE_MOOD_RESULTS,
     run_log_path: Path | None = None,
 ) -> dict[str, int]:
-    """Classify moods. Falls back to skeleton if tracks_with_audio missing.
+    """Classify moods, reading the first existing file in the candidate list below.
 
     ``audit_path`` defaults to the canonical, git-tracked ``mood_audit.csv`` at
     the repo root (``MOOD_AUDIT_PATH``) — pass ``audit_path=INPUT_EXISTING_AUDIT``
@@ -439,9 +438,9 @@ def classify(
         # name itself defined once.
         audit_path = REPO_ROOT / MOOD_AUDIT_FILENAME
 
-    # DEEPEST intermediate wins, so every upstream field survives (5b features,
-    # 5 availability, 4b discogs_styles, ...). tracks.jsonl is the last resort:
-    # intermediates are gitignored, so a fresh clone has only the canonical file.
+    # First existing wins, meant deepest-first so every upstream field survives.
+    # The order predates 5a moving ahead of 4e, and an explicit tracks_path is only
+    # the fifth candidate. tracks.jsonl is last: a fresh clone has only that file.
     chosen_input = None
     for candidate in (
         REPO_ROOT / "tracks_with_features.jsonl",
@@ -459,13 +458,9 @@ def classify(
         log.error("No tracks file found — run earlier phases first.")
         raise FileNotFoundError("tracks_with_audio.jsonl or tracks_with_metadata.jsonl")
 
-    # mood_audit.csv (repo root) is the canonical, git-tracked label file (#66)
-    # and the unconditional default above. inputs/existing_audit.csv is a
-    # gitignored legacy copy that must never silently win — a forgotten local
-    # file would otherwise make classification non-reproducible relative to a
-    # fresh clone or CI, with no visible sign of which file actually trained
-    # the run. If it's present alongside the canonical file, ignore it loudly;
-    # to use it deliberately, pass audit_path=INPUT_EXISTING_AUDIT explicitly.
+    # The gitignored legacy inputs/existing_audit.csv must never silently win over
+    # mood_audit.csv (#66, #83/F-06): a forgotten local file would make the run
+    # non-reproducible against a fresh clone or CI. Ignore it loudly.
     if INPUT_EXISTING_AUDIT.exists() and audit_path != INPUT_EXISTING_AUDIT:
         log.warning(
             "%s exists but is not authoritative — ignoring it in favor of %s. "
@@ -653,9 +648,8 @@ def classify(
             if af:  # no features ⇒ Claude can't classify it either
                 batch_for_claude.append(track)
 
-    # An audit row that matches nothing is a silent loss of hand-made judgement —
-    # the failure mode that let the committed audit and the library drift apart.
-    # Name it in the log and on the returned stats so a growing gap is visible.
+    # An audit row that matches nothing silently loses a hand-made judgement.
+    # Surface it in the log and the stats so a growing gap is visible.
     unmatched_audit = [k for k in audit_index if k not in matched_audit_keys]
     stats_out["audit_unmatched"] = len(unmatched_audit)
     if unmatched_audit:

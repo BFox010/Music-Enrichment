@@ -8,7 +8,8 @@ Discogs is release-oriented, so the search is ``artist`` + ``release_title``
 Cache ``.cache/discogs.json`` is keyed by (artist, album), so a 20-track album
 costs ONE call rather than 20.
 
-Requires ``DISCOGS_TOKEN`` in ``.env``.
+Requires ``DISCOGS_TOKEN`` in ``.env``; without it, raises
+``MissingCredentialsError``, which the orchestrator SKIPs (the phase is optional).
 
 Usage:
     python -m pipeline.enrich_discogs
@@ -68,7 +69,6 @@ def _extract_discogs_styles(response: Any, *, max_styles: int = MAX_STYLES) -> l
             continue
         styles = [s for s in (r.get("style") or []) if isinstance(s, str) and s.strip()]
         if styles:
-            # de-dupe while preserving order
             seen: set[str] = set()
             unique = [s for s in styles if not (s in seen or seen.add(s))]
             return unique[:max_styles]
@@ -106,8 +106,8 @@ def enrich(
     Parameters
     ----------
     input_path: Path | None
-        Defaults to ``tracks_with_metadata.jsonl`` if it exists, else falls
-        back to the skeleton.
+        Defaults to ``tracks_with_metadata.jsonl``, then
+        ``tracks_with_audio.jsonl``, then the skeleton — first that exists.
     limit: int | None
         Process only the first N tracks (debug/dry-run). None = all.
     force: str

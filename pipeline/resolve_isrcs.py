@@ -8,7 +8,7 @@ Resolver order, cheapest and most durable first:
 
 1. **MusicBrainz** — where the track already carries ``musicbrainz_id``,
    ``recording/<mbid>?inc=isrcs``. Exact ID join, no auth, same rate-limited
-   client Phase 4 already uses.
+   client Phase 4d already uses.
 2. **Deezer** — everything else: artist/track search (retried through the shared
    ``name_variations`` cascade), then read the ISRC off the match. No auth.
 
@@ -98,9 +98,9 @@ def _isrc_from_musicbrainz_response(response: Any) -> str | None:
 def _resolve_musicbrainz(client: RateLimitedClient, mbid: str) -> str | None:
     url = f"{MUSICBRAINZ_API_ROOT}recording/{mbid}"
     params = {"inc": "isrcs", "fmt": "json"}
-    # Distinct prefix from Phase 4's cache keys on the same shared cache file —
-    # Phase 4 never requests ``inc=isrcs``, so the two can't collide, but the
-    # prefix keeps that true even if Phase 4's key shape changes later.
+    # Distinct prefix from Phase 4d's cache keys on the same shared cache file —
+    # Phase 4d never requests ``inc=isrcs``, so the two can't collide, but the
+    # prefix keeps that true even if Phase 4d's key shape changes later.
     cache_key = f"recording-isrcs:{mbid}"
     response = client.get(url, params, cache_key)
     return _isrc_from_musicbrainz_response(response)

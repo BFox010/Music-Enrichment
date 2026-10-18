@@ -16,8 +16,9 @@ keep tightening) and is stored only because ReccoBeats also takes it.
 
 Spotify closed ``audio-features`` to new apps (2024-11-27); **Search is unaffected**.
 
-This is the **last-resort resolver**: Phases 5a/5b now cover the same ground
-without auth, so B only runs for what they leave unresolved.
+This is the **last-resort resolver**: Phases 5a/5b cover the same ground
+without auth, and B (optional) is only worth credentials for what they miss.
+It runs earlier in the chain, over every track that lacks a ``spotify_id``.
 
 Auth: Client-Credentials (no user login) via ``SPOTIFY_CLIENT_ID`` /
 ``SPOTIFY_CLIENT_SECRET`` or ``inputs/spotify_credentials.json``. Neither present
@@ -77,8 +78,8 @@ class SpotifyAuth:
     """Client-Credentials token provider with lazy refresh.
 
     Tokens last ~3600s; ``token()`` refreshes a minute before expiry so a long
-    run never hands a stale token to the search client (which would otherwise
-    cache a 401 as a permanent negative).
+    run never hands a stale token to the search client, which would cache the
+    401 as an ``auth_error`` and serve that refusal for the next 6 h.
     """
 
     def __init__(self, client_id: str, client_secret: str) -> None:

@@ -375,7 +375,7 @@ def albums(top: int = 50, min_tracks: int = 2) -> list[dict]:
     spreads across the album's tracks (Spotify-Wrapped style).
 
     ``spread`` is normalized play-count entropy: 1.0 = plays perfectly even
-    across tracks, →0 = one track dominates. Single-track albums are skipped.
+    across tracks, →0 = one track dominates. Albums under ``min_tracks`` are skipped.
     """
     by_album: dict[tuple[str, str], dict] = defaultdict(
         lambda: {"plays": [], "total": 0, "artist": "", "album": "", "years": set()}

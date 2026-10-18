@@ -1,16 +1,12 @@
-"""Phase 9 — full-pipeline orchestrator.
+"""Full-pipeline orchestrator.
 
 Execution order is derived from pipeline_manifest.yaml — never hardcoded here.
 Adding a phase requires a manifest entry; the anti-drift test in
 tests/test_pipeline_manifest.py will catch any divergence.
 
 Usage:
-    python -m pipeline.run_full_pipeline
-    python -m pipeline.run_full_pipeline --skip-tests
-    python -m pipeline.run_full_pipeline --skip-pause
-    python -m pipeline.run_full_pipeline --start-from 4
-    python -m pipeline.run_full_pipeline --start-from 3c
-    python -m pipeline.run_full_pipeline --force-errors
+    python -m pipeline.run_full_pipeline [--skip-tests] [--skip-pause]
+        [--start-from ID] [--force | --force-errors]
 """
 
 from __future__ import annotations
@@ -207,15 +203,9 @@ def run(
         results["pytest"] = OK
 
     # The tracks file the last *successful* phase wrote in this run, handed to
-    # the next chain phase explicitly. Phases used to pick "the first of these
-    # files that exists" themselves, and those lists included files that later
-    # phases, or a previous run, had written: from the second run on, 3c read
-    # run 1's Phase 5 output, Phase 4 kept preferring a stale
-    # tracks_with_audio.jsonl, and a phase after a FAILED optional one read that
-    # phase's output from the run before. New tracks never reached
-    # tracks.jsonl, play counts froze, and every phase reported OK (#98).
-    # A skipped or failed phase leaves this unchanged, so its successor reads
-    # the predecessor's output from this run.
+    # the next chain phase explicitly. Don't let phases pick an existing file
+    # themselves: they read a previous run's intermediates and new tracks never
+    # reached tracks.jsonl (#98). A skipped/failed phase leaves this unchanged.
     chain: Path | None = None
 
     for i, phase_def in enumerate(_PHASES):
@@ -355,8 +345,6 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
 
 if __name__ == "__main__":
     args = _parse_args(sys.argv[1:])
-    # argparse always hands back a string, so the guard is a plain equality;
-    # it used to be `in ("1", "1")`, a two-slot tuple holding one value.
     if args.start_from == "1" and not INPUT_LASTFM_EXPORT.exists():
         log.error("Last.fm export not found at %s — cannot start from Phase 1.",
                   INPUT_LASTFM_EXPORT)

@@ -1,19 +1,12 @@
-"""Phase 1 — Scrobble ingest.
+"""Phase 1 — Last.fm JSON export (inputs/) → scrobbles.jsonl, one row per play.
 
-Reads the Last.fm JSON export (owner-provided, placed in inputs/) and writes
-scrobbles.jsonl — one row per play event in the canonical schema.
+**Ingest is additive.** The owner's export is a partial pull, so the default
+merges into scrobbles.jsonl, dedupes on ``(scrobbled_at, artist_normalized,
+track_normalized)`` and re-sorts; ``--replace`` overwrites. Either way, a write
+leaving fewer rows than are on disk raises ``ScrobbleShrinkError`` unless
+``--allow-shrink`` is passed: losing play history is otherwise silent.
 
-**Ingest is additive.** The owner's export is a partial pull ("today back to the
-last pull"), so the default merges into scrobbles.jsonl, dedupes on
-``(scrobbled_at, artist_normalized, track_normalized)`` and re-sorts. ``--replace``
-overwrites. Either way, a write leaving fewer rows than the file on disk raises
-``ScrobbleShrinkError`` unless ``--allow-shrink`` is also passed: this file is the
-base record for every play-weighted number, and losing rows is silent.
-
-Usage:
-    python -m pipeline.ingest_scrobbles
-    python -m pipeline.ingest_scrobbles --replace
-    python -m pipeline.ingest_scrobbles --replace --allow-shrink
+Usage: python -m pipeline.ingest_scrobbles [--replace [--allow-shrink]]
 """
 
 from __future__ import annotations
@@ -64,13 +57,9 @@ def _count_existing_rows(path: Path) -> int:
 def parse_raw_scrobble(record: dict) -> dict | None:
     """Convert one raw Last.fm API record into a scrobbles.jsonl row.
 
-    Returns None for:
-    - "now playing" stubs that lack a real timestamp
-    - Records missing artist or track name
-    - Records with an unparseable timestamp
-
-    Last.fm export format uses nested ``{"#text": ..., "mbid": ...}`` blocks
-    for artist and album fields, and a ``date.uts`` Unix timestamp.
+    Returns None for "now playing" stubs (no timestamp), records missing artist
+    or track, and unparseable timestamps. The export nests artist and album as
+    ``{"#text": ..., "mbid": ...}`` and carries a ``date.uts`` Unix timestamp.
     """
     date_block = record.get("date")
     if not date_block or not date_block.get("uts"):
@@ -120,17 +109,11 @@ def ingest_from_records(
 ) -> int:
     """Parse raw Last.fm API records and write to output_path.
 
-    mode="append"   — (default) merge with existing rows, deduplicate by
-                      (scrobbled_at, artist_normalized, track_normalized),
-                      then sort chronologically and rewrite.
-    mode="replace"  — overwrite output_path entirely.
-
-    Whatever the mode, a write that would leave fewer rows than are already in
-    ``output_path`` raises ``ScrobbleShrinkError`` unless ``allow_shrink`` is
-    True. The guard lives here rather than in ``ingest()`` so every caller —
-    Phase 1, ``app.lastfm_sync.sync()``, anything future — is covered.
-
-    Returns total rows written (not just new rows in append mode).
+    mode="append" (default) merges with existing rows, dedupes and re-sorts;
+    mode="replace" overwrites. Either way a shrinking write raises
+    ``ScrobbleShrinkError`` unless ``allow_shrink``. The guard must stay here, not
+    in ``ingest()``, so ``app.lastfm_sync.sync()`` is covered too.
+    Returns total rows in the file (not just new rows).
     """
     parsed: list[dict] = []
     skipped = 0
@@ -143,10 +126,8 @@ def ingest_from_records(
 
     log.info("Parsed: %d  |  Skipped (nowplaying/malformed): %d", len(parsed), skipped)
 
-    # An export can repeat a play. The append branch below already drops those
-    # via its `seen` set, but that set only exists there — so under --replace
-    # the repeat was written twice, and the duplicate then survived every later
-    # additive run because it was on disk before them.
+    # An export can repeat a play. Dedupe here, not only in the append branch,
+    # or --replace writes the repeat and every later additive run keeps it.
     deduped: list[dict] = []
     within: set[tuple[str, str, str]] = set()
     for row in parsed:
@@ -172,12 +153,9 @@ def ingest_from_records(
                     except json.JSONDecodeError:
                         pass
         # Re-derive the normalized fields on disk rows before keying on them.
-        # They are *derived*, so any change to normalize_artist/normalize_track
-        # silently redefines the key: every stored scrobble stops matching itself
-        # and the export re-delivers it as a duplicate. (`&` → "and" in #27 did
-        # exactly this — 1102 plays re-added, 28 recordings split in two.)
-        # Recomputing both sides is immune, and rewriting the stored values lets
-        # the file heal itself.
+        # Don't trust the stored values: any normalize_* change redefines the key,
+        # so every stored scrobble stops matching its re-export and is appended
+        # again as a duplicate (#27). Rewriting them lets the file heal itself.
         renormalized = 0
         for row in existing:
             artist_norm = normalize_artist(row.get("artist", ""))
@@ -224,9 +202,8 @@ def ingest_from_records(
         )
 
     if unchanged:
-        # Nothing new and nothing re-keyed: rewriting would produce the same
-        # rows, and an untouched file lets a caller skip its reload. A no-op
-        # Last.fm sync rewrote ~1.3 MB and made every client re-download (#105).
+        # Nothing new and nothing re-keyed: leave the file untouched so a caller
+        # can skip its reload and clients don't re-download it (#105).
         log.info("No new rows — %s left untouched (%d rows)", output_path, existing_rows)
         return len(parsed)
 

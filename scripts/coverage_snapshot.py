@@ -1,19 +1,14 @@
 """Field-coverage snapshot of tracks.jsonl, and before/after diffs of two runs.
 
-Coverage numbers drift the moment new scrobbles land, so they belong in a tool
-rather than in prose. Take a snapshot before a pipeline run, another after, and
-diff them to see what the run actually moved:
+Snapshot before a pipeline run and after, then diff to see what it moved:
 
     python scripts/coverage_snapshot.py --out before.json
     python -m pipeline.run_full_pipeline
     python scripts/coverage_snapshot.py --out after.json --compare before.json
 
 A field counts as populated when it is not None/""/[]/{}. audio_features is
-additionally broken down by its `source`, which is what separates a gain made
-by the 5a/5b chain from one made by the legacy Exportify route.
-
-Snapshots are plain JSON; the diff needs only the baseline file, not the
-tracks.jsonl it came from.
+also split by its `source`, separating 5a/5b gains from legacy Exportify ones.
+The diff needs only the baseline JSON, not the tracks.jsonl it came from.
 """
 
 from __future__ import annotations

@@ -76,30 +76,26 @@ MOOD_CATEGORIES: tuple[str, ...] = (
 # Controlled vocabularies for fields schema.py types as free-form `str | None`.
 # Nothing validates against these — they are the written record. Keep in sync
 # with the writers. "audit" is the owner's own labelling: the classifier's
-# training signal, and the largest single source in the library.
+# training signal.
 MOOD_SOURCES: tuple[str, ...] = ("audit", "claude_batch", "centroid", "manual", "inherited")
-# Trust order when two rows or two fresh inputs disagree about mood. The single
-# definition classify_moods and resolve_identity both consult, so a hand label
-# always wins over a model's and neither module can encode the opposite order.
-# "manual" tops it: the bass overlay writes it onto rows the owner reviewed by
-# hand, and is applied last precisely so it survives a Phase 6 re-run. Every
-# source is listed — an absent key scores 0 and would lose to the centroid.
+# Trust order when two rows or two fresh inputs disagree about mood: the single
+# definition update_tracks and resolve_identity consult, so a hand label always
+# beats a model's. "manual" (the bass overlay's hand-reviewed rows) tops it so it
+# survives a Phase 6 re-run. List every source: an absent key scores 0.
 MOOD_SOURCE_RANK: dict[str | None, int] = {
     "manual": 5, "audit": 4, "claude_batch": 3, "centroid": 2,
     "inherited": 1, None: 0,
 }
-# Sources at or above this rank are curated judgements — a person's, or an LLM
-# pass a person commissioned and reviewed. Below it are machine guesses derived
-# from audio features. The split matters because Phase 6 declining to label a
-# row (mood_source None) is itself a machine verdict: it must clear a stale
-# machine guess but never erase a curated label. See
+# At or above this rank: curated labels. Below: machine guesses from audio
+# features. A Phase 6 decline (mood_source None) is a machine verdict, so it
+# clears a guess but must never erase a curated label. See
 # update_tracks._merge_with_existing.
 MOOD_CURATED_MIN_RANK: int = MOOD_SOURCE_RANK["claude_batch"]
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
 AUDIO_FEATURE_SOURCES: tuple[str, ...] = ("exportify", "reccobeats")
-# Written by Phase 5a only. An Exportify-sourced isrc predates the field and
-# leaves isrc_source None.
+# Written by Phase 5a only. An isrc from Exportify (3c) or Spotify (B) leaves
+# isrc_source None.
 ISRC_SOURCES: tuple[str, ...] = ("musicbrainz", "deezer")
 
 # Month-number → season name. Winter = Dec/Jan/Feb, etc.
@@ -121,8 +117,7 @@ SPOTIFY_API_ROOT: str = "https://api.spotify.com/v1/"
 SPOTIFY_TOKEN_URL: str = "https://accounts.spotify.com/api/token"
 # No auth. Phase 5a's name-search ISRC fallback where MusicBrainz has no recording ID.
 DEEZER_API_ROOT: str = "https://api.deezer.com/"
-# No auth. Mirrors the pre-deprecation Spotify audio-features corpus
-# (bit-identical on 33 Exportify rows, #37).
+# No auth. Mirrors the pre-deprecation Spotify audio-features corpus (#37).
 RECCOBEATS_API_ROOT: str = "https://api.reccobeats.com/v1/"
 
 # ── Rate limits (req/sec) ──
@@ -137,17 +132,18 @@ SPOTIFY_RATE_LIMIT: float = 3.0       # conservative; Spotify uses a 30s rolling
 DEEZER_RATE_LIMIT: float = 5.0
 RECCOBEATS_RATE_LIMIT: float = 2.0    # conservative; no published limit
 
-# Backoff: tries × base × 2^attempt up to max_sleep
+# Backoff: up to HTTP_MAX_RETRIES tries, sleeping base × 2^attempt (+ jitter),
+# capped at HTTP_BACKOFF_MAX.
 HTTP_MAX_RETRIES: int = 5
 HTTP_BACKOFF_BASE: float = 0.5
 HTTP_BACKOFF_MAX: float = 30.0
 
 # ── Negative-cache expiry ──
-# Failures are cached like successes, but must expire or one transient blip
-# freezes a track's enrichment forever. A 404 is stable → long TTL; transient
-# kinds retry on the next day's run.
-HTTP_NEGATIVE_TTL_SECONDS: float = 30 * 24 * 3600   # not_found — genuine no-match
-HTTP_TRANSIENT_TTL_SECONDS: float = 6 * 3600        # max_retries / invalid_json
+# Cached failures expire so a transient blip can't freeze a track's enrichment.
+# Only classified failures expire: a 200 with an empty result is a success and
+# never does (#109).
+HTTP_NEGATIVE_TTL_SECONDS: float = 30 * 24 * 3600   # not_found / bad_request
+HTTP_TRANSIENT_TTL_SECONDS: float = 6 * 3600        # auth_error / max_retries / invalid_json
 
 # ── Cache freshness ──
 APPLE_MUSIC_CACHE_DAYS: int = 90
@@ -164,19 +160,10 @@ def configure_logging(
 ) -> Path:
     """Configure root logger to write a timestamped run log + console.
 
-    Closes any existing FileHandlers first so repeated calls (e.g. in tests)
-    don't leak open handles on Windows.  Returns the path of the log file used.
-
-    With ``run_log_path=None`` an already-installed file handler is *kept* and
-    its path returned, rather than a fresh log being opened. Every phase entry
-    point calls this with its own ``None`` default, so under the orchestrator
-    the old behaviour tore down the full-run log the orchestrator had just
-    opened and replaced it once per phase: ``runs/full_run_<ts>.log`` ended up
-    holding only the header, each phase landed in a separate file, and the
-    summary block went to whichever file the last phase happened to open. In
-    the uvicorn process it also meant every /api/refresh reinstalled root
-    logging and leaked the previous handler until the next one. An explicit
-    path still reconfigures unconditionally, which is what tests rely on.
+    Returns the log path. With ``run_log_path=None`` an installed file handler
+    is kept, not replaced: every phase calls this with ``None``, and replacing
+    it would split the orchestrator's full-run log into one file per phase. An
+    explicit path closes existing FileHandlers and reconfigures (tests rely on it).
     """
     RUNS_DIR.mkdir(parents=True, exist_ok=True)
     if run_log_path is None:
@@ -222,19 +209,12 @@ def configure_logging(
                 },
             },
             "loggers": {
-                # urllib3 logs every request line at DEBUG, and Last.fm takes
-                # its API key as a query parameter — so the root DEBUG level
-                # wrote LASTFM_API_KEY in plaintext into runs/*.log, thousands
-                # of times per run. Pinning it to INFO drops those lines and
-                # leaves the pipeline's own DEBUG output untouched.
+                # Don't unpin: urllib3 logs full request URLs at DEBUG, and
+                # Last.fm's API key travels in the query string into runs/*.log.
                 "urllib3": {"level": "INFO"},
-                # Same leak, second transport. app/lastfm_sync.py talks to
-                # Last.fm over httpx, which logs "HTTP Request: GET <full url>"
-                # at INFO — key and all. The pipeline never used httpx, so the
-                # urllib3 pin above did not cover it; the app does, and the
-                # first /api/refresh installs this config (root=DEBUG + a
-                # FileHandler) in the *server* process, so every later sync
-                # wrote the key into runs/*.log and the console.
+                # Same leak via app/lastfm_sync.py: httpx logs full URLs at
+                # INFO, and the first /api/refresh installs this config in the
+                # server process.
                 "httpx": {"level": "WARNING"},
                 "httpcore": {"level": "WARNING"},
             },
@@ -247,10 +227,8 @@ def configure_logging(
 class MissingCredentialsError(RuntimeError):
     """A phase's API credential is not configured.
 
-    Distinct from a failure: the orchestrator reports an *optional* phase that
-    raises this as SKIPPED. A blank DISCOGS_TOKEN used to mark 4b FAILED, and a
-    refresh then raised after Phase 8 had already rewritten tracks.jsonl (#118).
-    A required phase raising it still FAILS.
+    The orchestrator reports an *optional* phase that raises this as SKIPPED,
+    not FAILED (#118). A required phase raising it still FAILS.
     """
 
 
