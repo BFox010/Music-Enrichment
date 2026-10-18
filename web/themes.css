@@ -16,8 +16,9 @@
   --text:      #f4f4f7;
   --text-2:    #b9b9c6;
   --muted:     #8585957a;
-  --muted-s:   #7d7d8c;
-  --faint:     #55555f;
+  --muted-s:   #868796;  /* text: >= 4.5:1 on --bg through --panel-hi (#119) */
+  --faint:     #82828c;  /* text: >= 4.5:1 on --bg, --panel, --panel-2 (#119) */
+  --faint-line:#55555f;  /* hover borders and marks only; too dim for text */
   --accent:    #a78bfa;
   --accent-ink:#0a0a0c;
   --accent-2:    #fbbf24;   /* amber — decorative contrast splash */
@@ -245,7 +246,7 @@ a { color: inherit; }
   padding: 9px 14px; display: inline-flex; align-items: center; gap: 8px;
   transition: border-color .16s, color .16s, background .16s;
 }
-.btn:hover { color: var(--text); border-color: var(--faint); }
+.btn:hover { color: var(--text); border-color: var(--faint-line); }
 .btn svg { width: 15px; height: 15px; }
 .btn.btn-icon { padding: 9px 11px; }
 
@@ -407,7 +408,7 @@ section.block { margin-bottom: 16px; }
   padding: 5px 11px; border-radius: var(--radius-pill); border: 1px solid var(--line);
   background: var(--panel-2); color: var(--text-2); font-size: 12.5px; transition: all .14s; white-space: nowrap;
 }
-.tagchip:hover { border-color: var(--faint); color: var(--text); }
+.tagchip:hover { border-color: var(--faint-line); color: var(--text); }
 .tagchip.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .tagchip .tc-n { font-family: var(--font-mono); font-size: 10.5px; opacity: .7; font-variant-numeric: tabular-nums; }
 
@@ -449,7 +450,7 @@ section.block { margin-bottom: 16px; }
   color: var(--text-2); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-sm);
   padding: 7px 11px; display: inline-flex; align-items: center; gap: 7px; transition: border-color .16s, color .16s;
 }
-.icon-btn:hover { color: var(--text); border-color: var(--faint); }
+.icon-btn:hover { color: var(--text); border-color: var(--faint-line); }
 .icon-btn svg { width: 14px; height: 14px; }
 
 /* ============================================================
@@ -463,6 +464,7 @@ section.block { margin-bottom: 16px; }
 .modal-x:hover { color: var(--text); background: var(--panel-2); }
 .modal-x svg { width: 18px; height: 18px; }
 .modal-body { padding: 18px 20px 22px; display: flex; flex-direction: column; gap: 22px; }
+.modal:focus { outline: none; } /* focused on open so the keys scroll it */
 .legend-group { display: flex; flex-direction: column; gap: 10px; }
 .legend-gtitle { font-family: var(--font-mono); font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--text-2); font-weight: 600; display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
 .legend-gtitle .lg-note { font-family: var(--font-body); text-transform: none; letter-spacing: 0; font-size: 11.5px; color: var(--muted-s); font-weight: 400; }
@@ -632,7 +634,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
      announces clickability rather than only tinting its background. */
   .dowrow.clickable:hover { background: var(--panel-hi); }
   .dowrow.clickable:hover .dfill { filter: brightness(1.18); }
-  .season.clickable:hover { border-color: var(--faint); transform: translateY(-2px); }
+  .season.clickable:hover { border-color: var(--faint-line); transform: translateY(-2px); }
   /* The banner is always on, so hover brightens it rather than revealing it. */
   .season-card:hover::after { filter: brightness(1.3); box-shadow: 0 0 14px 0 var(--season, var(--accent)); }
 }
@@ -719,6 +721,9 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .mini-tl::-webkit-scrollbar { width: 6px; }
 .mini-tl::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
 .mini-tl:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+/* Same ring for the keyboard-reachable chart targets and the selects (#119). */
+[role="button"]:focus-visible, table.tracks thead th[tabindex]:focus-visible,
+.fb-sort select:focus-visible, .fb-yr:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
 .mini-tl.more-below { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent);
                       mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent); }
 .mini-tl.more-above { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px);
@@ -744,10 +749,10 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .ap-search input::placeholder { color: var(--muted-s); }
 .ap-count { font-family: var(--font-mono); font-size: 10.5px; color: var(--muted-s); letter-spacing: .04em; white-space: nowrap; }
 .ap-reset { appearance: none; cursor: pointer; font-family: var(--font-mono); font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-sm); padding: 8px 12px; white-space: nowrap; transition: border-color .16s, color .16s; }
-.ap-reset:hover { color: var(--text); border-color: var(--faint); }
+.ap-reset:hover { color: var(--text); border-color: var(--faint-line); }
 .ap-chips { display: flex; flex-wrap: wrap; gap: 7px; max-height: 132px; overflow-y: auto; padding: 2px; }
 .ap-chip { appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--panel-2); color: var(--muted-s); font-size: 12.5px; font-family: var(--font-body); transition: all .14s; }
-.ap-chip:hover { border-color: var(--faint); color: var(--text-2); }
+.ap-chip:hover { border-color: var(--faint-line); color: var(--text-2); }
 .ap-chip .ap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: background .14s; }
 .ap-chip.on { background: color-mix(in oklab, var(--ap-color, var(--accent)) 16%, var(--panel)); border-color: var(--ap-color, var(--accent)); color: var(--text); }
 .ap-chip.on .ap-dot { background: var(--ap-color, var(--accent)); box-shadow: 0 0 8px var(--ap-color, var(--accent)); }
@@ -789,7 +794,7 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .fb-yr { appearance: none; font-family: var(--font-body); font-size: 12.5px; color: var(--text); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-sm); padding: 7px 26px 7px 11px; cursor: pointer; outline: none; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238585957a' stroke-width='2.5'><path d='M6 9l6 6 6-6'/></svg>"); background-repeat: no-repeat; background-position: right 8px center; }
 .fb-dash { color: var(--muted-s); }
 .fb-quick { appearance: none; cursor: pointer; font-family: var(--font-body); font-size: 12px; font-weight: 600; color: var(--text-2); background: var(--panel-2); border: var(--card-border); border-radius: var(--radius-pill); padding: 7px 13px; transition: all .14s; }
-.fb-quick:hover { border-color: var(--faint); color: var(--text); }
+.fb-quick:hover { border-color: var(--faint-line); color: var(--text); }
 .fb-quick.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 
 /* round-2 responsive */

@@ -9,7 +9,7 @@ function themeVars() {
     accent: v("--accent") || "#a78bfa",
     text:   v("--text")   || "#f4f4f7",
     text2:  v("--text-2") || "#b9b9c6",
-    muted:  v("--faint")  || "#55555f",
+    muted:  v("--faint")  || "#82828c",
     panel:  v("--panel-2")|| "#1a1a22",
     line:   v("--line")   || "#272732",
   };
@@ -198,7 +198,7 @@ function TimelineChart({ active, refreshVersion = 0 }) {
             <span className="card-meta">scrobbles over time</span>
           </div>
         </div>
-        <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        <div className="echart-wrap" ref={elRef} role="img" aria-label="Scrobbles over time" style={{ display: loading ? "none" : "block" }} />
         {loading && <ChartLoading />}
       </div>
     </section>
@@ -382,7 +382,7 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
         <div className="artist-picker">
           <div className="ap-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter artists…" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter artists…" aria-label="Filter artists" />
             <span className="ap-count">{selCount} shown</span>
             <button className="ap-reset" onClick={shuffleArtists} title={`Pick ${TRAJECTORY_SEED} at random from all ${artists.length} artists`}>Shuffle</button>
             <button className="ap-reset" onClick={resetTop} title={`Reset to the ${TRAJECTORY_SEED} most-played`}>Top {TRAJECTORY_SEED}</button>
@@ -403,7 +403,7 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
             <p className="ap-more">{hiddenCount} more — type to narrow the list.</p>
           )}
         </div>
-        <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        <div className="echart-wrap tall" ref={elRef} role="img" aria-label="Monthly plays for the selected artists" style={{ display: loading ? "none" : "block" }} />
         {loading && <ChartLoading height={560} />}
       </div>
     </section>
@@ -565,12 +565,12 @@ function ListeningMap({ active, refreshVersion = 0, knownYears = null }) {
             </div>
           </div>
           {loading && <ChartLoading height={220} />}
-          <div ref={calRef} className="echart-wrap cal" style={{ display: loading ? "none" : "block" }} />
+          <div ref={calRef} className="echart-wrap cal" role="img" aria-label={`Plays per day${year ? " in " + year : ""}`} style={{ display: loading ? "none" : "block" }} />
         </div>
         <div className="card">
           <div className="card-head norule"><h3 className="card-title">Hour × weekday</h3><span className="card-meta">play density · all time</span></div>
           {loading && <ChartLoading height={320} />}
-          <div ref={hwRef} style={{ width: "100%", height: 360, display: loading ? "none" : "block" }} />
+          <div ref={hwRef} role="img" aria-label="Play density by hour and weekday, all time" style={{ width: "100%", height: 360, display: loading ? "none" : "block" }} />
         </div>
       </div>
     </section>
@@ -723,12 +723,12 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
           </div>
           <p style={cardDesc}>Each bubble is a track, placed by the two features you pick — bigger bubbles are the ones you play most. Tracks missing either feature are left out.</p>
           {loading && <ChartLoading />}
-          <div ref={scRef} className="echart-wrap" style={{ display: loading ? "none" : "block" }} />
+          <div ref={scRef} className="echart-wrap" role="img" aria-label={`Tracks plotted by ${fx.label.toLowerCase()} against ${fy.label.toLowerCase()}`} style={{ display: loading ? "none" : "block" }} />
         </div>
         <div className="card">
           <div className="card-head norule"><h3 className="card-title">Feature distributions</h3><span className="card-meta">tracks per bin</span></div>
           {loading && <ChartLoading height={240} />}
-          <div ref={histRef} style={{ width: "100%", height: 240, display: loading ? "none" : "block" }} />
+          <div ref={histRef} role="img" aria-label="Distribution of tracks across each audio feature" style={{ width: "100%", height: 240, display: loading ? "none" : "block" }} />
         </div>
       </div>
     </section>
@@ -795,7 +795,7 @@ function SaturationChart({ active, refreshVersion = 0 }) {
         <span className="card-meta">tracks by the tier you assigned their artist</span>
       </div>
       <p style={cardDesc}>Your own rotation judgement, from <code>taste_profile.md</code> — not a data-quality measure. <b>Tier 1</b> = heavy rotation · <b>Tier 2</b> = moderate · <b>Tier 3</b> = special-context only · <b>Unranked</b> = artist not tiered. Tiers were written to stop generated playlists over-using favourite artists; here they simply show how much of your library you have opinions about.</p>
-      <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block", height: 320 }} />
+      <div className="echart-wrap" ref={elRef} role="img" aria-label="Tracks per rotation tier" style={{ display: loading ? "none" : "block", height: 320 }} />
       {loading && <ChartLoading height={320} />}
     </div>
   );
@@ -1106,13 +1106,13 @@ function FfSparkline({ sparkline, peakYear, recentStart, recentEnd }) {
   const max = Math.max(...series.map(([, v]) => v), 1);
 
   return (
-    <svg width={totalW} height={H} style={{ display: "block", overflow: "visible" }}>
+    <svg width={totalW} height={H} role="img" aria-label={`Plays per year${peakYear ? ", peak " + peakYear : ""}`} style={{ display: "block", overflow: "visible" }}>
       {series.map(([yr, plays], i) => {
         const bh = plays ? Math.max(3, (plays / max) * (H - 4)) : 1.5;
         const x = i * (bw + GAP);
         const isPeak  = yr === peakYear;
         const isRecent = yr >= recentStart;
-        const fill    = isPeak ? "var(--accent)" : isRecent || !plays ? "var(--faint)" : "var(--muted-s)";
+        const fill    = isPeak ? "var(--accent)" : isRecent || !plays ? "var(--faint-line)" : "var(--muted-s)";
         const opacity = (isRecent || !plays) && !isPeak ? 0.5 : 1;
         return (
           <g key={yr}>

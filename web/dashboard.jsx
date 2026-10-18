@@ -203,6 +203,31 @@ function App() {
     toastTimer.current = setTimeout(() => setToast(""), 2600);
   }, []);
 
+  /* Legend dialog (#119): focus moves in on open and back to the opener on
+     close; Escape closes, and Tab cycles inside instead of reaching the page. */
+  const infoRef = useRef(null);
+  useEffect(() => {
+    if (!infoOpen) return undefined;
+    const opener = document.activeElement;
+    const dialog = infoRef.current;
+    if (dialog) dialog.focus();
+    const onKey = (e) => {
+      if (e.key === "Escape") { setInfoOpen(false); return; }
+      if (e.key !== "Tab" || !dialog) return;
+      const stops = [...dialog.querySelectorAll("button, [href], input, select, [tabindex]:not([tabindex='-1'])")];
+      if (!stops.length) { e.preventDefault(); return; }
+      const i = stops.indexOf(document.activeElement);
+      const next = e.shiftKey ? (i <= 0 ? stops.length - 1 : i - 1) : (i + 1) % stops.length;
+      e.preventDefault();
+      stops[next].focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener && opener.focus) opener.focus();
+    };
+  }, [infoOpen]);
+
   /* Page switches go through a View Transition: the outgoing page lifts and
      fades while the incoming one settles up into place, and the sidebar's
      active marker slides between entries. flushSync is required — the browser
@@ -541,7 +566,7 @@ function App() {
         <div className="appbar-actions">
           <div className="search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" aria-label="Search artist or track" />
           </div>
           <button className="btn" onClick={doRefresh} disabled={refreshing} title="Sync scrobbles + re-run pipeline">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }}><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
@@ -820,9 +845,10 @@ function App() {
 
         {infoOpen && (
           <div className="modal-scrim" onClick={() => setInfoOpen(false)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal" ref={infoRef} role="dialog" aria-modal="true" aria-labelledby="legend-title" tabIndex={-1}
+                 onClick={(e) => e.stopPropagation()}>
               <div className="modal-head">
-                <h3 className="card-title">Reading the track explorer</h3>
+                <h3 className="card-title" id="legend-title">Reading the track explorer</h3>
                 <button className="modal-x" onClick={() => setInfoOpen(false)} aria-label="Close">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6L6 18M6 6l12 12" /></svg>
                 </button>
