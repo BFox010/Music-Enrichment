@@ -191,17 +191,16 @@ def enrich(
             line = line.strip()
             if line:
                 tracks.append(json.loads(line))
+    # Built over every loaded row, before the limit= slice and not from the gap
+    # subset: an artist-as-tag is only recognisable against the full roster.
+    artist_block = build_artist_block(tracks)
+    log.info("Artist-name block set: %d names", len(artist_block))
     if limit is not None:
         tracks = tracks[:limit]
 
     gap = [t for t in tracks if not t.get("genres")]
     log.info("Tracks: %d total, %d with no genre (backfill candidates)",
              len(tracks), len(gap))
-
-    # Built over every loaded row, not the gap subset: an artist-as-tag is only
-    # recognisable against the full roster.
-    artist_block = build_artist_block(tracks)
-    log.info("Artist-name block set: %d names", len(artist_block))
 
     lastfm = RateLimitedClient(
         LASTFM_CACHE, rate_per_second=LASTFM_RATE_LIMIT,

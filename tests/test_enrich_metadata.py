@@ -322,3 +322,18 @@ class TestExportMbidSurvivesAFailedLookup:
         written = self._run(monkeypatch, [_track_row(1)], {"_error": "not_found"})
         assert written[0]["musicbrainz_id"] is None
         assert written[0]["artist_mbid"] is None
+
+
+class TestArtistBlockSpansTheWholeLibrary:
+    def test_limit_does_not_shrink_the_artist_block(self, monkeypatch) -> None:
+        """A tag naming an artist beyond the limit= slice is still noise (#136)."""
+        response = {"track": {"toptags": {"tag": [{"name": "Artist 1"}, {"name": "rock"}]}}}
+        monkeypatch.setenv("LASTFM_API_KEY", "test-key")
+        monkeypatch.setattr(mod, "RateLimitedClient", lambda *a, **kw: _FakeClient(response))
+        with tempfile.TemporaryDirectory() as tmp:
+            inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "out.jsonl"
+            inp.write_text("".join(json.dumps(_track_row(n)) + "\n" for n in range(2)),
+                           encoding="utf-8")
+            mod.enrich(input_path=inp, output_path=out, limit=1)
+            rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+        assert rows[0]["lastfm_tags"] == ["rock"]

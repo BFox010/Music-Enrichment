@@ -100,10 +100,10 @@ def main(top: int = 20) -> None:
     for tag, n in tag_counts.most_common(top):
         print(f"  {n:>5}  {_bar(n, max_n, 20)}  {tag}")
 
-    _print_header("iTunes genres (122 matched tracks)")
     itunes_genres: Counter[str] = Counter(
         t["itunes_genre"] for t in tracks if t.get("itunes_genre")
     )
+    _print_header(f"iTunes genres ({sum(itunes_genres.values())} matched tracks)")
     if itunes_genres:
         max_n = max(itunes_genres.values())
         for genre, n in itunes_genres.most_common(top):

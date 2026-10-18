@@ -353,3 +353,21 @@ class TestArtistTagsAreFiltered:
         rows, _ = _run([track], responses, monkeypatch)
         assert rows[0]["lastfm_artist_tags"] == ["Hip-Hop", "soul"]
         assert "Hip-Hop / Rap" in rows[0]["genres"]
+
+
+def test_limit_does_not_shrink_the_artist_block(monkeypatch) -> None:
+    """A tag naming an artist beyond the limit= slice is still noise (#136)."""
+    FakeClient.responses = {
+        "artisttags|alpha": {"toptags": {"tag": [{"name": "Beta"}, {"name": "soul"}]}},
+    }
+    FakeClient.all_calls = []
+    monkeypatch.setattr(mod, "RateLimitedClient", FakeClient)
+    monkeypatch.setenv("LASTFM_API_KEY", "test-key")
+    with tempfile.TemporaryDirectory() as tmp:
+        inp, out = Path(tmp) / "in.jsonl", Path(tmp) / "out.jsonl"
+        inp.write_text("".join(json.dumps(t) + "\n" for t in
+                               (_track("Alpha", "alpha"), _track("Beta", "beta"))),
+                       encoding="utf-8")
+        mod.enrich(input_path=inp, output_path=out, limit=1)
+        rows = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+    assert rows[0]["lastfm_artist_tags"] == ["soul"]

@@ -263,14 +263,13 @@ def enrich(
             line = line.strip()
             if line:
                 tracks.append(json.loads(line))
+    # Noise-tag filtering drops artist-name-as-tag entries using the library's own
+    # artist set. Don't build it after the limit= slice: a debug run's set is partial.
+    artist_block = build_artist_block(tracks)
+    log.info("Artist-name block set: %d names", len(artist_block))
     if limit is not None:
         tracks = tracks[:limit]
     log.info("Tracks to enrich: %d", len(tracks))
-
-    # Noise-tag filtering drops artist-name-as-tag entries using the library's
-    # own artist set. Built after the limit= slice, so a debug run's set is partial.
-    artist_block = build_artist_block(tracks)
-    log.info("Artist-name block set: %d names", len(artist_block))
 
     client = RateLimitedClient(
         LASTFM_CACHE,

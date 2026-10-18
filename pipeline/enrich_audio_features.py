@@ -15,9 +15,9 @@ so every reader is unchanged; only ``source`` differs.
 ``time_signature`` is the one Exportify field ReccoBeats lacks. Left unset rather
 than guessed — nothing downstream reads it.
 
-Never overwrites an existing ``audio_features`` block unless a force mode is on
-(``--force`` *or* ``--force-errors``): that block is Exportify data acquired at
-real cost.
+Never overwrites an existing ``audio_features`` block except under ``--force``:
+that block is Exportify data acquired at real cost. ``--force-errors`` only
+re-fetches cached failures.
 
 Usage:
     python -m pipeline.enrich_audio_features
@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pipeline._http import FORCE_OFF, RateLimitedClient
+from pipeline._http import FORCE_ALL, FORCE_OFF, RateLimitedClient
 from pipeline.config import (
     RECCOBEATS_API_ROOT,
     RECCOBEATS_CACHE,
@@ -145,9 +145,11 @@ def enrich(
         force=force,
     )
 
+    # Don't widen this to any force mode: --force-errors would replace every
+    # Exportify block, which nothing can re-acquire.
     candidates = [
         t for t in work
-        if t.get("isrc") and (force != FORCE_OFF or not t.get("audio_features"))
+        if t.get("isrc") and (force == FORCE_ALL or not t.get("audio_features"))
     ]
     # Must stay upper-cased: the resolve map is keyed by ReccoBeats' upper-cased
     # echo, so a lower-case code silently never gets features.
