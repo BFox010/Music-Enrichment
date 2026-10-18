@@ -773,6 +773,13 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .mini-tl .trk-plays .mini { width: 44px; }
 
 /* artist picker */
+/* Trajectory series colours, one per picker slot; the chart reads them as
+   resolved hex, so keep them hex: ECharts can't parse oklch(). Validated as
+   a set (CVD + contrast) on --panel and on white, so they hold on either. */
+:root {
+  --artist-1: #3987e5; --artist-2: #d95926; --artist-3: #199e70; --artist-4: #c98500;
+  --artist-5: #d55181; --artist-6: #008300; --artist-7: #9085e9; --artist-8: #e66767;
+}
 .artist-picker { margin-bottom: 18px; }
 .ap-search { position: relative; display: flex; align-items: center; gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
 .ap-search > svg { position: absolute; left: 12px; width: 14px; height: 14px; color: var(--muted-s); pointer-events: none; }
@@ -786,9 +793,14 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .ap-chip { appearance: none; cursor: pointer; display: inline-flex; align-items: center; gap: 7px; padding: 6px 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--panel-2); color: var(--muted-s); font-size: 12.5px; font-family: var(--font-body); transition: all .14s; }
 .ap-chip:hover { border-color: var(--faint); color: var(--text-2); }
 .ap-chip .ap-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); transition: background .14s; }
-.ap-chip.on { background: color-mix(in oklab, var(--accent) 18%, var(--panel)); border-color: var(--accent); color: var(--text); }
-.ap-chip.on .ap-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
+.ap-chip.on { background: color-mix(in oklab, var(--ap-color, var(--accent)) 16%, var(--panel)); border-color: var(--ap-color, var(--accent)); color: var(--text); }
+.ap-chip.on .ap-dot { background: var(--ap-color, var(--accent)); box-shadow: 0 0 8px var(--ap-color, var(--accent)); }
 .ap-more { margin: 9px 2px 0; font-size: 11.5px; color: var(--muted-s); }
+
+/* audio-features axis pickers (the select itself is .fb-sort's) */
+.af-pick { gap: 6px; }
+.af-pick-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; }
+.af-pick select option:disabled { color: var(--faint); }
 
 /* listening calendar */
 .echart-wrap.cal { width: 100%; min-height: 220px; }
