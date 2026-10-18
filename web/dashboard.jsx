@@ -11,8 +11,8 @@ function topEntries(map, n) { return Object.entries(map).sort((a, b) => b[1] - a
 
 const ACCENT_OPTIONS = ["#f472b6", "#a78bfa", "#5b9dff", "#4ade80"];
 
-// Timeframe windows for play-based metrics
-/* Mood sources that represent a human judgement rather than an inference. */
+/* Curated mood sources (MOOD_CURATED_MIN_RANK and up in pipeline/config.py):
+   a person's label or a reviewed LLM pass, not a feature-derived guess. */
 const OWNER_MOOD_SOURCES = new Set(["audit", "claude_batch", "manual"]);
 
 const TIMEFRAMES = [
@@ -94,33 +94,26 @@ function App() {
   const [toast, setToast] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   // Bumped whenever the server's data changes (Refresh or Scrobble Sync) so
-  // every API-backed page drops its cached response and re-fetches. Pages
-  // that only received `active` kept the pre-refresh data on screen (#112).
+  // every API-backed page drops its cached response and re-fetches (#112).
   const [refreshVersion, setRefreshVersion] = useState(0);
   const [isLoadingLive, setIsLoadingLive] = useState(true);
   const fileRef = useRef(null);
   const dragDepth = useRef(0);
 
-  // Monotonic generation token shared by every data-load path (initial live
-  // load, refresh, drag/drop). Each call to runProcessLibrary() claims the
-  // next one before starting; a result that comes back after a newer call
-  // has already claimed the token is stale and gets dropped instead of
-  // clobbering fresher state — e.g. a slow refresh finishing after a second,
-  // faster one must not un-apply it.
+  // Monotonic generation token shared by every data-load path. Each
+  // runProcessLibrary() call claims the next one; a result arriving after a
+  // newer call claimed it is dropped, so a slow refresh finishing after a
+  // faster one can't un-apply it.
   const loadGenRef = useRef(0);
 
   /* Runs processLibrary() off the main thread via data-worker.js, falling
-     back to the synchronous path when Worker is unavailable or errors —
-     the one worker-request helper for initial load, refresh, and drag/drop
-     (F-08b), replacing three separate copies of this dance.
+     back to the synchronous path when Worker is unavailable or errors. The
+     one worker-request helper for every load path (F-08b).
 
-     `input` is either {tracksText, scrobblesText} (raw JSONL text — the
-     live-load/refresh path, parsed inside the worker) or {trRows, scRows}
-     (already-parsed rows — the drag/drop path, since a dropped file can be
-     a plain JSON array rather than JSONL). Resolves to {nt, ns, drill, cube}
-     normally, or null if Worker support is present but nothing to process
-     was given, or if the result arrived after a newer load claimed the
-     generation. */
+     `input` is {tracksText, scrobblesText} (raw JSONL, parsed in the worker)
+     or {trRows, scRows} (pre-parsed rows from a drop, which may be a plain
+     JSON array). Resolves to {nt, ns, drill, cube}, or null when a newer
+     load claimed the generation first. */
   const runProcessLibrary = useCallback((input) => {
     const myGen = ++loadGenRef.current;
     return new Promise((resolve) => {
@@ -202,8 +195,8 @@ function App() {
     window.dispatchEvent(new CustomEvent("ml:state"));
   }, [density, accent]);
 
-  // One timer for the one toast slot: an earlier toast's timer used to fire
-  // mid-way through the next one and clear it after ~0.5 s (#120).
+  // One timer for the one toast slot, or an earlier toast's timer clears the
+  // next toast early (#120).
   const toastTimer = useRef(null);
   const showToast = useCallback((msg) => {
     clearTimeout(toastTimer.current);
@@ -226,8 +219,7 @@ function App() {
   }, []);
 
   /* Re-reads the live library after the server's data changed. Shared by
-     Refresh and Scrobble Sync: a sync used to update only its own card, so the
-     KPIs and charts kept the pre-sync plays until a full page reload (#112). */
+     Refresh and Scrobble Sync so the KPIs and charts pick up new plays (#112). */
   const reloadLiveLibrary = useCallback(async () => {
     try {
       const [tr, sc] = await Promise.allSettled([
@@ -236,9 +228,6 @@ function App() {
       ]);
       const tracksText = tr.status === "fulfilled" ? tr.value : null;
       const scrobblesText = sc.status === "fulfilled" ? sc.value : null;
-      // Off the main thread via the shared worker helper (F-08b) — a
-      // refresh used to re-parse and re-cross-join synchronously here,
-      // ~0.5s of main-thread work on the current library size.
       applyLoad(await runProcessLibrary({ tracksText, scrobblesText }));
     } catch (e) { /* live fetch optional */ }
     setRefreshVersion((v) => v + 1);
@@ -284,9 +273,7 @@ function App() {
     // would discard the real library the live fetch was still processing.
     if (!rawTracks && !rawScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
     // Process only after every file is read, so the scrobble cross-join works
-    // regardless of arrival order. Off the main thread via the shared worker
-    // helper (F-08b) — a large dropped library used to cross-join
-    // synchronously here and could visibly jank the drop.
+    // regardless of arrival order.
     const result = await runProcessLibrary({ trRows: rawTracks, scRows: rawScrob });
     if (!result) return; // superseded by a newer load
     applyLoad(result);
@@ -428,8 +415,7 @@ function App() {
       if (t.styles.length) cov.styles++;
       if (t.af) cov.af++;
       if (t.apple) cov.apple++;
-      // Length-checked: mood_tags arrives as [] for tracks the classifier
-      // declined to guess on, and an empty array is truthy.
+      // Length-checked: an empty mood_tags array is truthy.
       if (t.moods && t.moods.length) cov.mood++;
       if (t.spotify) cov.spotify++;
     }
@@ -478,8 +464,8 @@ function App() {
      days, the day chart the selected hours, the drill-down their intersection.
      One linear pass over typed arrays, memoized on its inputs.
 
-     No cube (bundled sample, or a failed load) falls back to the pre-baked
-     aggregates, which ignore the timeframe — stale, but not an empty dashboard. */
+     No cube (bundled sample, a failed load, or a single-file drop) falls back to
+     the pre-baked aggregates, which ignore the timeframe — stale, but not empty. */
   const DOW_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
   const view = useMemo(() => {
     if (!cube) return { byHour: scrobbles.byHour, byDow: scrobbles.byDow, bySeason: scrobbles.bySeason, total: scrobbles.total, slice: null };
@@ -906,7 +892,7 @@ function ScrobbleSync({ onSynced }) {
       } else {
         setResult(d);
         // A sync that wrote nothing leaves the library as it was; skip the
-        // ~0.5 s re-process rather than redo it for no change.
+        // re-process.
         await Promise.all([fetchStatus(), onSynced && d.new !== 0 ? onSynced() : null]);
       }
     } catch (e) {

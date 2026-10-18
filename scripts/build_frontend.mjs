@@ -1,13 +1,11 @@
-// Frontend build: pre-compile the in-browser JSX into one minified bundle so the
-// browser no longer ships @babel/standalone (~3 MB) or transpiles on every page load.
+// Frontend build: compile web/*.jsx into one minified bundle (no in-browser transpile).
 //
-// Today the five .jsx files are run by @babel/standalone via indirect eval, which gives
-// each file its OWN scope: top-level `function` declarations leak onto `window` (that is
-// how components are shared, e.g. dashboard.jsx reads window.TimelineChart / bare HBars),
-// while `const { useState } = React` stays private per file. To reproduce that exactly we
-// wrap each file in its own IIFE and re-export its top-level functions to `window`, then
-// run a single esbuild transform+minify pass over the combined source. The per-file IIFEs
-// keep each file's scope isolated (no `const` collisions) and one pass yields one sourcemap.
+// The .jsx files share components through globals: every top-level `function` is
+// visible to later files (e.g. dashboard.jsx reads window.TrajectoryPage and bare HBars),
+// while each file's `const { useState } = React` must stay private. So each file is
+// wrapped in its own IIFE that re-exports its top-level functions to `window`, then one
+// esbuild transform+minify pass runs over the combined source (one sourcemap). Don't drop
+// the IIFEs: the files' top-level `const`s would collide.
 //
 //   npm run build     one-off build  -> web/app.bundle.js (+ .map)
 //   npm run dev       rebuild on save (watch web/*.jsx)
@@ -33,7 +31,7 @@ const TOP_FN = /^function\s+([A-Za-z0-9_$]+)\s*\(/gm;
 async function wrapFile(name) {
   const src = await readFile(join(WEB, name), "utf8");
   const names = [...src.matchAll(TOP_FN)].map((m) => m[1]);
-  // Re-export every top-level function to window (mirrors indirect-eval's global leak).
+  // Re-export every top-level function to window so later files can use it.
   const exports = names.map((n) => `window.${n}=${n};`).join("");
   return `\n//# === ${name} ===\n(function(){\n${src}\n;${exports}\n})();\n`;
 }

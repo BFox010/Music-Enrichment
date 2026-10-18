@@ -1,8 +1,7 @@
-/* data-worker.js — parses + aggregates the library off the main thread so the
-   app shell stays responsive during a fresh load. Receives the raw JSONL text
-   for tracks + scrobbles, runs the same processLibrary() the main thread uses,
-   and posts back { nt, ns, drill, cube, anchor }. The main thread falls back to running
-   processLibrary() inline if this worker is unavailable or errors. */
+/* Parses + aggregates the library off the main thread. Receives raw JSONL text
+   or pre-parsed rows, runs the same processLibrary() the main thread uses, and
+   posts back { ok, nt, ns, drill, cube, anchor }. The main thread falls back to
+   running processLibrary() inline if this worker is unavailable or errors. */
 importScripts("data-processing.js");
 
 self.onmessage = (e) => {
@@ -14,8 +13,7 @@ self.onmessage = (e) => {
     const trRows = preTr !== undefined ? preTr : (tracksText ? parseJSONL(tracksText) : null);
     const scRows = preSc !== undefined ? preSc : (scrobblesText ? parseJSONL(scrobblesText) : null);
     const { nt, ns, drill, cube } = processLibrary(trRows, scRows);
-    // The cube's typed arrays are transferred, not cloned — moving ~130KB of
-    // buffers costs nothing and keeps the hand-off off the copy path.
+    // The cube's typed arrays are transferred, not cloned.
     const transfer = cube
       ? [cube.hour.buffer, cube.dow.buffer, cube.season.buffer, cube.tf.buffer, cube.track.buffer]
       : [];

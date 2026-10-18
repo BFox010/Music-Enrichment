@@ -146,8 +146,8 @@ function useTweaks(defaults) {
       ? keyOrEdits : { [keyOrEdits]: val };
     setValues((prev) => ({ ...prev, ...edits }));
     window.parent.postMessage({ type: '__edit_mode_set_keys', edits }, '*');
-    // Same-window signal so in-page listeners (deck-stage rail thumbnails)
-    // can react — the parent message only reaches the host, not peers.
+    // Same-window signal so in-page listeners can react — the parent message
+    // only reaches the host, not peers.
     window.dispatchEvent(new CustomEvent('tweakchange', { detail: edits }));
   }, []);
   return [values, setTweak];
@@ -303,11 +303,9 @@ function TweakRadio({ label, value, options, onChange }) {
   const valueRef = React.useRef(value);
   valueRef.current = value;
 
-  // Segments wrap mid-word once per-segment width runs out. The track is
-  // ~248px (280 panel − 28 body pad − 4 seg pad), each button loses 12px
-  // to its own padding, and 11.5px system-ui averages ~6.3px/char — so 2
-  // options fit ~16 chars each, 3 fit ~10. Past that (or >3 options), fall
-  // back to a dropdown rather than wrap.
+  // Fall back to a dropdown rather than let segments wrap mid-word: the ~248px
+  // track, less 12px padding per button, at ~6.3px/char fits ~16 chars across
+  // 2 options and ~10 across 3. Any other option count always falls back.
   const labelLen = (o) => String(typeof o === 'object' ? o.label : o).length;
   const maxLen = options.reduce((m, o) => Math.max(m, labelLen(o)), 0);
   const fitsAsSegments = maxLen <= ({ 2: 16, 3: 10 }[options.length] ?? 0);

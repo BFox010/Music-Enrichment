@@ -86,14 +86,9 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
 
 /* ── Data-coverage dots ──
    One definition, two consumers: the "Data" cell on every row and the legend
-   in dashboard.jsx. They used to be written out twice, which is why the legend
-   listed five squares that were all the same accent colour — nothing in it
-   could tell you which position was which, so a row could only be read by
-   counting.
-
+   in dashboard.jsx. Keep it single, so the legend's colours stay the row's.
    Hue answers "which source"; fill answers "how confident". A hollow dot is a
-   source that is present but lower-confidence, which today only the mood
-   classifier can be. */
+   source present but lower-confidence (today only a centroid mood). */
 const COV_SOURCES = [
   { key: "tags",   color: "oklch(0.70 0.17 25)",  label: "Last.fm tags",  note: "community genre/style tags.",
     state: (t) => (t.tags && t.tags.length ? "on" : "") },

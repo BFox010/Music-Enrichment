@@ -1,8 +1,7 @@
 /* Presentational chart components. All styling via themes.css classNames + CSS vars. */
 const { useMemo, useState, useRef, useLayoutEffect } = React;
 
-/* genre color ramp — derived from --accent at runtime via CSS color-mix-ish.
-   We use fixed hues that read well on dark and harmonize per theme accent. */
+/* Genre colours: fixed oklch hues by list position, not derived from --accent. */
 function useGenreColors(genres) {
   return useMemo(() => {
     const hues = [262, 192, 152, 28, 330, 50, 280, 210, 96];
@@ -13,20 +12,12 @@ function useGenreColors(genres) {
 }
 
 /* ── mood colour identity ──
-   Genres get their hues from position in a ranked list; moods cannot, because
-   the same mood has to be the same colour on every surface — a bar, a chip, a
-   table cell — and those surfaces rank differently or not at all. So moods are
-   pinned by name.
-
-   Fourteen categories is well past the ~8 a flat categorical palette can keep
-   apart, so they are grouped into six families that share a hue and separate
-   on lightness. The family is the thing you read at a glance ("warm = energy,
-   blue = low"); the shade only has to distinguish members once you are looking
-   at one family. Lightness also carries meaning inside a family — Heavy Bass
-   is the dark end of the warm ramp, Dark the dark end of the blue one.
-
-   Same oklch() authoring as useGenreColors, so ambient.js can parse these too
-   if the backdrop is ever pointed at moods. */
+   Pinned by name, not by rank position like genres: a mood must be the same
+   colour on every surface (bar, chip, table cell), and those rank differently.
+   Fourteen moods are too many for a flat categorical palette, so they form six
+   hue families separated by lightness; lightness carries meaning within a
+   family (Heavy Bass is the dark end of warm, Dark of blue).
+   Same oklch() authoring as useGenreColors, so ambient.js can parse them. */
 const MOOD_COLORS = {
   // tender — rose
   "Love":       "oklch(0.74 0.16 12)",
@@ -473,11 +464,10 @@ function SeasonalFavorites({ drill }) {
 
 /* ── Mood distribution ── */
 function MoodBars({ items, max, activeKey, onPick }) {
-  /* Each bar is split into the share you labelled by hand and the share a
-     classifier inferred. Worth showing plainly: the classifier is only allowed
-     to emit the few moods it can actually predict, so those moods draw on one
-     more source than the withheld ones do. Without the split, that asymmetry
-     would read as a fact about your taste. */
+  /* Each bar splits the curated share (OWNER_MOOD_SOURCES in dashboard.jsx)
+     from the classifier-inferred share. The classifier may emit only the moods
+     it can predict, so those draw on one more source than the withheld ones;
+     without the split that asymmetry reads as a fact about your taste. */
   const ref = useFlipRows(items.map((m) => m.key).join("|"));
   return (
     <div className="moods" ref={ref}>
