@@ -4,8 +4,9 @@ Drops radio stations ("88.5 fm"), artist-as-tag ("kanye west", matched against
 the library's own artists), personal lists ("my favorites") and specific years
 ("2016"; decades like "90s" are KEPT).
 
-Biased toward *under*-blocking: a protected allowlist of genre/mood/reaction
-words survives even when it collides with an artist name.
+Biased toward *under*-blocking: genre, mood and reaction words survive even
+when they collide with an artist name. An artist absent from the library
+("britney spears") survives as a tag too; the library is the only name list.
 
 Used by Phases 4 and 4d before writing tags.
 """
@@ -15,6 +16,8 @@ from __future__ import annotations
 import re
 from collections.abc import Iterable
 
+from pipeline.config import MOOD_CATEGORIES
+from pipeline.derive_genres import GENRE_TAG_MAP, ITUNES_GENRE_MAP
 from pipeline.normalize import normalize_artist
 
 # Bare 4-digit year. Anchored, so decade forms ("90s", "2010s") survive.
@@ -27,25 +30,21 @@ _FREQ_RE = re.compile(r"\b\d{2,4}(?:\.\d+)?\s*(?:fm|am)\b", re.IGNORECASE)
 # "my top songs", "my favorites", ...
 _MY_RE = re.compile(r"^my\b", re.IGNORECASE)
 
-# NEVER dropped, even when they collide with an artist in the library (the band
-# "Muse", the rapper "Future"). Guards the artist-name rule only — the other
-# three never hit these words.
-_PROTECTED_RAW = {
-    # 14 mood categories
-    "fast", "moody", "slow", "heavy bass", "dance", "sad", "groove",
-    "heartbreak", "dark", "love", "hype", "uplifting", "happy", "sunny",
-    # core genres + common descriptors
-    "rap", "rock", "pop", "hip hop", "hip-hop", "alternative", "indie",
-    "rnb", "r&b", "trap", "electronic", "soul", "funk", "house", "disco",
-    "jazz", "metal", "folk", "punk", "emo", "blues", "country", "reggae",
-    "techno", "ambient", "soundtrack", "chill", "mellow", "smooth",
-    "downtempo", "edm", "acoustic", "instrumental", "experimental",
-    "shoegaze", "grunge", "future",
-    # reaction tags the owner wants to keep
+# Genre and reaction words GENRE_TAG_MAP doesn't key ("jungle" is also a band).
+# Don't move these into the map to shorten this list: a new key changes 4c's genres.
+_PROTECTED_EXTRA = {
+    "jungle", "garage", "dub", "bass", "swing", "blues", "soundtrack",
+    "instrumental", "future", "chill", "mellow", "smooth",
     "beautiful", "amazing", "party", "upbeat", "energetic", "dreamy",
     "summer", "sexy", "cool", "fire",
 }
-_PROTECTED = frozenset(normalize_artist(t) for t in _PROTECTED_RAW)
+# NEVER dropped, even when they collide with an artist in the library (the band
+# "Muse", the rapper "Future"). Guards the artist-name rule only; the other
+# three never hit these words. Derived, so a new genre key is protected too.
+_PROTECTED = frozenset(
+    normalize_artist(t)
+    for t in (*GENRE_TAG_MAP, *ITUNES_GENRE_MAP, *MOOD_CATEGORIES, *_PROTECTED_EXTRA)
+)
 
 
 def is_noise_tag(tag: object, artist_block: frozenset[str] = frozenset()) -> bool:

@@ -327,22 +327,23 @@ class TestArtistTagsAreFiltered:
         rows, _ = _run(tracks, responses, monkeypatch)
         assert rows[1]["lastfm_artist_tags"] == ["Hip-Hop"]
 
-    def test_noise_tag_cannot_reach_the_genre_mapping(self, monkeypatch) -> None:
-        """The real risk: an artist-as-tag colliding with a GENRE_TAG_MAP key.
+    def test_genre_word_that_is_a_band_name_survives(self, monkeypatch) -> None:
+        """#70: the band Jungle in the library must not erase the genre tag.
 
-        "Jungle" is a real band in this library and also a real genre word, so
-        the block set suppresses it — the tag must not survive to be mapped.
+        "Trance" is a GENRE_TAG_MAP key credited as an artist here, so the
+        filter must keep it and the mapping must still see it.
         """
         tracks = [
             _track("Jungle", "jungle", genres=["Electronic"]),
+            _track("Trance", "trance", genres=["Electronic"]),
             _track("Some Artist", "some artist"),
         ]
         responses = {"artisttags|some artist": {"toptags": {"tag": [
-            {"name": "jungle"}, {"name": "Rock"},
+            {"name": "jungle"}, {"name": "trance"}, {"name": "Rock"},
         ]}}}
         rows, _ = _run(tracks, responses, monkeypatch)
-        assert "jungle" not in rows[1]["lastfm_artist_tags"]
-        assert rows[1]["genres"] == ["Rock"]
+        assert rows[2]["lastfm_artist_tags"] == ["jungle", "trance", "Rock"]
+        assert rows[2]["genres"] == ["Electronic", "Rock"]
 
     def test_genuine_genre_tags_survive_the_filter(self, monkeypatch) -> None:
         """Guards the tests above: filtering must not eat real genres."""
