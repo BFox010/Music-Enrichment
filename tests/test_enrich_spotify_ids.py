@@ -78,6 +78,13 @@ class TestBestMatch:
     def test_error_response(self) -> None:
         assert _best_match({"_error": "not_found"}, "x", "y") is None
 
+    def test_empty_search_is_an_expiring_miss(self) -> None:
+        """#109: the empty envelope becomes not_found, which _best_match
+        already treats exactly like the empty envelope."""
+        from pipeline.enrich_spotify_ids import _classify_spotify_search
+        assert _classify_spotify_search(_search()) == "not_found"
+        assert _classify_spotify_search(_search(_track("a", "Roads", "Portishead"))) is None
+
     def test_non_dict_response(self) -> None:
         assert _best_match(None, "x", "y") is None  # type: ignore[arg-type]
         assert _best_match([], "x", "y") is None  # type: ignore[arg-type]

@@ -215,13 +215,23 @@ Every phase that hits an external API:
   `max_retries`, `invalid_json`, in-band rate limits) after
   `HTTP_TRANSIENT_TTL_SECONDS` (6 hours). A network blip heals itself on the
   next run instead of freezing that track permanently.
-- **Known gap (#109):** an API that answers "no match" with a 200 and an empty
-  result is cached as a *success*, which never expires. Only `--force` re-asks.
+- **Expires search misses too.** An API that answers "no match" with a 200 and
+  an empty result (iTunes, Deezer, Discogs, Spotify, ReccoBeats) has that
+  answer stored as a `not_found` on the 30-day TTL. Other successes are cached
+  until `--force`; Phase 5 re-asks iTunes for a row whose `apple_music_checked_at`
+  is older than 90 days. Cache files written before this keep their old empty
+  successes until `--force`.
+- **Keeps the old value on an error.** A failed lookup is *unknown*, not "not
+  available" or "no styles", so the row keeps what it had.
 - **Is crash-safe** — flushes its cache from a `finally`, so an interrupted run
   keeps every response it already paid for at the rate limit.
 - Retries 429/408/425 and 5xx with exponential backoff up to
-  `HTTP_MAX_RETRIES`. Any other 4xx fails fast; a 401/403 is logged at ERROR for
-  each cache key it hits and is not retried within the run.
+  `HTTP_MAX_RETRIES`, waiting for a 429/503 `Retry-After` when sent (capped at
+  `HTTP_BACKOFF_MAX`). Any other 4xx fails fast; a 401/403 is logged at ERROR
+  and is not retried within the run. After `HTTP_AUTH_BREAKER_THRESHOLD`
+  consecutive auth errors the client stops sending requests for the rest of
+  the run and logs one ERROR, so a dead credential costs a handful of requests,
+  not one per key.
 - Logs a cache summary (entries, cached `not_found` vs transient, hits/misses/
   refetches) so a low coverage number traces back to genuine no-match versus a
   cached failure.

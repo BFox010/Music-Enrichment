@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta, timezone
 
 from pipeline.check_apple_music import (
@@ -113,3 +114,116 @@ class TestIsStale:
     def test_old_is_stale(self) -> None:
         old = (datetime.now(timezone.utc) - timedelta(days=200)).strftime("%Y-%m-%d")
         assert _is_stale(old) is True
+
+
+# ── check() end-to-end against a faked iTunes (#109) ──
+
+
+class _Resp:
+    def __init__(self, status_code: int, payload=None) -> None:
+        self.status_code = status_code
+        self._payload = payload
+        self.text = ""
+        self.headers: dict = {}
+
+    def json(self):
+        return self._payload
+
+
+class _Session:
+    def __init__(self, responses) -> None:
+        self.responses = list(responses)
+        self.calls = 0
+        self.headers: dict = {}
+
+    def get(self, url, params=None, timeout=None):
+        self.calls += 1
+        return self.responses.pop(0)
+
+
+HIT = {"results": [{"artistName": "Portishead", "trackName": "Roads", "trackId": 999}]}
+ROW = {"artist": "Portishead", "track": "Roads",
+       "artist_normalized": "portishead", "track_normalized": "roads"}
+
+
+def _run(monkeypatch, tmp_path, rows, responses, *, cache=None):
+    """Run check() over ``rows`` with a real client whose session is faked."""
+    import pipeline.check_apple_music as cam
+    from pipeline._http import RateLimitedClient
+
+    monkeypatch.setattr("pipeline._http.time.sleep", lambda _s: None)
+    cache_path = tmp_path / "apple.json"
+    if cache is not None:
+        cache_path.write_text(json.dumps(cache), encoding="utf-8")
+    session = _Session(responses)
+
+    def factory(_path, **kwargs):
+        kwargs["rate_per_second"] = 10000.0
+        client = RateLimitedClient(cache_path, **kwargs)
+        client.session = session
+        return client
+
+    monkeypatch.setattr(cam, "RateLimitedClient", factory)
+    src, out = tmp_path / "in.jsonl", tmp_path / "out.jsonl"
+    src.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    stats = cam.check(input_path=src, output_path=out)
+    written = [json.loads(l) for l in out.read_text(encoding="utf-8").splitlines() if l]
+    return stats, written, session
+
+
+def _days_ago(n: int) -> str:
+    return (datetime.now(timezone.utc) - timedelta(days=n)).strftime("%Y-%m-%d")
+
+
+class TestCheckErrorsAreUnknown:
+    def test_a_transient_error_does_not_become_unavailable(self, monkeypatch, tmp_path) -> None:
+        """A 503 used to write available=False with today's date, which the
+        freshness gate then protected for 90 days."""
+        prior = {**ROW, "apple_music_available": True, "apple_music_id": "999",
+                 "apple_music_checked_at": _days_ago(200)}
+        stats, rows, _ = _run(monkeypatch, tmp_path, [prior], [_Resp(503)] * 5)
+        assert stats["errors"] == 1
+        assert rows[0]["apple_music_available"] is True
+        assert rows[0]["apple_music_id"] == "999"
+        assert rows[0]["apple_music_checked_at"] == prior["apple_music_checked_at"]
+
+    def test_an_unchecked_row_stays_unchecked_on_error(self, monkeypatch, tmp_path) -> None:
+        _, rows, _ = _run(monkeypatch, tmp_path, [dict(ROW)], [_Resp(503)] * 5)
+        assert "apple_music_available" not in rows[0]
+        assert "apple_music_checked_at" not in rows[0]
+
+    def test_an_empty_result_is_a_checked_miss(self, monkeypatch, tmp_path) -> None:
+        stats, rows, _ = _run(monkeypatch, tmp_path, [dict(ROW)], [_Resp(200, {"results": []})])
+        assert stats["unavailable"] == 1 and stats["errors"] == 0
+        assert rows[0]["apple_music_available"] is False
+        assert rows[0]["apple_music_checked_at"]
+        cached = json.loads((tmp_path / "apple.json").read_text(encoding="utf-8"))
+        assert cached["portishead|roads"]["_error"] == "not_found"
+
+
+class TestStaleRowsReachTheNetwork:
+    def test_a_stale_row_refetches_despite_a_cached_success(self, monkeypatch, tmp_path) -> None:
+        stale = {**ROW, "apple_music_available": False, "apple_music_id": None,
+                 "apple_music_checked_at": _days_ago(200)}
+        _, rows, session = _run(
+            monkeypatch, tmp_path, [stale], [_Resp(200, HIT)],
+            cache={"portishead|roads": {"results": []}},
+        )
+        assert session.calls == 1
+        assert rows[0]["apple_music_available"] is True
+        assert rows[0]["apple_music_id"] == "999"
+
+    def test_a_fresh_row_is_skipped(self, monkeypatch, tmp_path) -> None:
+        fresh = {**ROW, "apple_music_available": True, "apple_music_checked_at": _days_ago(5)}
+        stats, _, session = _run(monkeypatch, tmp_path, [fresh], [])
+        assert stats["skipped_fresh"] == 1
+        assert session.calls == 0
+
+    def test_an_undated_row_uses_the_cache(self, monkeypatch, tmp_path) -> None:
+        """A full run rebuilds rows from scrobbles, so they arrive undated;
+        re-asking each of those would re-fetch the whole library every run."""
+        _, rows, session = _run(
+            monkeypatch, tmp_path, [dict(ROW)], [], cache={"portishead|roads": HIT},
+        )
+        assert session.calls == 0
+        assert rows[0]["apple_music_available"] is True

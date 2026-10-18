@@ -145,16 +145,25 @@ Every phase that touches an external API:
   retried *within* a run, but the operator fixing the credential must take
   effect on the next one, not in a month.
 - Fails fast on a deterministic 4xx. Only 429/408/425 and 5xx go round the
-  backoff ladder; a 400/401/403 is a property of the request or the credential,
-  so retrying it spends ~10 s per cache key to reach the same refusal. A 401/403
-  is logged at ERROR, once per cache key, and not retried within the run.
+  backoff ladder, honouring a 429/503 `Retry-After` up to `HTTP_BACKOFF_MAX`; a
+  400/401/403 is a property of the request or the credential, so retrying it
+  spends ~10 s per cache key to reach the same refusal. A 401/403 is logged at
+  ERROR and not retried within the run. After `HTTP_AUTH_BREAKER_THRESHOLD`
+  consecutive auth errors the client's circuit opens: no more requests that run,
+  and uncached keys get an `auth_error` that is not cached.
 - Classifies **in-band** errors via `RateLimitedClient.get(..., classify=)`.
   Deezer answers a rate limit with HTTP 200 and `{"error": {"code": 4}}`,
   Last.fm with `{"error": 29}`. **An API that signals failure in the body needs a
   classifier, or its failures are cached as successes, which never expire.**
   `classify_lastfm` lives in `_http.py`; Deezer's is `resolve_isrcs._classify_deezer`.
-- **Known gap (#109):** a 200 with an empty result ("no match") is a success, so
-  it never expires either. Only `--force` re-asks.
+- Classifies a search API's **empty result** with `classify_empty(...)`, so the
+  miss is a `not_found` on the 30-day TTL rather than a success that never
+  expires (#109). The caller must treat that `not_found` as it treated the empty
+  body. A non-empty success is still permanent until `--force`; a phase with its
+  own freshness gate passes `refresh=True` for a stale row (Phase 5).
+- Treats an error as *unknown*, not as a negative: it leaves the field as it was
+  (Phase 5 keeps the prior availability, 4b leaves `discogs_styles` unset). Only
+  a checked miss (`not_found`) writes the negative value.
 - Flushes its cache from a `finally`, so an interrupted run keeps every response
   it already paid for at the rate limit.
 - Honours `--force-errors` (re-fetch cached failures only) and `--force` (bypass

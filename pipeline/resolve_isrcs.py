@@ -45,6 +45,7 @@ from pipeline._http import (
     KIND_NOT_FOUND,
     KIND_TRANSIENT,
     RateLimitedClient,
+    classify_empty,
 )
 from pipeline.config import (
     DEEZER_API_ROOT,
@@ -130,6 +131,13 @@ def _classify_deezer(body: Any) -> str | None:
     return KIND_TRANSIENT if code in _DEEZER_QUOTA_CODES else KIND_NOT_FOUND
 
 
+_classify_deezer_empty = classify_empty("data")
+
+
+def _classify_deezer_search(body: Any) -> str | None:
+    """``_classify_deezer`` plus an empty ``data`` list as an expiring miss (#109)."""
+    return _classify_deezer(body) or _classify_deezer_empty(body)
+
 
 def _best_deezer_match(
     response: Any, artist_norm: str, track_norm: str
@@ -169,7 +177,7 @@ def _resolve_deezer(client: RateLimitedClient, artist: str, track: str) -> str |
             cache_key += f"#{label}"
         query = f'artist:"{var_artist}" track:"{var_track}"'
         response = client.get(
-            search_url, {"q": query}, cache_key, classify=_classify_deezer
+            search_url, {"q": query}, cache_key, classify=_classify_deezer_search
         )
         match = _best_deezer_match(response, artist_norm, track_norm)
         if not match or not match.get("id"):

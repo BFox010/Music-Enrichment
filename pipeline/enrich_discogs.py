@@ -1,7 +1,8 @@
 """Phase 4b — Discogs styles enrichment.
 
 Queries ``database/search`` and takes ``style`` off the best-matching release →
-``discogs_styles`` (e.g. ``["Conscious", "Boom Bap"]``, ``[]`` on no match).
+``discogs_styles`` (e.g. ``["Conscious", "Boom Bap"]``, ``[]`` on no match, left
+as it was on an API error).
 Discogs is release-oriented, so the search is ``artist`` + ``release_title``
 (the album), falling back to ``artist`` + ``track`` for rows with no album.
 
@@ -26,7 +27,7 @@ from typing import Any
 
 from dotenv import load_dotenv
 
-from pipeline._http import FORCE_OFF, RateLimitedClient
+from pipeline._http import FORCE_OFF, KIND_NOT_FOUND, RateLimitedClient, classify_empty
 from pipeline.config import (
     MissingCredentialsError,
     DISCOGS_API_ROOT,
@@ -171,11 +172,15 @@ def enrich(
     try:
         for i, track in enumerate(tracks, start=1):
             params, cache_key = _query_for_track(track, token)
-            response = client.get(DISCOGS_SEARCH_URL, params, cache_key)
+            response = client.get(
+                DISCOGS_SEARCH_URL, params, cache_key, classify=classify_empty("results")
+            )
 
-            if isinstance(response, dict) and response.get("_error"):
+            # not_found is a checked miss and falls through to []. Don't write []
+            # on any other error: an outage is unknown, not "no styles".
+            if (isinstance(response, dict) and response.get("_error")
+                    and response["_error"] != KIND_NOT_FOUND):
                 stats["errors"] += 1
-                track["discogs_styles"] = []
             else:
                 styles = _extract_discogs_styles(response)
                 track["discogs_styles"] = styles
