@@ -237,7 +237,7 @@ them if its callable actually takes `force=`. Phase B does not.
 Shared HTTP layer: [pipeline/_http.py](pipeline/_http.py). Rate limits and TTLs:
 [pipeline/config.py](pipeline/config.py).
 
-Provenance is uneven. 5a writes `isrc_source`/`isrc_retrieved_at`, 5b stamps
+Provenance is uneven. 5a and B write `isrc_source`/`isrc_retrieved_at`, 5b stamps
 `retrieved_at` on the feature vector, Phase 6 writes `mood_source`, and only 4d
 writes a full block (`source`, `retrieved_at`, `confidence`). Check a field
 before assuming it carries provenance.

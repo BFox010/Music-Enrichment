@@ -94,9 +94,9 @@ MOOD_CURATED_MIN_RANK: int = MOOD_SOURCE_RANK["claude_batch"]
 MOOD_CONFIDENCES: tuple[str, ...] = ("high", "medium", "low")
 CURATION_STATES: tuple[object, ...] = (None, "approved", "locked", "rejected")
 AUDIO_FEATURE_SOURCES: tuple[str, ...] = ("exportify", "reccobeats")
-# Written by Phase 5a only. An isrc from Exportify (3c) or Spotify (B) leaves
-# isrc_source None.
-ISRC_SOURCES: tuple[str, ...] = ("musicbrainz", "deezer")
+# Written by Phase 5a (musicbrainz, deezer) and Phase B (spotify_search). An isrc
+# from Exportify (3c) leaves isrc_source None.
+ISRC_SOURCES: tuple[str, ...] = ("musicbrainz", "deezer", "spotify_search")
 
 # Month-number → season name. Winter = Dec/Jan/Feb, etc.
 SEASON_BY_MONTH: dict[int, str] = {

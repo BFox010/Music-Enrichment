@@ -322,6 +322,24 @@ class TestEnrichPersistsIsrc:
         assert stats["resolved"] == 1
         assert stats["isrc_captured"] == 1
 
+    def test_captured_isrc_carries_its_provenance(self, monkeypatch, tmp_path) -> None:
+        """Without isrc_source, 4e reads a name-search ISRC as decisive (#133)."""
+        _, rows = self._run(
+            monkeypatch, tmp_path,
+            [{"artist": "Portishead", "track": "Roads"}],
+            {"Roads": ("abc", "GBAAA9400013")},
+        )
+        assert rows["Roads"]["isrc_source"] == "spotify_search"
+        assert rows["Roads"]["isrc_retrieved_at"]
+
+    def test_a_kept_isrc_keeps_its_own_provenance(self, monkeypatch, tmp_path) -> None:
+        _, rows = self._run(
+            monkeypatch, tmp_path,
+            [{"artist": "A", "track": "B", "isrc": "USORIGINAL01"}],
+            {"B": ("newid", "USDIFFERENT9")},
+        )
+        assert "isrc_source" not in rows["B"]
+
     def test_never_overwrites_an_existing_isrc(self, monkeypatch, tmp_path) -> None:
         """An Exportify-sourced ISRC was matched by another route; leave it."""
         stats, rows = self._run(
@@ -351,3 +369,32 @@ class TestEnrichPersistsIsrc:
         assert not rows["B"].get("spotify_id")
         assert not rows["B"].get("isrc")
         assert stats["unmatched"] == 1
+
+
+class TestEnrichFlushesOnInterrupt:
+    def test_exception_mid_loop_still_flushes_the_cache(self, monkeypatch, tmp_path) -> None:
+        """Responses already paid for at the rate limit must reach the cache file."""
+        import pipeline.enrich_spotify_ids as mod
+
+        src = tmp_path / "in.jsonl"
+        src.write_text(
+            "".join(json.dumps({"artist": "A", "track": t}) + "\n" for t in ("x", "y")),
+            encoding="utf-8",
+        )
+        flushed = []
+        monkeypatch.setattr(mod, "load_credentials", lambda: ("id", "secret"))
+        monkeypatch.setattr(mod, "SpotifyAuth", lambda *a, **k: _StubAuth())
+        monkeypatch.setattr(
+            mod, "RateLimitedClient",
+            lambda *a, **k: type("C", (), {"flush": lambda self: flushed.append(1)})(),
+        )
+
+        def resolve(client, auth, artist, track):
+            if track == "y":
+                raise KeyboardInterrupt
+            return ("id1", None)
+
+        monkeypatch.setattr(mod, "_resolve_one", resolve)
+        with pytest.raises(KeyboardInterrupt):
+            mod.enrich(input_path=src, output_path=tmp_path / "out.jsonl")
+        assert flushed == [1]
