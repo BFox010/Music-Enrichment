@@ -62,6 +62,7 @@ DISCOGS_CACHE: Path = CACHE_DIR / "discogs.json"
 SPOTIFY_CACHE: Path = CACHE_DIR / "spotify_search.json"
 DEEZER_CACHE: Path = CACHE_DIR / "deezer.json"
 RECCOBEATS_CACHE: Path = CACHE_DIR / "reccobeats.json"
+LAST_SYNC_PATH: Path = CACHE_DIR / "last_sync.json"  # dashboard state, not an API cache; must stay gitignored
 
 # ── Schema ──
 # Monotonic int, mirrored in pipeline_manifest.yaml. Bump only on breaking

@@ -588,6 +588,38 @@ class TestLastFmStatus:
         body = client.get("/api/lastfm/status").json()
         assert body["configured"] is False
 
+    def test_last_sync_is_null_before_any_sync(self, client):
+        assert client.get("/api/lastfm/status").json()["last_sync"] is None
+
+    def test_last_sync_returns_the_recorded_stamp(self, client):
+        import app.lastfm_sync as ls
+        stamp = ls.record_sync(4)
+        r = client.get("/api/lastfm/status")
+        assert r.status_code == 200
+        assert r.json()["last_sync"] == stamp
+        assert r.json()["scrobble_count"] == 1
+
+    def test_a_corrupt_stamp_reads_as_null_not_a_500(self, client):
+        import app.lastfm_sync as ls
+        ls.LAST_SYNC_PATH.write_text("{truncated", encoding="utf-8")
+        r = client.get("/api/lastfm/status")
+        assert r.status_code == 200
+        assert r.json()["last_sync"] is None
+
+    def test_a_failed_sync_route_leaves_the_stamp(self, client, monkeypatch):
+        import app.lastfm_sync as ls
+        stamp = ls.record_sync(4)
+
+        async def failing_fetch(*_a):
+            raise RuntimeError("HTTP 503 from Last.fm")
+
+        monkeypatch.setenv("LASTFM_USERNAME", "u")
+        monkeypatch.setenv("LASTFM_API_KEY", "k")
+        monkeypatch.setattr(ls, "fetch_recent_scrobbles", failing_fetch)
+        r = client.post("/api/lastfm/sync", headers=AUTH)
+        assert r.status_code == 400
+        assert client.get("/api/lastfm/status").json()["last_sync"] == stamp
+
 
 class TestDotenvLoadedAtImport:
     """The server process must read .env itself.

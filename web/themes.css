@@ -182,6 +182,8 @@ a { color: inherit; }
 .sync-stat { font-family: var(--kpi-family); font-size: 32px; color: var(--text);
              font-weight: var(--display-weight); letter-spacing: var(--display-spacing); }
 .sync-sub  { font-size: 12.5px; color: var(--muted-s); margin-top: 4px; }
+.sync-last { margin-top: 12px; }
+.sync-last b { color: var(--text-2); }
 .sync-hint {
   margin-top: 18px; padding: 14px 16px; border-radius: var(--radius-sm);
   background: color-mix(in oklab, var(--warn) 10%, var(--panel));
@@ -200,6 +202,7 @@ a { color: inherit; }
   background: var(--accent); color: var(--accent-ink);
   border: 0; cursor: pointer; transition: opacity .15s;
 }
+.sync-card .btn-sync { margin-top: 18px; }
 .btn-sync:hover { opacity: .88; }
 .btn-sync:disabled { opacity: .45; cursor: default; }
 .btn-sync svg { width: 16px; height: 16px; }

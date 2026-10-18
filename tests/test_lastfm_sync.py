@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import shutil
+import subprocess
 import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -11,7 +14,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+import app.lastfm_sync as ls
 from app.lastfm_sync import fetch_recent_scrobbles, get_last_scrobble_ts
+from pipeline.config import LAST_SYNC_PATH, REPO_ROOT
 
 
 # ── helpers ──
@@ -282,3 +287,99 @@ class TestPaginationIsFrozen:
             records, fetched, _complete = asyncio.run(fetch_recent_scrobbles("u", "k", since_ts=0))
         assert fetched == 3
         assert len(records) == 3
+
+
+class TestLastSyncStamp:
+    """#29: the Sync page shows when a sync last *succeeded*, so only a
+    success may write the stamp."""
+
+    ENV = {"LASTFM_USERNAME": "u", "LASTFM_API_KEY": "k"}
+
+    @staticmethod
+    def _scrobbles(tmp_path) -> Path:
+        path = tmp_path / "scrobbles.jsonl"
+        path.write_text("", encoding="utf-8")
+        return path
+
+    def _sync(self, path, fetch):
+        with patch.dict(os.environ, self.ENV), \
+                patch.object(ls, "fetch_recent_scrobbles", new=fetch), \
+                patch("app.data.get_scrobbles", return_value=[]):
+            return asyncio.run(ls.sync(path))
+
+    def test_a_successful_sync_writes_the_stamp(self, tmp_path):
+        async def fetch(_u, _k, _since):
+            return [_raw_track()], 1, True
+
+        stats = self._sync(self._scrobbles(tmp_path), fetch)
+        stamp = json.loads(ls.LAST_SYNC_PATH.read_text(encoding="utf-8"))
+        assert stamp == {"synced_at": stats["synced_at"], "new": 1}
+        assert stamp["synced_at"].endswith("Z")
+        assert ls.read_last_sync() == stamp
+
+    def test_a_no_op_sync_still_counts_as_a_sync(self, tmp_path):
+        async def fetch(_u, _k, _since):
+            return [], 1, True
+
+        self._sync(self._scrobbles(tmp_path), fetch)
+        assert ls.read_last_sync()["new"] == 0
+
+    def test_a_failed_fetch_leaves_the_previous_stamp(self, tmp_path):
+        before = ls.record_sync(7)
+
+        async def fetch(_u, _k, _since):
+            raise RuntimeError("HTTP 503 from Last.fm")
+
+        with pytest.raises(RuntimeError):
+            self._sync(self._scrobbles(tmp_path), fetch)
+        assert ls.read_last_sync() == before
+
+    def test_a_failed_ingest_leaves_the_previous_stamp(self, tmp_path):
+        before = ls.record_sync(7)
+
+        async def fetch(_u, _k, _since):
+            return [_raw_track()], 1, True
+
+        def boom(*_a, **_kw):
+            raise OSError("disk full")
+
+        with patch.object(ls, "ingest_from_records", new=boom), pytest.raises(OSError):
+            self._sync(self._scrobbles(tmp_path), fetch)
+        assert ls.read_last_sync() == before
+
+    def test_an_unwritable_stamp_does_not_fail_the_sync(self, tmp_path):
+        async def fetch(_u, _k, _since):
+            return [_raw_track()], 1, True
+
+        def unwritable(_new):
+            raise OSError("read-only")
+
+        with patch.object(ls, "record_sync", new=unwritable):
+            stats = self._sync(self._scrobbles(tmp_path), fetch)
+        assert stats["new"] == 1
+        assert "synced_at" not in stats
+
+
+class TestReadLastSync:
+    def test_missing_file_is_none(self, tmp_path):
+        assert ls.read_last_sync(tmp_path / "absent.json") is None
+
+    @pytest.mark.parametrize("body", [
+        "{not json", "[]", '{"new": 3}', '{"synced_at": "yesterday", "new": 3}',
+        '{"synced_at": 5, "new": 3}', '{"synced_at": "2026-10-18T09:00:00Z", "new": "3"}',
+        '{"synced_at": "2026-10-18T09:00:00Z", "new": true}',
+    ])
+    def test_a_malformed_file_is_none_not_an_error(self, tmp_path, body):
+        path = tmp_path / "last_sync.json"
+        path.write_text(body, encoding="utf-8")
+        assert ls.read_last_sync(path) is None
+
+
+def test_the_stamp_is_gitignored():
+    """A tracked stamp would dirty the working tree on every sync."""
+    if not shutil.which("git") or not (REPO_ROOT / ".git").exists():
+        pytest.skip("not a git checkout")
+    rel = LAST_SYNC_PATH.relative_to(REPO_ROOT).as_posix()
+    result = subprocess.run(["git", "check-ignore", "-q", "--no-index", rel],
+                            cwd=REPO_ROOT, capture_output=True)
+    assert result.returncode == 0, f"{rel} is not gitignored"

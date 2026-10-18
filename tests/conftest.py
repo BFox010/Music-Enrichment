@@ -42,6 +42,13 @@ def _close_log_file_handlers():
     close_run_log_handlers()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_last_sync_stamp(tmp_path_factory, monkeypatch):
+    """Every sync stamps LAST_SYNC_PATH; don't let a test write the real one."""
+    monkeypatch.setattr("app.lastfm_sync.LAST_SYNC_PATH",
+                        tmp_path_factory.mktemp("last_sync") / "last_sync.json")
+
+
 def pytest_configure(config: pytest.Config) -> None:
     if sys.version_info < _MIN_PYTHON:
         got = ".".join(map(str, sys.version_info[:3]))
