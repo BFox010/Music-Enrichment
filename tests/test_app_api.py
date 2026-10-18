@@ -641,7 +641,7 @@ class TestDotenvLoadedAtImport:
 def _auth() -> dict:
     """Current token, read live.
 
-    Not the module-level ``AUTH``: ``TestDotenvIsLoaded`` above reloads
+    Not the module-level ``AUTH``: ``TestDotenvLoadedAtImport`` above reloads
     app.main, which re-runs ``secrets.token_urlsafe`` and leaves that constant
     pointing at a token the app no longer accepts. Every test declared after
     that one has to ask for the token rather than remember it.

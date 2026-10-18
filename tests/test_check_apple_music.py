@@ -21,8 +21,8 @@ from pipeline.config import (
 class TestInputPriority:
     """Regression guard: phase 5 must consume the deepest genre-bearing file.
 
-    The manifest declares the chain, but the orchestrator calls each phase with
-    no args, so the module's own input preference is what actually runs. If the
+    The orchestrator hands each phase its predecessor's output (#98), but a
+    standalone run still uses the module's own input preference. If the
     deepest predecessor is not preferred here, the genres those phases produced
     are silently dropped from tracks.jsonl even though they succeed (the bug
     fixed 2026-05-31 was exactly this, for phase 4c)."""

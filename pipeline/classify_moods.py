@@ -487,8 +487,8 @@ def classify(
     audit_rows = load_audit(audit_path) if audit_path.exists() else []
     log.info("Audit rows loaded: %d", len(audit_rows))
 
-    # Owner labels already on the tracks file. Without this, a fresh clone (no
-    # audit CSV) falls through to the centroid on every row and silently destroys
+    # Owner labels already on the tracks file. Without this, a run with no audit
+    # CSV falls through to the centroid on every row and silently destroys
     # every hand-made judgement in the library.
     recovered = _recover_owner_labels(tracks)
     if recovered and not audit_rows:

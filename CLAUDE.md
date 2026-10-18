@@ -43,12 +43,14 @@ Two things look like playlist machinery but are not:
    a phase called with `limit=` — would otherwise rewrite `tracks.jsonl` short
    and take every curated field on the dropped rows with it. Both take
    `allow_shrink=True` for a deliberate shrink.
-4. **`canonical_track_id` is preserved by every phase.** No phase may drop or
-   overwrite it. Identity priority: MusicBrainz recording MBID → ISRC →
-   normalized artist+track → fallback hash. **Phase 4e sets it** — on every
-   row, singletons included — which is why 5a resolves ISRCs before 4e runs:
-   an id derived from a normalized name moves whenever normalization improves,
-   and a moved id orphans the row's human-edited fields at the Phase 8 merge.
+4. **Only Phase 4e writes `canonical_track_id`.** Every other phase must carry
+   it through untouched. Identity priority: MusicBrainz recording MBID → ISRC →
+   normalized artist+track → fallback hash. 4e recomputes it on every row, every
+   run, so it is not stable: it moves `norm:` → `isrc:` → `mbid:` as identifiers
+   arrive, and Phase 8 overwrites the stored id with the new one. That is why 5a
+   resolves ISRCs before 4e, and why Phase 8 also matches on the name pair
+   (`update_tracks._candidate_keys`). Don't key human edits on the id alone
+   (#108).
 5. **The manifest drives the orchestrator.** Adding a phase means adding it to
    `pipeline_manifest.yaml` *and* implementing the module. The anti-drift test in
    `tests/test_pipeline_manifest.py` fails otherwise.

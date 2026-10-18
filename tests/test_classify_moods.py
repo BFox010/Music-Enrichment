@@ -198,7 +198,7 @@ class TestClassifyTrack:
     def test_allowlist_gates_output(self) -> None:
         """Only moods on the allowlist are emitted by the centroid path.
 
-        The allowlist is derived from cross-validated F1 (pipeline.
+        The allowlist is derived from cross-validated precision (pipeline.
         evaluate_moods) rather than hand-maintained, but the gating mechanism
         itself is what this covers.
         """
@@ -321,7 +321,7 @@ class TestAuditAndClaudeIO:
 
 
 class TestOwnerLabelRecovery:
-    """inputs/ is gitignored, so a fresh clone has no audit CSV.
+    """With mood_audit.csv absent, the tracks file is the only copy of owner labels.
 
     Without recovery the phase would find no owner labels, fall through to the
     centroid for every row, and destroy every hand-made judgement in the

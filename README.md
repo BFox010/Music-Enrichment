@@ -269,8 +269,10 @@ Canonical track identity, used for every cross-phase join:
 3. Normalized artist + track (`artist_normalized` + `track_normalized`)
 4. Fallback hash
 
-**All phases must preserve `canonical_track_id`.** No phase may drop or overwrite
-it.
+**Only Phase 4e writes `canonical_track_id`**, recomputing it every run, so it
+moves as better identifiers arrive. Every other phase must carry it through
+untouched. Phase 8 matches on the id and then the name pair, so a moved id
+doesn't orphan a row (#108).
 
 ## Where files live
 

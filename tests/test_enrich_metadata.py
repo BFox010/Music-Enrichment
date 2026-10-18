@@ -1,6 +1,6 @@
-"""Tests for pipeline.enrich_metadata._extract_lastfm_fields.
+"""Tests for pipeline.enrich_metadata.
 
-Note: tests do NOT hit the Last.fm API. They only exercise pure response parsing.
+Note: tests do NOT hit the Last.fm API: pure response parsing, plus enrich() over fake clients.
 """
 
 from __future__ import annotations
@@ -234,7 +234,7 @@ class TestPopularityGapFill:
         assert written[0]["duration_ms"] == 180000
 
     def test_existing_duration_is_never_overwritten(self, monkeypatch) -> None:
-        """Exportify/ReccoBeats values must win over Last.fm's gap-fill."""
+        """Exportify/iTunes XML values must win over Last.fm's gap-fill."""
         track = _track_row(0)
         track["duration_ms"] = 200000
         response = {"track": {"mbid": "x", "duration": "999999"}}
