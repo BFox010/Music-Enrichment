@@ -855,7 +855,7 @@ function AlbumsPage({ active, tracks }) {
     <section className="block">
       <div className="card">
         <div className="card-head">
-          <h3 className="card-title">Albums</h3>
+          <h3 className="card-title">Albums you sat with</h3>
           <div style={cardTools}>
             <div className="seg seg-sm" role="group">
               {[["plays", "Plays"], ["spread", "Spread"], ["tracks", "Tracks"]].map(([v, l]) => (
@@ -865,7 +865,7 @@ function AlbumsPage({ active, tracks }) {
             <span className="card-meta">≥3 tracks · top 60</span>
           </div>
         </div>
-        <p style={cardDesc}>Albums you actually sat with. <b>Plays</b> totals every track; <b>Spread</b> shows how evenly your listening covered the album — a full bar means you played the whole thing, a short bar means one or two tracks carried it.</p>
+        <p style={cardDesc}><b>Plays</b> totals every scrobble across the album's tracks; <b>Spread</b> measures how evenly those plays cover the record — a full bar means you played the whole thing, a short one means one or two tracks carried it. High on both is an album you listened to end to end.</p>
         {
           rows.length ? (
             <div className="album-list">
