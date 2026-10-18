@@ -29,7 +29,7 @@ import os
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from pipeline._http import RateLimitedClient
+from pipeline._http import RateLimitedClient, classify_lastfm
 from pipeline.config import LASTFM_API_ROOT, INPUTS_DIR, CACHE_DIR
 
 VARIATION_CACHE  = CACHE_DIR / "match_variations.json"
@@ -130,7 +130,7 @@ def _query_lastfm(client: RateLimitedClient, api_key: str, artist: str, track: s
         "format": "json",
         "autocorrect": "1",
     }
-    return client.get(LASTFM_API_ROOT, params, cache_key)
+    return client.get(LASTFM_API_ROOT, params, cache_key, classify=classify_lastfm)
 
 
 def _is_hit(response: dict) -> bool:
