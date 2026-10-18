@@ -38,9 +38,10 @@ from pipeline.config import (
     INPUTS_DIR,
     MOOD_AUDIT_FILENAME,
     MOOD_CATEGORIES,
+    MOOD_CURATED_MIN_RANK,
+    MOOD_SOURCE_RANK,
     REPO_ROOT,
     TRACKS_PATH,
-    TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_MOODS_PATH,
     configure_logging,
     get_logger,
@@ -360,9 +361,12 @@ def load_claude_results(path: Path = INPUT_CLAUDE_MOOD_RESULTS) -> dict[tuple[st
 
 # ── owner-label recovery ──
 
-# Sources that represent a human judgement (directly, or a review the owner
-# accepted). Centroid output must never overwrite these.
-OWNER_LABEL_SOURCES: frozenset[str] = frozenset({"audit", "claude_batch"})
+# Curated sources (manual, audit, claude_batch); centroid output must never
+# overwrite these. Don't hand-list them: a source missing here is relabelled (#134).
+OWNER_LABEL_SOURCES: frozenset[str] = frozenset(
+    s for s, rank in MOOD_SOURCE_RANK.items()
+    if s is not None and rank >= MOOD_CURATED_MIN_RANK
+)
 
 
 def _identity_keys(track: dict) -> list[tuple[str, str]]:
@@ -408,17 +412,25 @@ def _recover_owner_labels(tracks: list[dict]) -> dict[tuple[str, str], dict]:
     return out
 
 
+def _apply_label(track: dict, label: dict) -> None:
+    track["mood_tags"] = label["mood_tags"]
+    track["mood_source"] = label["mood_source"]
+    track["mood_confidence"] = label["mood_confidence"]
+    track["mood_distance"] = None
+
+
 # ── main classifier ──
 
 
 def classify(
     audit_path: Path | None = None,
-    tracks_path: Path = TRACKS_WITH_AUDIO_PATH,
+    tracks_path: Path | None = None,
     output_path: Path = TRACKS_WITH_MOODS_PATH,
     claude_results_path: Path = INPUT_CLAUDE_MOOD_RESULTS,
     run_log_path: Path | None = None,
 ) -> dict[str, int]:
-    """Classify moods, reading the first existing file in the candidate list below.
+    """Classify moods over ``tracks_path``, or with none passed, the first existing
+    file in the candidate list below.
 
     ``audit_path`` defaults to the canonical, git-tracked ``mood_audit.csv`` at
     the repo root (``MOOD_AUDIT_PATH``) — pass ``audit_path=INPUT_EXISTING_AUDIT``
@@ -438,25 +450,26 @@ def classify(
         # name itself defined once.
         audit_path = REPO_ROOT / MOOD_AUDIT_FILENAME
 
-    # First existing wins, meant deepest-first so every upstream field survives.
-    # The order predates 5a moving ahead of 4e, and an explicit tracks_path is only
-    # the fifth candidate. tracks.jsonl is last: a fresh clone has only that file.
-    chosen_input = None
-    for candidate in (
-        REPO_ROOT / "tracks_with_features.jsonl",
-        REPO_ROOT / "tracks_with_isrcs.jsonl",
-        REPO_ROOT / "tracks_with_availability.jsonl",
-        REPO_ROOT / "tracks_resolved.jsonl",
-        tracks_path,
-        REPO_ROOT / "tracks_with_metadata.jsonl",
-        TRACKS_PATH,
-    ):
-        if candidate.exists():
-            chosen_input = candidate
-            break
+    # Don't let a candidate outrank an explicit tracks_path: the orchestrator passes
+    # this run's chain, and a previous run's intermediate would win (#132).
+    # Standalone: deepest first, in manifest order; tracks.jsonl last for a fresh clone.
+    if tracks_path is not None:
+        if not tracks_path.exists():
+            raise FileNotFoundError(tracks_path)
+        chosen_input = tracks_path
+    else:
+        chosen_input = next((c for c in (
+            REPO_ROOT / "tracks_with_features.jsonl",
+            REPO_ROOT / "tracks_with_availability.jsonl",
+            REPO_ROOT / "tracks_resolved.jsonl",
+            REPO_ROOT / "tracks_with_isrcs.jsonl",
+            REPO_ROOT / "tracks_with_metadata.jsonl",
+            REPO_ROOT / "tracks_with_audio.jsonl",
+            TRACKS_PATH,
+        ) if c.exists()), None)
     if chosen_input is None:
         log.error("No tracks file found — run earlier phases first.")
-        raise FileNotFoundError("tracks_with_audio.jsonl or tracks_with_metadata.jsonl")
+        raise FileNotFoundError("no tracks JSONL found for Phase 6")
 
     # The gitignored legacy inputs/existing_audit.csv must never silently win over
     # mood_audit.csv (#66, #83/F-06): a forgotten local file would make the run
@@ -575,20 +588,25 @@ def classify(
 
     for track in tracks:
         key = (track["artist_normalized"], track["track_normalized"])
+        audit_hit = next((c for c in _identity_keys(track) if c in audit_index), None)
+        if audit_hit is not None:
+            matched_audit_keys.add(audit_hit)
+
+        # 0. A label ranked above audit (manual) keeps its row. Don't let the audit
+        # branch below overwrite it: the owner's Heavy Bass verdict would be lost.
+        label = recovered.get(key)
+        if label and MOOD_SOURCE_RANK[label["mood_source"]] > MOOD_SOURCE_RANK["audit"]:
+            _apply_label(track, label)
+            stats_out["owner_preserved"] += 1
+            continue
 
         # 1. audit hit — the owner's own labelling outranks model output
-        # (MOOD_SOURCE_RANK), so it must be checked first.
-        audit_hit = None
-        for candidate in _identity_keys(track):
-            if candidate in audit_index:
-                audit_hit = candidate
-                break
+        # (MOOD_SOURCE_RANK), so it must be checked before Claude and the centroid.
         if audit_hit is not None:
             track["mood_tags"] = audit_index[audit_hit]
             track["mood_source"] = "audit"
             track["mood_confidence"] = "high"
             track["mood_distance"] = None
-            matched_audit_keys.add(audit_hit)
             stats_out["audit_direct"] += 1
             continue
 
@@ -604,12 +622,8 @@ def classify(
 
         # 3. owner label on the row whose source file is gone. Falling through to
         # the centroid here would replace a human judgement with a guess.
-        if key in recovered:
-            label = recovered[key]
-            track["mood_tags"] = label["mood_tags"]
-            track["mood_source"] = label["mood_source"]
-            track["mood_confidence"] = label["mood_confidence"]
-            track["mood_distance"] = None
+        if label:
+            _apply_label(track, label)
             stats_out["owner_preserved"] += 1
             continue
 
@@ -645,8 +659,7 @@ def classify(
             track["mood_confidence"] = None
             track["mood_distance"] = None
             stats_out["no_match"] += 1
-            if af:  # no features ⇒ Claude can't classify it either
-                batch_for_claude.append(track)
+            batch_for_claude.append(track)
 
     # An audit row that matches nothing silently loses a hand-made judgement.
     # Surface it in the log and the stats so a growing gap is visible.

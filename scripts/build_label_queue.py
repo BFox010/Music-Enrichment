@@ -30,7 +30,7 @@ def needs_label(track: dict) -> bool:
     """Anything whose mood_source is outside ``OWNER_LABEL_SOURCES`` is queued.
 
     That includes centroid rows (replacing a machine guess with a judgement is
-    the point), untagged rows, and ``manual`` rows, which the set omits.
+    the point) and untagged rows. Curated rows, ``manual`` included, are skipped.
     """
     return track.get("mood_source") not in OWNER_LABEL_SOURCES
 

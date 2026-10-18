@@ -103,7 +103,7 @@ _DRIVER = textwrap.dedent('''
     import json, os, plistlib, sys
     from pathlib import Path
 
-    root, mode, fail_phase = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+    root, mode, fail_phase, start = Path(sys.argv[1]), sys.argv[2], sys.argv[3], sys.argv[4]
     sys.path.insert(0, str(root))
     os.chdir(root)
     for k in ("DISCOGS_TOKEN", "SPOTIFY_CLIENT_ID", "SPOTIFY_CLIENT_SECRET"):
@@ -140,7 +140,7 @@ _DRIVER = textwrap.dedent('''
         setattr(importlib.import_module(ph["module"]), ph["callable"], boom)
 
     from pipeline.run_full_pipeline import run
-    results = run(start_from="2", skip_tests=True, skip_pause=True,
+    results = run(start_from=start, skip_tests=True, skip_pause=True,
                   run_log_path=root / "runs" / (mode + ".log"))
     rows = [json.loads(l) for l in open(root / "tracks.jsonl")]
     print(json.dumps({"results": results,
@@ -162,9 +162,10 @@ def tree(tmp_path):
     return root
 
 
-def _run(tree: Path, mode: str, fail_phase: str = "") -> dict:
+def _run(tree: Path, mode: str, fail_phase: str = "", start: str = "2") -> dict:
     proc = subprocess.run(
-        [sys.executable, "-I", str(tree.parent / "driver.py"), str(tree), mode, fail_phase],
+        [sys.executable, "-I", str(tree.parent / "driver.py"), str(tree), mode, fail_phase,
+         start],
         capture_output=True, text=True, timeout=300,
     )
     assert proc.returncode == 0, proc.stderr[-2000:]
@@ -194,3 +195,16 @@ class TestTwoRuns:
         second = _run(tree, "run2", fail_phase="6")
         assert second["results"]["6"] == "failed"
         assert second["tracks"] == EXPECTED_RUN2
+
+    def test_phase_6_reads_this_runs_chain_when_5b_fails(self, tree):
+        """5b is required, so its failure stops run 2; resuming at 6 hands Phase 6
+        run 2's tracks_with_availability.jsonl. Run 1's tracks_with_features.jsonl
+        must not outrank it (#132)."""
+        _run(tree, "run1")
+        assert (tree / "tracks_with_features.jsonl").exists()
+        assert _run(tree, "run2", fail_phase="5b")["results"]["5b"] == "failed"
+        resumed = _run(tree, "run2", start="6")
+        assert resumed["results"]["6"] == "ok"
+        moods = [json.loads(l) for l in open(tree / "tracks_with_moods.jsonl")]
+        assert {r["track"] for r in moods} == set(EXPECTED_RUN2)
+        assert resumed["tracks"] == EXPECTED_RUN2

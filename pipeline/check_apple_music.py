@@ -35,6 +35,7 @@ from pipeline.config import (
     TRACKS_WITH_DISCOGS_PATH,
     TRACKS_RESOLVED_PATH,
     TRACKS_WITH_GENRE_BACKFILL_PATH,
+    TRACKS_WITH_ISRCS_PATH,
     TRACKS_WITH_GENRES_PATH,
     TRACKS_WITH_METADATA_PATH,
     configure_logging,
@@ -45,14 +46,12 @@ from pipeline.schema import atomic_open
 
 log = get_logger(__name__)
 
-# Input preference — deepest in the chain first. Phase 4e (identity resolution)
-# is the immediate predecessor and must come first, then 4d (genre backfill) and
-# 4c (genres); falling back through 4b (Discogs) and 4 if a later phase was
-# skipped. Reading anything but the deepest available file silently drops that
-# phase's work — omitting 4e here let its row clustering be recomputed and
-# discarded, leaving duplicate canonical_track_ids in the final merge.
+# Standalone fallback, deepest first in manifest order: 4e, 5a (runs before 4e),
+# 4d, 4c, 4b, 4. Don't promote an earlier file: it silently drops the later
+# phases' work, and skipping 4e leaves duplicate canonical_track_ids.
 _INPUT_PRIORITY = [
     TRACKS_RESOLVED_PATH,
+    TRACKS_WITH_ISRCS_PATH,
     TRACKS_WITH_GENRE_BACKFILL_PATH,
     TRACKS_WITH_GENRES_PATH,
     TRACKS_WITH_DISCOGS_PATH,

@@ -33,6 +33,13 @@ class TestNeedsLabel:
         assert not needs_label(_track("a", 10, "audit", ["Fast"]))
         assert not needs_label(_track("a", 10, "claude_batch", ["Fast"]))
 
+    def test_manual_labels_are_not_queued(self):
+        """apply_bass_labels writes ``manual``; re-asking would discard the verdict."""
+        assert not needs_label(_track("a", 10, "manual", ["Heavy Bass"]))
+
+    def test_inherited_guesses_are_queued(self):
+        assert needs_label(_track("a", 10, "inherited", ["Slow"]))
+
     def test_centroid_guesses_are_queued(self):
         """A guess is exactly what a real judgement should replace."""
         assert needs_label(_track("a", 10, "centroid", ["Slow"]))

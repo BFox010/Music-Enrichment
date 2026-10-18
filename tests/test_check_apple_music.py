@@ -15,6 +15,7 @@ from pipeline.config import (
     TRACKS_WITH_DISCOGS_PATH,
     TRACKS_WITH_GENRE_BACKFILL_PATH,
     TRACKS_WITH_GENRES_PATH,
+    TRACKS_WITH_ISRCS_PATH,
 )
 
 
@@ -37,6 +38,12 @@ class TestInputPriority:
 
     def test_identity_resolution_outranks_genre_backfill(self) -> None:
         assert _INPUT_PRIORITY.index(TRACKS_RESOLVED_PATH) < \
+            _INPUT_PRIORITY.index(TRACKS_WITH_GENRE_BACKFILL_PATH)
+
+    def test_isrc_output_sits_between_identity_and_genre_backfill(self) -> None:
+        """5a runs after 4d and before 4e, so its output ranks in that gap (#132)."""
+        assert _INPUT_PRIORITY.index(TRACKS_RESOLVED_PATH) < \
+            _INPUT_PRIORITY.index(TRACKS_WITH_ISRCS_PATH) < \
             _INPUT_PRIORITY.index(TRACKS_WITH_GENRE_BACKFILL_PATH)
 
     def test_genre_files_outrank_discogs(self) -> None:

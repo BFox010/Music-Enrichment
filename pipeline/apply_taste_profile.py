@@ -352,8 +352,9 @@ def apply(
         for candidate in (
             TRACKS_WITH_MOODS_PATH,
             REPO_ROOT / "tracks_with_features.jsonl",
-            REPO_ROOT / "tracks_with_isrcs.jsonl",
             TRACKS_WITH_AVAILABILITY_PATH,
+            REPO_ROOT / "tracks_resolved.jsonl",
+            REPO_ROOT / "tracks_with_isrcs.jsonl",
             TRACKS_WITH_METADATA_PATH,
             TRACKS_PATH,
         ):
