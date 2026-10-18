@@ -497,20 +497,20 @@ def audio_features() -> dict[str, Any]:
 
     for t in af_tracks:
         af = t["audio_features"]
+        # The client picks the plotted pair, so a row carries every feature it
+        # has and omits the rest. Don't drop rows missing energy or valence
+        # here; that empties other pairs the row could still plot.
+        point: dict[str, Any] = {}
         for feat in _HISTOGRAM_FEATURES:
             v = af.get(feat)
             if v is not None:
                 feat_values[feat].append(float(v))
-        if af.get("energy") is not None and af.get("valence") is not None:
-            scatter.append(
-                {
-                    "energy": round(float(af["energy"]), 4),
-                    "valence": round(float(af["valence"]), 4),
-                    "artist": t.get("artist") or "",
-                    "track": t.get("track") or "",
-                    "play_count": int(t.get("play_count") or 0),
-                }
-            )
+                point[feat] = round(float(v), 4)
+        if point:
+            point["artist"] = t.get("artist") or ""
+            point["track"] = t.get("track") or ""
+            point["play_count"] = int(t.get("play_count") or 0)
+            scatter.append(point)
 
     return {
         "histograms": {feat: _histogram(vals) for feat, vals in feat_values.items()},

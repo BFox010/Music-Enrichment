@@ -286,6 +286,16 @@ class TestAudioFeatures:
         assert abs(pt["energy"] - 0.4) < 0.001
         assert abs(pt["valence"] - 0.2) < 0.001
 
+    def test_scatter_row_carries_every_offered_feature(self, client):
+        """#93: the client picks the pair, so the row holds all seven."""
+        pt = client.get("/api/audio-features").json()["scatter"][0]
+        assert pt["tempo"] == 85.0
+        assert pt["loudness"] == -8.0
+        for key in ("energy", "valence", "danceability", "acousticness", "speechiness"):
+            assert key in pt
+        # Not offered on an axis: categorical, or no histogram to pair with.
+        assert "instrumentalness" not in pt and "liveness" not in pt
+
     def test_histogram_keys(self, client):
         body = client.get("/api/audio-features").json()
         for key in ("energy", "valence", "danceability"):
@@ -560,6 +570,26 @@ class TestMalformedRows:
                 assert r.status_code == 200
                 scatter = r.json()["scatter"]
                 assert scatter and scatter[0]["artist"] == ""
+
+    def test_audio_features_scatter_keeps_rows_without_the_default_pair(self):
+        """#93: a row lacking energy can still plot tempo × loudness; only a row
+        with no offered feature at all is dropped, and values stay rounded."""
+        rows = [
+            {"artist": "A", "track": "no-energy",
+             "audio_features": {"tempo": 120.123456, "loudness": -5.55555}},
+            {"artist": "A", "track": "uncharted", "audio_features": {"liveness": 0.3}},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            tp = Path(tmp) / "tracks.jsonl"
+            sp = Path(tmp) / "scrobbles.jsonl"
+            tp.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+            sp.write_text("", encoding="utf-8")
+            with data.use_paths(tp, sp):
+                scatter = TestClient(app).get("/api/audio-features").json()["scatter"]
+        assert [p["track"] for p in scatter] == ["no-energy"]
+        pt = scatter[0]
+        assert pt["tempo"] == 120.1235 and pt["loudness"] == -5.5556
+        assert "energy" not in pt and "valence" not in pt
 
 
 class TestLastFmStatus:

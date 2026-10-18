@@ -773,6 +773,11 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .ap-chip.on .ap-dot { background: var(--accent); box-shadow: 0 0 8px var(--accent); }
 .ap-more { margin: 9px 2px 0; font-size: 11.5px; color: var(--muted-s); }
 
+/* audio-features axis pickers (the select itself is .fb-sort's) */
+.af-pick { gap: 6px; }
+.af-pick-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--muted-s); font-weight: 600; }
+.af-pick select option:disabled { color: var(--faint); }
+
 /* listening calendar */
 .echart-wrap.cal { width: 100%; min-height: 220px; }
 

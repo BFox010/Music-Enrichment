@@ -553,12 +553,33 @@ function ListeningMap({ active, refreshVersion = 0 }) {
 }
 
 /* ── Audio Features: scatter + histograms ── */
+
+/* The scatter's offered axes: app/metrics.py _HISTOGRAM_FEATURES. `bounded`
+   pins an axis to 0–1. Tempo (BPM) and loudness (dB, negative) must
+   auto-scale; a 0–1 range squashes them into one corner. */
+const AF_FEATURES = {
+  energy:       { label: "Energy",       bounded: true,  fmt: (v) => v.toFixed(2) },
+  valence:      { label: "Valence",      bounded: true,  fmt: (v) => v.toFixed(2) },
+  danceability: { label: "Danceability", bounded: true,  fmt: (v) => v.toFixed(2) },
+  acousticness: { label: "Acousticness", bounded: true,  fmt: (v) => v.toFixed(2) },
+  speechiness:  { label: "Speechiness",  bounded: true,  fmt: (v) => v.toFixed(2) },
+  tempo:        { label: "Tempo",        bounded: false, unit: "BPM", fmt: (v) => `${v.toFixed(0)} BPM` },
+  loudness:     { label: "Loudness",     bounded: false, unit: "dB",  fmt: (v) => `${v.toFixed(1)} dB` },
+};
+
+/* Outlives a page switch, like __trajectoryState. */
+const __afState = { x: "energy", y: "valence" };
+
 function AudioFeaturesChart({ active, refreshVersion = 0 }) {
   const scRef   = useRef(null);
   const histRef = useRef(null);
   const scChart   = useEChart(scRef);
   const histChart = useEChart(histRef);
   const [loading, setLoading] = useState(true);
+  const [xKey, setXKey] = useState(__afState.x);
+  const [yKey, setYKey] = useState(__afState.y);
+  useEffect(() => { __afState.x = xKey; __afState.y = yKey; });
+  const fx = AF_FEATURES[xKey], fy = AF_FEATURES[yKey];
 
   const HISTS = [
     { key: "energy",       label: "Energy",      color: "#e040fb" },
@@ -589,34 +610,37 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
     const { scatter, histograms } = afData;
     const c = themeVars();
 
-    if (scChart.current && scatter?.length) {
-      const maxP = Math.max(...scatter.map((d) => d.play_count || 1));
+    if (scChart.current) {
+      // A row omits the features it lacks, so it plots only pairs it has both of.
+      const pts = (scatter || []).filter((d) => d[xKey] != null && d[yKey] != null);
+      const maxP = pts.length ? Math.max(...pts.map((d) => d.play_count || 1)) : 1;
+      const axis = (f) => ({
+        name: f.unit ? `${f.label} (${f.unit})` : f.label, nameLocation: "middle",
+        type: "value", ...(f.bounded ? { min: 0, max: 1 } : { scale: true }),
+        nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
+        splitLine: { lineStyle: { color: c.line, type: "dashed" } },
+      });
+      // notMerge: a merge keeps the old pair's min/max on an axis that now auto-scales.
       scChart.current.setOption({
         backgroundColor: "transparent",
         tooltip: {
-          formatter: (p) => `<b>${escapeHtml(p.data.name)}</b><br>Energy: ${p.data.value[0].toFixed(2)}<br>Valence: ${p.data.value[1].toFixed(2)}<br>Plays: ${p.data.value[2]}`,
+          formatter: (p) => `<b>${escapeHtml(p.data.name)}</b><br>${fx.label}: ${fx.fmt(p.data.value[0])}<br>${fy.label}: ${fy.fmt(p.data.value[1])}<br>Plays: ${p.data.value[2]}`,
           backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text },
         },
         grid: { top: 24, bottom: 52, left: 64, right: 20 },
-        xAxis: { name: "Energy", nameLocation: "middle", nameGap: 30,
-          type: "value", min: 0, max: 1,
-          nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
-          splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
-        yAxis: { name: "Valence", nameLocation: "middle", nameGap: 42, nameRotate: 90,
-          type: "value", min: 0, max: 1,
-          nameTextStyle: { color: c.text2, fontSize: 12, fontWeight: 500 }, axisLabel: { color: c.muted },
-          splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
+        xAxis: { ...axis(fx), nameGap: 30 },
+        yAxis: { ...axis(fy), nameGap: 42, nameRotate: 90 },
         series: [{
           type: "scatter",
-          data: scatter.map((d) => ({
-            value: [d.energy, d.valence, d.play_count],
+          data: pts.map((d) => ({
+            value: [d[xKey], d[yKey], d.play_count],
             name: `${d.artist} — ${d.track}`,
             symbolSize: Math.max(4, Math.sqrt((d.play_count || 1) / maxP) * 18),
           })),
           itemStyle: { color: c.accent, opacity: 0.6 },
           emphasis: { itemStyle: { opacity: 1 } },
         }],
-      });
+      }, true);
     }
 
     if (histChart.current && histograms) {
@@ -650,14 +674,29 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
         })),
       });
     }
-  }, [active, afData, scChart.current, histChart.current]);
+  }, [active, afData, xKey, yKey, scChart.current, histChart.current]);
 
   return (
     <section className="block">
       <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
         <div className="card">
-          <div className="card-head norule"><h3 className="card-title">Energy × Valence</h3><span className="card-meta">bubble = play count</span></div>
-          <p style={cardDesc}>Each bubble is a track, placed by its energy and emotional valence — bigger bubbles are the ones you play most.</p>
+          <div className="card-head norule">
+            <h3 className="card-title">{fx.label} × {fy.label}</h3>
+            <div style={cardTools}>
+              {[["X", xKey, setXKey, yKey], ["Y", yKey, setYKey, xKey]].map(([axisName, value, set, other]) => (
+                <label className="fb-sort af-pick" key={axisName}>
+                  <span className="af-pick-label">{axisName}</span>
+                  <select value={value} onChange={(e) => set(e.target.value)} aria-label={`${axisName} axis feature`}>
+                    {Object.entries(AF_FEATURES).map(([k, f]) => (
+                      <option key={k} value={k} disabled={k === other}>{f.label}</option>
+                    ))}
+                  </select>
+                </label>
+              ))}
+              <span className="card-meta">bubble = play count</span>
+            </div>
+          </div>
+          <p style={cardDesc}>Each bubble is a track, placed by the two features you pick — bigger bubbles are the ones you play most. Tracks missing either feature are left out.</p>
           {loading && <ChartLoading />}
           <div ref={scRef} className="echart-wrap" style={{ display: loading ? "none" : "block" }} />
         </div>
