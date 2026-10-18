@@ -489,3 +489,39 @@ function processLibrary(rawTracks, scrobbleRows) {
   }
   return { nt, ns, drill, cube };
 }
+
+/* Trajectory picker colour slots, as { name: slotIndex }. A newly selected
+   artist takes the lowest free slot; a deselected one frees only its own.
+   Never reassign a surviving artist's slot: that recolours its line when
+   someone else is toggled. Hashing names instead collides at 8 picks. */
+function assignColorSlots(prev, selectedNames, size) {
+  const next = {};
+  const used = new Array(size).fill(0);
+  for (const n of selectedNames) {
+    const s = prev ? prev[n] : undefined;
+    if (s != null && s < size) { next[n] = s; used[s]++; }
+  }
+  for (const n of selectedNames) {
+    if (next[n] != null) continue;
+    let slot = used.indexOf(0);
+    // More picks than colours: share the least-used slot rather than move anyone.
+    if (slot < 0) slot = used.indexOf(Math.min(...used));
+    next[n] = slot;
+    used[slot]++;
+  }
+  return next;
+}
+
+/* Picker chips: selected artists first, then the filter's matches, each group
+   in the input's (play-count) order. Selected chips ignore the filter so a
+   pick can always be clicked off; `limit` caps only the unselected tail. */
+function orderPickerChips(ranked, selected, query, limit) {
+  const q = (query || "").trim().toLowerCase();
+  const picked = [], rest = [];
+  for (const a of ranked) {
+    if (selected && selected.has(a.name)) picked.push(a);
+    else if (!q || a.name.toLowerCase().includes(q)) rest.push(a);
+  }
+  const room = Math.max(0, limit - picked.length);
+  return { chips: picked.concat(rest.slice(0, room)), picked, hidden: Math.max(0, rest.length - room) };
+}

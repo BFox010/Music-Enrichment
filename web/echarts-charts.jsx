@@ -231,10 +231,19 @@ function rankArtists(rows) {
   return Object.keys(totals).sort((a, b) => totals[b] - totals[a]).map((n) => ({ name: n, total: totals[n] }));
 }
 
+/* Series colours: the --artist-1…8 tokens in themes.css. Read as resolved
+   hex for ECharts; the chip dot uses the var() itself. */
+const TRAJECTORY_COLORS = 8;
+function artistPalette() {
+  const s = getComputedStyle(document.documentElement);
+  return Array.from({ length: TRAJECTORY_COLORS }, (_, i) => s.getPropertyValue(`--artist-${i + 1}`).trim() || undefined);
+}
+
 /* Held across the unmount the view toggle causes (see __timelineState): the
    payload is the page's largest fetch, and losing the reader's artist
-   selection on every flick of the toggle would make the picker unusable. */
-const __trajectoryState = { raw: null, mode: "lines", selected: null, query: "", ver: 0 };
+   selection on every flick of the toggle would make the picker unusable.
+   `slots` too: dropping it on unmount would repaint every line on return. */
+const __trajectoryState = { raw: null, mode: "lines", selected: null, query: "", slots: null, ver: 0 };
 
 function ArtistTrajectory({ active, refreshVersion = 0 }) {
   const elRef = useRef(null);
@@ -281,32 +290,45 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
   }, [active, raw, refreshVersion]);
 
   const artists = useMemo(() => (raw ? rankArtists(raw.data) : []), [raw]);
+  const picked = useMemo(() => (selected ? artists.filter((a) => selected.has(a.name)) : []), [artists, selected]);
+  const slots = useMemo(
+    () => assignColorSlots(__trajectoryState.slots, picked.map((a) => a.name), TRAJECTORY_COLORS),
+    [picked],
+  );
+  useEffect(() => { __trajectoryState.slots = slots; }, [slots]);
 
   useEffect(() => {
     if (!active || !chart.current || !raw || !selected) return;
     chart.current.resize();
     const c = themeVars();
-    const rows = raw.data.filter((d) => selected.has(d[2]));
+    const palette = artistPalette();
+    const names = picked.map((a) => a.name);
+    const colorOf = (n) => palette[slots[n]];
+    const order = new Map(names.map((n, i) => [n, i]));
+    const rows = raw.data.filter((d) => order.has(d[2]));
     if (!rows.length) { chart.current.clear(); return; }
 
     if (mode === "stream") {
+      // themeRiver colours layers from the palette in order of first appearance,
+      // so the rows are sorted into `names` order. Unsorted, colours follow the data.
+      rows.sort((a, b) => order.get(a[2]) - order.get(b[2]));
       chart.current.setOption({
         backgroundColor: "transparent",
         tooltip: { trigger: "axis", axisPointer: { type: "line" }, backgroundColor: c.panel, borderColor: c.line, textStyle: { color: c.text } },
-        legend: { type: "scroll", bottom: 0, textStyle: { color: c.text2, fontSize: 11 } },
+        legend: { type: "scroll", bottom: 0, data: names, textStyle: { color: c.text2, fontSize: 11 } },
         singleAxis: { top: 24, bottom: 60, type: "time", axisLabel: { color: c.muted }, axisLine: { lineStyle: { color: c.line } }, splitLine: { lineStyle: { color: c.line, type: "dashed" } } },
-        series: [{ type: "themeRiver", emphasis: { focus: "adjacency" }, label: { show: true, fontSize: 10, color: c.text }, data: rows }],
+        series: [{ type: "themeRiver", color: names.map(colorOf), emphasis: { focus: "adjacency" }, label: { show: true, fontSize: 10, color: c.text }, data: rows }],
       }, true);
     } else {
       const periods = [...new Set(raw.data.map((d) => d[0]))].sort();
-      const names = [...selected];
       const series = names.map((n) => {
         const m = {};
         rows.forEach((d) => { if (d[2] === n) m[d[0]] = d[1]; });
         return {
           name: n, type: "line", smooth: true, smoothMonotone: "x",
           showSymbol: false, connectNulls: true, emphasis: { focus: "series" },
-          lineStyle: { width: 2 }, data: periods.map((p) => m[p] || 0),
+          lineStyle: { width: 2, color: colorOf(n) }, itemStyle: { color: colorOf(n) },
+          data: periods.map((p) => m[p] || 0),
         };
       });
       chart.current.setOption({
@@ -319,7 +341,7 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
         series,
       }, true);
     }
-  }, [active, raw, mode, selected, chart.current]);
+  }, [active, raw, mode, selected, picked, slots, chart.current]);
 
   const toggleArtist = (name) => setSelected((s) => { const n = new Set(s); n.has(name) ? n.delete(name) : n.add(name); return n; });
   const resetTop = () => setSelected(new Set(artists.slice(0, TRAJECTORY_SEED).map((a) => a.name)));
@@ -336,17 +358,10 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
     setSelected(new Set(pool.slice(0, n)));
   };
 
-  const q = query.trim().toLowerCase();
-  const matching = q ? artists.filter((a) => a.name.toLowerCase().includes(q)) : artists;
-  /* Selected artists always stay visible, even outside the chip window — a
-     shuffled pick from the deep tail must remain un-clickable-off. */
-  const shownArtists = useMemo(() => {
-    const head = matching.slice(0, TRAJECTORY_CHIP_LIMIT);
-    const inHead = new Set(head.map((a) => a.name));
-    const strays = selected ? matching.filter((a) => selected.has(a.name) && !inHead.has(a.name)) : [];
-    return head.concat(strays);
-  }, [matching, selected]);
-  const hiddenCount = matching.length - shownArtists.length;
+  const { chips: shownArtists, hidden: hiddenCount } = useMemo(
+    () => orderPickerChips(artists, selected, query, TRAJECTORY_CHIP_LIMIT),
+    [artists, selected, query],
+  );
   const selCount = selected ? selected.size : 0;
 
   return (
@@ -373,11 +388,16 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
             <button className="ap-reset" onClick={resetTop} title={`Reset to the ${TRAJECTORY_SEED} most-played`}>Top {TRAJECTORY_SEED}</button>
           </div>
           <div className="ap-chips">
-            {shownArtists.map((a) => (
-              <button key={a.name} className={"ap-chip" + (selected && selected.has(a.name) ? " on" : "")} onClick={() => toggleArtist(a.name)}>
-                <span className="ap-dot"></span>{a.name}
-              </button>
-            ))}
+            {shownArtists.map((a) => {
+              const on = !!(selected && selected.has(a.name));
+              const slot = on ? slots[a.name] : undefined;
+              return (
+                <button key={a.name} className={"ap-chip" + (on ? " on" : "")} onClick={() => toggleArtist(a.name)}
+                  style={slot != null ? { "--ap-color": `var(--artist-${slot + 1})` } : undefined}>
+                  <span className="ap-dot"></span>{a.name}
+                </button>
+              );
+            })}
           </div>
           {hiddenCount > 0 && (
             <p className="ap-more">{hiddenCount} more — type to narrow the list.</p>
