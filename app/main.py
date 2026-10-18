@@ -5,7 +5,6 @@ always wins. The ``web/`` directory is mounted at ``/`` and served with
 ``html=True`` so ``index.html`` is the SPA fallback.
 """
 
-import asyncio
 import hashlib
 import json
 import os

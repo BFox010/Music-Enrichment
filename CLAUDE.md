@@ -118,6 +118,7 @@ measurement is in `docs/capture_coverage_2026-08-24.md`.
 
 ```bash
 python -m pytest tests/ -q            # full suite, self-contained
+ruff check .                          # lint, as CI runs it
 python -m pipeline.run_full_pipeline  # end-to-end; --start-from N, --skip-tests, --skip-pause
 uvicorn app.main:app                  # dashboard at http://127.0.0.1:8000
 npm install && npm run build          # compile web/*.jsx → web/app.bundle.js
@@ -192,15 +193,16 @@ Shared HTTP layer: `pipeline/_http.py`. Rate limits and TTLs: `pipeline/config.p
 
 ## Conventions
 
-- **Data structures:** plain `list[dict]` and `collections.Counter`. Not pandas,
-  despite it being in `requirements.txt`.
+- **Data structures:** plain `list[dict]` and `collections.Counter`, not pandas.
 - **Comments: see the section below.**
 - **Don't hardcode coverage numbers or row counts into docs or comments.** They
   drift the moment new scrobbles land. Compute them when asked. A dated file in
   `docs/` is a snapshot and may carry its figures.
 - **Branches:** `claude/*`, `feat/*`, `fix/*`. One concern per branch per PR.
-- CI runs the full pytest suite on push to `main` and every PR
-  (`.github/workflows/ci.yml`).
+- CI runs `ruff check .` (pyflakes rules), the full pytest suite, `npm test` and
+  a stale-bundle check on push to `main` and every PR (`.github/workflows/ci.yml`).
+  Python deps install from `requirements.lock`; regenerate it when you change a
+  requirements file (command in `requirements-dev.txt`).
 
 ## Comments
 

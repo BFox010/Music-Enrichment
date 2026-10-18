@@ -26,14 +26,12 @@ import sys
 from collections import defaultdict
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, Iterable
 
 from pipeline.config import (
     MOOD_SOURCE_RANK,
     REPO_ROOT,
     TRACKS_PATH,
     TRACKS_RESOLVED_PATH,
-    TRACKS_WITH_GENRE_BACKFILL_PATH,
     TRACKS_WITH_ISRCS_PATH,
     configure_logging,
     get_logger,

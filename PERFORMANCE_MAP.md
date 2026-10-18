@@ -255,7 +255,7 @@ FRONTEND LOAD  (web/index.html)
 | `merge_exportify` (P3c) | Missing `inputs/exportify.csv` | Provide an Exportify CSV |
 | `classify_moods` centroid path | Ran but `inputs/existing_audit.csv` absent → 0 training rows, all `no_match`; the z-norm/centroid/Euclidean code (`compute_centroids`, `classify_track`) was **not exercised** | Provide the audit CSV → re-time the real classification path |
 | Real-browser TTI, CDN download latency, ECharts init, React render | No headless browser in this environment | Run Lighthouse / a headless Chromium against a served instance. (Babel transform + JSONL parse + aggregation **were** measured via Node V8 as proxies.) |
-| pandas-based scripts (`scripts/library_stats.py`, etc.) | Not on a pipeline hot path; not profiled | Run directly if needed |
+| Analysis scripts (`scripts/library_stats.py`, etc.) | Not on a pipeline hot path; not profiled | Run directly if needed |
 
 ---
 

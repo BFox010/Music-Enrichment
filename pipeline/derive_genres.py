@@ -26,7 +26,6 @@ import sys
 from pathlib import Path
 
 from pipeline.config import (
-    REPO_ROOT,
     TRACKS_SKELETON_PATH,
     TRACKS_WITH_AUDIO_PATH,
     TRACKS_WITH_DISCOGS_PATH,

@@ -1,0 +1,12 @@
+# Tool configuration only; this repo is not an installable package.
+
+[tool.pytest.ini_options]
+# Without this, a bare `pytest` also collects scripts/test_match_variations.py,
+# a live-API helper that only looks like a test.
+testpaths = ["tests"]
+
+[tool.ruff]
+extend-exclude = ["scripts/archive", "perf_temp"]
+
+[tool.ruff.lint]
+select = ["F"]

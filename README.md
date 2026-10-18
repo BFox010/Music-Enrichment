@@ -339,22 +339,27 @@ down here.
 
 ## Tests
 
-CI pins Python 3.13. Install once per interpreter, then run:
+CI runs Python 3.13; the suite also passes on 3.11 and 3.12. Install the
+pinned dev set once per interpreter, then run:
 
 ```bash
-py -3.13 -m pip install -r requirements.txt
-py -3.13 -m pytest tests/ -q
+pip install -r requirements.lock   # runtime + pytest, ruff, pip-audit
+python -m pytest -q
+ruff check .
 ```
 
-(`python -m pytest` works too, as long as `python` already resolves to 3.13 —
-`py -3.13` is explicit so it does the right thing regardless of what a bare
-`python` picks up on your PATH.) Running under an older interpreter fails fast
-with one clear message rather than a cascade of unrelated failures — see
-[tests/conftest.py](tests/conftest.py).
+Below 3.11 the suite fails fast with one clear message rather than a cascade of
+unrelated failures; see [tests/conftest.py](tests/conftest.py).
 
-Self-contained — temp fixtures, no network, no secrets. CI runs the full suite on
-every push to `main` and every pull request
-([.github/workflows/ci.yml](.github/workflows/ci.yml)).
+Self-contained — temp fixtures, no network, no secrets. CI runs lint, the full
+suite, the JS tests and a stale-bundle check on every push to `main` and every
+pull request ([.github/workflows/ci.yml](.github/workflows/ci.yml)). A separate
+weekly job audits the Python and npm lockfiles
+([.github/workflows/audit.yml](.github/workflows/audit.yml)).
+
+`requirements.txt` holds the runtime floors and `requirements-dev.txt` the test
+tools. After changing either, regenerate the lock with the command at the top of
+`requirements-dev.txt`.
 
 ## Reference
 

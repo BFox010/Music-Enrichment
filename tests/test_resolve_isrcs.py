@@ -19,7 +19,6 @@ from pipeline.resolve_isrcs import (
     _isrc_from_musicbrainz_response,
     _resolve_deezer,
     _resolve_musicbrainz,
-    enrich,
 )
 
 

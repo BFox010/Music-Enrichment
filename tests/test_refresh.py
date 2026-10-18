@@ -7,7 +7,7 @@ import os
 import json
 import tempfile
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -48,7 +48,7 @@ class TestRefresh:
             patch("app.refresh.data.reload", new=fake_reload),
         ):
             from app.refresh import refresh
-            result = self._run(refresh())
+            self._run(refresh())
 
         assert call_order == ["sync", "pipeline", "export_pending", "reload"]
 
