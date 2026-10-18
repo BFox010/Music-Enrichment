@@ -1,17 +1,6 @@
 /* Presentational chart components. All styling via themes.css classNames + CSS vars. */
 const { useMemo, useState, useRef, useLayoutEffect } = React;
 
-/* genre color ramp — derived from --accent at runtime via CSS color-mix-ish.
-   We use fixed hues that read well on dark and harmonize per theme accent. */
-function useGenreColors(genres) {
-  return useMemo(() => {
-    const hues = [262, 192, 152, 28, 330, 50, 280, 210, 96];
-    const map = {};
-    genres.forEach((g, i) => { map[g] = `oklch(0.72 0.13 ${hues[i % hues.length]})`; });
-    return map;
-  }, [genres.join("|")]);
-}
-
 /* ── mood colour identity ──
    Genres get their hues from position in a ranked list; moods cannot, because
    the same mood has to be the same colour on every surface — a bar, a chip, a
@@ -25,8 +14,8 @@ function useGenreColors(genres) {
    at one family. Lightness also carries meaning inside a family — Heavy Bass
    is the dark end of the warm ramp, Dark the dark end of the blue one.
 
-   Same oklch() authoring as useGenreColors, so ambient.js can parse these too
-   if the backdrop is ever pointed at moods. */
+   Same oklch() authoring as dashboard.jsx's genreColorMap, so ambient.js can
+   parse these too if the backdrop is ever pointed at moods. */
 const MOOD_COLORS = {
   // tender — rose
   "Love":       "oklch(0.74 0.16 12)",
@@ -636,4 +625,4 @@ function CoverageBars({ rows, total }) {
   );
 }
 
-Object.assign(window, { MOOD_COLORS, moodColor, HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, useGenreColors, DrillPanel, SeasonalFavorites });
+Object.assign(window, { MOOD_COLORS, moodColor, HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, DrillPanel, SeasonalFavorites });

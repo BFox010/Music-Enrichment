@@ -288,6 +288,7 @@ a { color: inherit; }
 }
 .btn:hover { color: var(--text); border-color: var(--faint); }
 .btn svg { width: 15px; height: 15px; }
+.btn.btn-icon { padding: 9px 11px; }
 
 /* search */
 .search { position: relative; display: flex; align-items: center; }
