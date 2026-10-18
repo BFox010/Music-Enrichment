@@ -38,7 +38,7 @@ const API = {
 
 /** A browser-ish realm with the chart module loaded and every side effect recorded. */
 function makeRealm() {
-  const rec = { scripts: [], instances: [], events: [], pollTimers: 0 };
+  const rec = { scripts: [], instances: [], events: [], pollTimers: 0, fetches: [] };
   const listeners = {};
   const ctx = {
     React, console, Promise, Math, JSON, Object, Array, Number, String, Map, Set, Error, isFinite,
@@ -57,6 +57,7 @@ function makeRealm() {
     removeEventListener: (t, fn) => { listeners[t] = (listeners[t] || []).filter((f) => f !== fn); },
     dispatchEvent: (e) => { rec.events.push(e.type); (listeners[e.type] || []).forEach((f) => f(e)); },
     fetch: async (url) => {
+      rec.fetches.push(url);
       const key = Object.keys(API).find((k) => url.startsWith(k));
       return { ok: true, json: async () => API[key] };
     },
@@ -96,15 +97,15 @@ async function waitFor(cond) {
   return cond();
 }
 
-async function mount(realm, name) {
+async function mount(realm, name, props) {
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
   let renderer;
   await TestRenderer.act(async () => {
-    renderer = TestRenderer.create(React.createElement(realm.ctx[name], { active: true }), {
+    renderer = TestRenderer.create(React.createElement(realm.ctx[name], { active: true, ...props }), {
       createNodeMock: () => ({ clientWidth: 800, clientHeight: 400 }),
     });
   });
-  // Two passes: the Listening Map learns its year list before fetching a year.
+  // Two passes: without knownYears the Listening Map learns its year list first.
   await TestRenderer.act(flush);
   await TestRenderer.act(flush);
   return renderer;
@@ -145,6 +146,28 @@ test("a failed ECharts download is announced once and nothing polls", async () =
     assert.deepEqual(realm.rec.events.filter((e) => e === "ml:echarts-failed"), ["ml:echarts-failed"]);
     assert.equal(realm.rec.pollTimers, 0, "no 50 ms poll loop left running");
     assert.equal(realm.rec.instances.length, 0);
+  } finally {
+    await TestRenderer.act(async () => renderer.unmount());
+  }
+});
+
+// #120: the year-less request only learned the year list, which the dashboard
+// already has from the loaded scrobbles.
+test("the Listening Map asks for the latest known year directly", async () => {
+  const realm = makeRealm();
+  const renderer = await mount(realm, "ListeningMap", { knownYears: [2023, 2024] });
+  try {
+    assert.deepEqual(realm.rec.fetches, ["/api/time-of-day?year=2024"]);
+  } finally {
+    await TestRenderer.act(async () => renderer.unmount());
+  }
+});
+
+test("without known years the Listening Map learns them first", async () => {
+  const realm = makeRealm();
+  const renderer = await mount(realm, "ListeningMap");
+  try {
+    assert.deepEqual(realm.rec.fetches, ["/api/time-of-day", "/api/time-of-day?year=2024"]);
   } finally {
     await TestRenderer.act(async () => renderer.unmount());
   }

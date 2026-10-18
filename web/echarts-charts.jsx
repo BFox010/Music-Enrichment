@@ -449,15 +449,20 @@ function TrajectoryPage({ active, refreshVersion = 0 }) {
 }
 
 /* ── Listening Map: calendar heatmap (per year) + hour×day grid ── */
-function ListeningMap({ active, refreshVersion = 0 }) {
+function ListeningMap({ active, refreshVersion = 0, knownYears = null }) {
   const calRef  = useRef(null);
   const hwRef   = useRef(null);
   const calChart = useEChart(calRef);
   const hwChart  = useEChart(hwRef);
   const [years, setYears] = useState([]);
-  const [year, setYear] = useState(null);
+  const [picked, setYear] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mapData, setMapData] = useState(null);
+  // Default to the latest year the dashboard already knows of; only without
+  // that list does the first request go out year-less to learn it.
+  const latestKnown = knownYears && knownYears.length ? knownYears[knownYears.length - 1] : null;
+  const year = picked != null ? picked : latestKnown;
+  const yearList = years.length ? years : (knownYears || []);
 
   useEffect(() => {
     if (!active) return;
@@ -470,8 +475,8 @@ function ListeningMap({ active, refreshVersion = 0 }) {
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
         if (stale) return;
-        // First pass: learn the available years, default to the most recent, and
-        // let the effect re-run with that filter.
+        // No year known: this pass only learns the list and picks the latest,
+        // and the effect re-runs with that filter.
         if (year == null) {
           if (data.years && data.years.length) { setYears(data.years); setYear(data.years[data.years.length - 1]); }
           else setLoading(false);
@@ -549,9 +554,9 @@ function ListeningMap({ active, refreshVersion = 0 }) {
           <div className="card-head">
             <h3 className="card-title">Listening calendar</h3>
             <div style={cardTools}>
-              {years.length > 1 && (
+              {yearList.length > 1 && (
                 <div className="seg seg-sm" role="group" aria-label="Calendar year">
-                  {years.map((y) => (
+                  {yearList.map((y) => (
                     <button key={y} aria-pressed={year === y} onClick={() => setYear(y)}>{y}</button>
                   ))}
                 </div>

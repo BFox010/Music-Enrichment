@@ -178,15 +178,16 @@ function Seasons({ data, total, onPick, activeKey }) {
     <div className="seasons">
       {order.map(([s, glyph]) => {
         const v = data[s] || 0;
-        // A season outside the chosen timeframe has no plays to show and
-        // nothing to drill into. A bare "0" reads as a real measurement, so
-        // it is dashed out and made inert instead.
+        // A season outside the timeframe has no plays: a bare "0" reads as a
+        // real measurement, so it is dashed out and made inert. A selected one
+        // stays clickable, or the selection couldn't be undone.
         const empty = v === 0;
+        const pickable = onPick && (!empty || activeKey === s);
         return (
           <div
-            className={"season season-" + s + (onPick && !empty ? " clickable" : "") + (empty ? " s-empty" : "") + (activeKey === s ? " sel" : "")}
+            className={"season season-" + s + (pickable ? " clickable" : "") + (empty ? " s-empty" : "") + (activeKey === s ? " sel" : "")}
             key={s}
-            onClick={() => { if (onPick && !empty) onPick(s); }}
+            onClick={() => { if (pickable) onPick(s); }}
           >
             <div className="s-top">
               <span className="s-name">{s}</span>

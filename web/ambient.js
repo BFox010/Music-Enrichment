@@ -101,11 +101,12 @@
     target: FALLBACK.map((c) => c.slice()),
     sig: "",
     gl: null, canvas: null, prog: null, loc: null,
-    raf: 0, t0: 0, last: 0, running: false,
+    raf: 0, timer: 0, t0: 0, running: false,
     spriteLayer: null, spriteTimer: 0, spriteArmed: false,
   };
 
   const FRAME_MS = 50;  // 20fps — invisible on something drifting this slowly
+  const VSYNC_SLACK_MS = 8;  // wake a little early so the rAF lands on the 50 ms frame
   const SCALE = 0.25;   // render resolution; the CSS blur hides the rest
   const FADE = 0.035;   // per-tick approach to a new palette (~1.5s settle)
 
@@ -363,11 +364,18 @@
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
+  /* Sleeps between frames on a timer and wakes on the next vsync. Don't go back
+     to a bare rAF loop that skips frames: that wakes the page 60 times a
+     second to draw 20. The drift is clocked off `now`, so its speed is unchanged. */
   function tick(now) {
     st.raf = 0;
     if (!st.running) return;
-    if (now - st.last >= FRAME_MS) { st.last = now; draw(now); }
-    st.raf = requestAnimationFrame(tick);
+    draw(now);
+    const wait = Math.max(0, FRAME_MS - VSYNC_SLACK_MS - (performance.now() - now));
+    st.timer = setTimeout(() => {
+      st.timer = 0;
+      if (st.running) st.raf = requestAnimationFrame(tick);
+    }, wait);
   }
 
   function shouldRun() {
@@ -383,9 +391,11 @@
     if (want) {
       if (!st.t0) st.t0 = performance.now();
       st.raf = requestAnimationFrame(tick);
-    } else if (st.raf) {
+    } else {
       cancelAnimationFrame(st.raf);
+      clearTimeout(st.timer);
       st.raf = 0;
+      st.timer = 0;
     }
   }
 
