@@ -754,7 +754,20 @@ table.tracks tbody tr:hover { background: var(--panel-2); }
 .season-sub:first-of-type { margin-top: 4px; }
 .season-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .season-chips .tagchip { cursor: default; padding: 4px 9px; font-size: 12px; }
-.mini-tl { margin-top: 2px; }
+/* Equal rows keep the four cards one height whatever each season holds. */
+.seasonal-grid { grid-auto-rows: 1fr; }
+/* Five and a half rows: the cut-off row and the fade both read as "scroll". */
+.mini-tl { margin-top: 2px; max-height: 278px; overflow-y: auto; overscroll-behavior: contain;
+           scrollbar-width: thin; scrollbar-color: var(--line) transparent; border-radius: var(--radius-sm); }
+.mini-tl::-webkit-scrollbar { width: 6px; }
+.mini-tl::-webkit-scrollbar-thumb { background: var(--line); border-radius: 3px; }
+.mini-tl:focus-visible { outline: 1px solid var(--accent); outline-offset: 2px; }
+.mini-tl.more-below { -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent);
+                      mask-image: linear-gradient(to bottom, #000 calc(100% - 44px), transparent); }
+.mini-tl.more-above { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px);
+                      mask-image: linear-gradient(to bottom, transparent, #000 28px); }
+.mini-tl.more-above.more-below { -webkit-mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 44px), transparent);
+                                 mask-image: linear-gradient(to bottom, transparent, #000 28px, #000 calc(100% - 44px), transparent); }
 .mini-tl .trk { padding: 6px 4px; }
 .mini-tl .trk-plays .mini { width: 44px; }
 
