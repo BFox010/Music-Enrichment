@@ -17,11 +17,13 @@ from pipeline.config import (
     HTTP_BACKOFF_BASE,
     HTTP_BACKOFF_MAX,
     HTTP_MAX_RETRIES,
+    LAST_SYNC_PATH,
     LASTFM_API_ROOT,
     LASTFM_RATE_LIMIT,
     SCROBBLES_PATH,
 )
 from pipeline.ingest_scrobbles import ingest_from_records
+from pipeline.schema import atomic_open
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +228,7 @@ async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
         ingest_from_records, records, output_path=scrobbles_path, mode="append"
     )
 
-    return {
+    stats = {
         # Against the file, not the in-memory snapshot: a snapshot already
         # stale before the sync would count rows this sync didn't add as new.
         "new": total - on_disk_before,
@@ -237,6 +239,50 @@ async def sync(scrobbles_path: Path = SCROBBLES_PATH) -> dict:
         # False when the fetch hit _MAX_PAGES: run another sync for the rest.
         "complete": complete,
     }
+    # Don't let a failed stamp fail the sync: the scrobbles are already on
+    # disk, and an error here would report a sync that happened as failed.
+    try:
+        stamp = await asyncio.to_thread(record_sync, stats["new"])
+        stats["synced_at"] = stamp["synced_at"]
+    except OSError as exc:
+        log.warning("Sync succeeded but its timestamp was not saved: %s", exc)
+    return stats
+
+
+def record_sync(new: int, path: Path | None = None) -> dict:
+    """Stamp ``LAST_SYNC_PATH`` with the time and yield of a successful sync.
+
+    Call it only after a sync has succeeded: a failed sync must leave the
+    previous stamp in place.
+    """
+    stamp = {"synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+             "new": int(new)}
+    with atomic_open(path or LAST_SYNC_PATH) as fh:
+        json.dump(stamp, fh)
+        fh.write("\n")
+    return stamp
+
+
+def read_last_sync(path: Path | None = None) -> dict | None:
+    """The last successful sync as ``{"synced_at", "new"}``, or None.
+
+    None covers never-synced and an unreadable or malformed file alike. Don't
+    let it raise: /api/lastfm/status calls it on every request.
+    """
+    path = path or LAST_SYNC_PATH
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        synced_at, new = raw["synced_at"], raw["new"]
+        datetime.fromisoformat(synced_at.replace("Z", "+00:00"))
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError, TypeError, KeyError, AttributeError) as exc:
+        log.warning("Ignoring unreadable %s: %s", path, exc)
+        return None
+    if isinstance(new, bool) or not isinstance(new, int):
+        log.warning("Ignoring %s: 'new' is not an integer", path)
+        return None
+    return {"synced_at": synced_at, "new": new}
 
 
 def _count_rows(path: Path) -> int:

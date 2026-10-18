@@ -27,6 +27,7 @@ load_dotenv(REPO_ROOT / ".env")
 import app.data as data
 import app.metrics as metrics
 import app.query as query
+from app.lastfm_sync import read_last_sync
 
 app = FastAPI(title="Music Dashboard")
 
@@ -256,6 +257,7 @@ def lastfm_status():
         "first_scrobbled_at": first,
         "configured": bool(os.getenv("LASTFM_USERNAME") and os.getenv("LASTFM_API_KEY")),
         "username": os.getenv("LASTFM_USERNAME"),
+        "last_sync": read_last_sync(),
     }
 
 

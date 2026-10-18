@@ -540,6 +540,12 @@ function App() {
             Load data
           </button>
           <input ref={fileRef} type="file" accept=".jsonl,.json" multiple style={{ display: "none" }} onChange={(e) => { handleFiles(e.target.files); e.target.value = ""; }} />
+          {/* A framing host opens Tweaks itself; standalone, this is the only way in. */}
+          {window.parent === window && (
+            <button className="btn btn-icon" onClick={toggleTweaks} title="Display settings: accent, density, motion" aria-label="Display settings">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6" /></svg>
+            </button>
+          )}
         </div>
       </header>
 
@@ -788,7 +794,7 @@ function App() {
 
         {/* ── PAGE: Scrobble Sync ─────────────────────────────────── */}
         <div style={{ display: page === "sync" ? "" : "none" }}>
-          <ScrobbleSync onSynced={reloadLiveLibrary} />
+          <ScrobbleSync onSynced={reloadLiveLibrary} refreshVersion={refreshVersion} />
         </div>
 
         {/* ── Persistent overlays ─────────────────────────────────── */}
@@ -865,20 +871,54 @@ function App() {
   );
 }
 
-function ScrobbleSync({ onSynced }) {
+const _REL_UNITS = [["year", 31536000], ["month", 2592000], ["week", 604800], ["day", 86400], ["hour", 3600], ["minute", 60]];
+
+function relativeTime(date, now) {
+  // Clamped: a stamp just ahead of a stale `now` (or a skewed clock) is "just now".
+  const secs = Math.min(0, (date.getTime() - now) / 1000);
+  const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+  for (const [unit, size] of _REL_UNITS) {
+    if (Math.abs(secs) >= size) return rtf.format(Math.round(secs / size), unit);
+  }
+  return "just now";
+}
+
+/* When the server last completed a sync. Not a staleness verdict: that stays
+   ANCHOR.stale, which is about the newest play, not the newest fetch. */
+function LastSync({ lastSync, now }) {
+  const at = lastSync && new Date(lastSync.synced_at);
+  if (!at || isNaN(at)) {
+    return <div className="sync-sub sync-last">Last synced: no successful sync recorded yet</div>;
+  }
+  const n = lastSync.new;
+  return (
+    <div className="sync-sub sync-last">
+      Last synced <b title={lastSync.synced_at}>{at.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" })}</b>
+      {" · "}{relativeTime(at, now)}
+      {" · "}{n > 0 ? `+${n.toLocaleString()} new scrobble${n !== 1 ? "s" : ""}` : "no new scrobbles"}
+    </div>
+  );
+}
+
+function ScrobbleSync({ onSynced, refreshVersion }) {
   const [status, setStatus] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [now, setNow] = useState(() => Date.now());
 
   const fetchStatus = useCallback(async () => {
     try {
       const r = await fetch("/api/lastfm/status");
-      if (r.ok) setStatus(await r.json());
+      if (r.ok) { setStatus(await r.json()); setNow(Date.now()); }
     } catch (e) { /* server not running */ }
   }, []);
 
-  useEffect(() => { fetchStatus(); }, [fetchStatus]);
+  useEffect(() => { fetchStatus(); }, [fetchStatus, refreshVersion]);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 60000);
+    return () => clearInterval(id);
+  }, []);
 
   const doSync = async () => {
     setSyncing(true);
@@ -919,6 +959,12 @@ function ScrobbleSync({ onSynced }) {
             <div className="sync-stat">{(status.scrobble_count || 0).toLocaleString()} scrobbles</div>
             <div className="sync-sub">{range}</div>
             {status.username && <div className="sync-sub" style={{ marginTop: 4 }}>Account: <b>{status.username}</b></div>}
+            <LastSync lastSync={status.last_sync} now={now} />
+            {ANCHOR.stale && ANCHOR.dataEnd && (
+              <div className="sync-sub">
+                Newest play is from <b>{ANCHOR.dataEnd}</b>, over {FRESH_WITHIN_DAYS} days ago, so time windows count back from it.
+              </div>
+            )}
           </div>
         ) : (
           <div className="sync-sub">Loading status…</div>
