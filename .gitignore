@@ -253,8 +253,9 @@ tracks_with_taste.jsonl
 identity_review.jsonl
 taste_profile_unmatched.jsonl
 
-# Scratch / temp files
+# Scratch / temp files; atomic writes leave .<name>.<hex>.tmp if killed mid-write
 *.tmp.txt
+.*.tmp
 
 # Backup snapshots — git history is the backup
 *.bak
@@ -273,6 +274,8 @@ HANDOFF.md
 Handoff.md
 SALVAGE_HANDOFF.md
 
-# Generated dashboard snapshot — rebuild with scripts/generate_library_js.py
+# Generated dashboard snapshot — rebuild with scripts/generate_library_js.py.
+# The committed file is a placeholder; this entry can't hide edits to a tracked
+# file, so don't commit the generated one.
 web/data/library.js
 

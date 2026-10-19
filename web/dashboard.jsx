@@ -6,7 +6,6 @@ const { useState, useMemo, useEffect, useRef, useCallback } = React;
    data-worker.js can importScripts the same code. It loads as a global <script>
    before this bundle, so unqualified names below resolve to it. */
 
-function countMap(arr) { const m = {}; for (const k of arr) m[k] = (m[k] || 0) + 1; return m; }
 function topEntries(map, n) { return Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, n).map(([key, value]) => ({ key, value })); }
 
 const ACCENT_OPTIONS = ["#f472b6", "#a78bfa", "#5b9dff", "#4ade80"];
@@ -204,6 +203,31 @@ function App() {
     toastTimer.current = setTimeout(() => setToast(""), 2600);
   }, []);
 
+  /* Legend dialog (#119): focus moves in on open and back to the opener on
+     close; Escape closes, and Tab cycles inside instead of reaching the page. */
+  const infoRef = useRef(null);
+  useEffect(() => {
+    if (!infoOpen) return undefined;
+    const opener = document.activeElement;
+    const dialog = infoRef.current;
+    if (dialog) dialog.focus();
+    const onKey = (e) => {
+      if (e.key === "Escape") { setInfoOpen(false); return; }
+      if (e.key !== "Tab" || !dialog) return;
+      const stops = [...dialog.querySelectorAll("button, [href], input, select, [tabindex]:not([tabindex='-1'])")];
+      if (!stops.length) { e.preventDefault(); return; }
+      const i = stops.indexOf(document.activeElement);
+      const next = e.shiftKey ? (i <= 0 ? stops.length - 1 : i - 1) : (i + 1) % stops.length;
+      e.preventDefault();
+      stops[next].focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      if (opener && opener.focus) opener.focus();
+    };
+  }, [infoOpen]);
+
   /* Page switches go through a View Transition: the outgoing page lifts and
      fades while the incoming one settles up into place, and the sidebar's
      active marker slides between entries. flushSync is required — the browser
@@ -259,25 +283,29 @@ function App() {
   /* ── file loading ── */
   const handleFiles = useCallback(async (fileList) => {
     const files = Array.from(fileList);
-    let rawTracks = null, rawScrob = null, names = [];
+    let rawTracks = null, rawScrob = null, names = [], bad = [];
     for (const f of files) {
-      const text = await f.text();
-      const rows = f.name.endsWith(".json") && text.trim().startsWith("[") ? JSON.parse(text) : parseJSONL(text);
-      const lname = f.name.toLowerCase();
-      if (lname.includes("scrobble")) { rawScrob = rows; names.push(f.name); }
-      else if (lname.includes("track") || rows[0]?.canonical_track_id || rows[0]?.track) { rawTracks = rows; names.push(f.name); }
-      else if (rows[0]?.hour != null || rows[0]?.scrobbled_at) { rawScrob = rows; names.push(f.name); }
+      let rows;
+      try { rows = parseDropText(await f.text()); }
+      catch (e) { bad.push(f.name + " isn't valid JSON"); continue; }
+      const kind = detectDropKind(rows);
+      if (kind === "scrobbles") { rawScrob = rows; names.push(f.name); }
+      else if (kind === "tracks") { rawTracks = rows; names.push(f.name); }
+      else bad.push(f.name + " isn't tracks or scrobbles");
     }
     // Bail before touching runProcessLibrary: claiming its load generation is
     // what supersedes an in-flight load, so doing it for a drop we can't use
     // would discard the real library the live fetch was still processing.
-    if (!rawTracks && !rawScrob) { showToast("Couldn't recognize that file — expected tracks.jsonl or scrobbles.jsonl"); return; }
+    if (!rawTracks && !rawScrob) {
+      showToast("Couldn't load that — " + (bad.join("; ") || "expected tracks.jsonl or scrobbles.jsonl"));
+      return;
+    }
     // Process only after every file is read, so the scrobble cross-join works
     // regardless of arrival order.
     const result = await runProcessLibrary({ trRows: rawTracks, scRows: rawScrob });
     if (!result) return; // superseded by a newer load
     applyLoad(result);
-    showToast(`Loaded your data — ${names.join(", ")}`);
+    showToast(`Loaded your data — ${names.join(", ")}` + (bad.length ? ` · skipped: ${bad.join("; ")}` : ""));
   }, [showToast, runProcessLibrary, applyLoad]);
 
   /* Live library, when served alongside (i.e. from the repo). */
@@ -455,6 +483,13 @@ function App() {
 
   const genreColors = genreColorMap;
   const meta = data.meta;
+  // The Listening Map's year picker, from the scrobbles already loaded, so it
+  // needn't ask /api/time-of-day for the list first. Never the sample's years.
+  const knownYears = useMemo(() => {
+    if (meta.isSample) return null;
+    const ys = Object.keys(scrobbles.byYear).map(Number).filter((y) => y > 0).sort((a, b) => a - b);
+    return ys.length ? ys : null;
+  }, [meta.isSample, scrobbles]);
   const nf = (x) => x.toLocaleString();
   const tfLabel = timeframe === "all" ? "by scrobbles" : TIMEFRAMES.find((t) => t[0] === timeframe)[1].toLowerCase();
 
@@ -473,6 +508,8 @@ function App() {
   }, [cube, timeframe, sel, tracks, scrobbles]);
 
   const pickDim = (dim, value) => setSel((cur) => ({ ...cur, [dim]: cur[dim] === value ? null : value }));
+  // `view` here is already the new timeframe's.
+  useEffect(() => { setSel((cur) => dropEmptySeason(cur, view.bySeason)); }, [timeframe]);
   const clearSel = () => setSel({ hour: null, dow: null, season: null });
   const selActive = sel.hour != null || sel.dow != null || sel.season != null;
   // Read as one phrase: "Tuesday · 9 AM · Summer listening".
@@ -529,7 +566,7 @@ function App() {
         <div className="appbar-actions">
           <div className="search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" />
+            <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search artist or track…" aria-label="Search artist or track" />
           </div>
           <button className="btn" onClick={doRefresh} disabled={refreshing} title="Sync scrobbles + re-run pipeline">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: refreshing ? "spin 1s linear infinite" : "none" }}><path d="M1 4v6h6"/><path d="M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg>
@@ -700,7 +737,7 @@ function App() {
 
         {/* ── PAGE: Listening Map ─────────────────────────────────── */}
         <div style={{ display: page === "map" ? "" : "none" }}>
-          {ListeningMap && <ListeningMap active={page === "map"} refreshVersion={refreshVersion} />}
+          {ListeningMap && <ListeningMap active={page === "map"} refreshVersion={refreshVersion} knownYears={knownYears} />}
         </div>
 
         {/* ── PAGE: Audio Features ────────────────────────────────── */}
@@ -742,7 +779,7 @@ function App() {
                 <MoodBars items={agg.moods} max={agg.maxMood} activeKey={filters.mood} onPick={(k) => setFilter("mood", k)} />
               </div>
               <div className="card">
-                <div className="card-head"><h3 className="card-title">Genre balance</h3><span className="card-meta">share of library · click to filter</span></div>
+                <div className="card-head"><h3 className="card-title">Genre balance</h3><span className="card-meta">share of plays · click to filter</span></div>
                 <GenreDonut items={agg.genresTop} total={agg.genreTotal} colors={genreColors} activeKey={filters.genre} onPick={(k) => k !== "Other" && setFilter("genre", k)} />
               </div>
             </div>
@@ -808,9 +845,10 @@ function App() {
 
         {infoOpen && (
           <div className="modal-scrim" onClick={() => setInfoOpen(false)}>
-            <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal" ref={infoRef} role="dialog" aria-modal="true" aria-labelledby="legend-title" tabIndex={-1}
+                 onClick={(e) => e.stopPropagation()}>
               <div className="modal-head">
-                <h3 className="card-title">Reading the track explorer</h3>
+                <h3 className="card-title" id="legend-title">Reading the track explorer</h3>
                 <button className="modal-x" onClick={() => setInfoOpen(false)} aria-label="Close">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"><path d="M18 6L6 18M6 6l12 12" /></svg>
                 </button>

@@ -541,13 +541,16 @@ _TAG_GRAPH_FIELDS: frozenset[str] = frozenset(
 def forgotten_favorites(
     top: int = 30, min_peak: int = 5, recent_years: int = 2
 ) -> list[dict]:
-    """Tracks with a strong historical peak that have faded from recent listening.
+    """Tracks whose best calendar year (later on a tie) has ``>= min_peak`` plays,
+    falls before the recent window, and is at least twice the window's plays.
 
-    Builds per-track yearly play counts from scrobbles, scores each track by
-    ``peak_plays / max(recent_plays, 1)``, and returns the most-forgotten tracks
-    sorted descending by that ratio.  Only tracks whose peak pre-dates the
-    recent window are included.
+    The window is the last ``recent_years`` calendar years ending at the latest
+    scrobble's year, not today's. Score = ``peak_plays / max(recent_plays, 1)``,
+    sorted by score then peak plays. ``silence_days`` runs to ``as_of``. The
+    Forgotten Favorites page states this rule: change both together.
     """
+    from datetime import date
+
     snap = get_snapshot()
     scrobbles = snap.scrobbles
     if not scrobbles:
@@ -558,6 +561,12 @@ def forgotten_favorites(
         t = (obj.get("track_normalized") or obj.get("track") or "").lower().strip()
         return f"{a}\x00{t}"
 
+    def _day(stamp: str) -> Optional[date]:
+        try:
+            return date.fromisoformat(stamp[:10]) if stamp else None
+        except ValueError:
+            return None
+
     # Resolve every scrobble through the shared alias-aware index instead of
     # building a single-key map off the scrobble's own name fields — a play
     # logged under a historical credit must fold into the same track's yearly
@@ -565,6 +574,7 @@ def forgotten_favorites(
     # separate "forgotten" entry that never accumulates enough plays to show.
     index = _track_index(snap)
     yearly: dict[str, Counter] = defaultdict(Counter)
+    last_stamp: dict[str, str] = {}
     scrobble_labels: dict[str, dict] = {}
     track_info: dict[str, dict] = {}
     for s in scrobbles:
@@ -576,6 +586,9 @@ def forgotten_favorites(
         if track is not None:
             track_info.setdefault(k, track)
         yearly[k][int(yr)] += 1
+        stamp = s.get("scrobbled_at") or ""
+        if stamp > last_stamp.get(k, ""):
+            last_stamp[k] = stamp
         # Fallback label for keys with no tracks.jsonl row, so nothing renders blank.
         scrobble_labels.setdefault(
             k, {"artist": s.get("artist") or "", "track": s.get("track") or ""}
@@ -586,10 +599,12 @@ def forgotten_favorites(
         return []
     max_year = all_years[-1]
     recent_start = max_year - recent_years + 1
+    as_of = _day(max(last_stamp.values(), default=""))
 
     result: list[dict] = []
     for key, by_year in yearly.items():
-        peak_year = max(by_year, key=by_year.__getitem__)
+        # Break ties on the year: bare dict order follows the scrobble file's order.
+        peak_year = max(by_year, key=lambda y: (by_year[y], y))
         peak_plays = by_year[peak_year]
         if peak_plays < min_peak:
             continue
@@ -597,11 +612,12 @@ def forgotten_favorites(
             continue  # peaked in the recent window — not forgotten
 
         recent_plays = sum(by_year.get(y, 0) for y in range(recent_start, max_year + 1))
-        score = round(peak_plays / max(recent_plays, 1), 2)
-        if score < 2.0:
-            continue
+        ratio = peak_plays / max(recent_plays, 1)
+        if ratio < 2.0:
+            continue  # unrounded: round() would let 1.995 through
 
         last_heard = max(y for y in by_year if by_year[y] > 0)
+        last_day = _day(last_stamp.get(key, ""))
         info = track_info.get(key, {})
         label = scrobble_labels.get(key, {})
         artist = (info.get("artist") or label.get("artist") or "").strip()
@@ -619,8 +635,13 @@ def forgotten_favorites(
                 "peak_plays": peak_plays,
                 "recent_plays": recent_plays,
                 "total_plays": sum(by_year.values()),
-                "score": score,
+                "score": round(ratio, 2),
                 "last_heard": last_heard,
+                "last_played": last_day.isoformat() if last_day else None,
+                "silence_days": (as_of - last_day).days if as_of and last_day else None,
+                "recent_start": recent_start,
+                "recent_end": max_year,
+                "as_of": as_of.isoformat() if as_of else None,
                 "sparkline": [[y, c] for y, c in sorted(by_year.items())],
             }
         )

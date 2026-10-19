@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+from pipeline.config import MOOD_CATEGORIES
+from pipeline.derive_genres import GENRE_TAG_MAP
+from pipeline.normalize import normalize_artist
 from pipeline.tag_filter import (
     build_artist_block,
     filter_tags,
@@ -83,6 +86,21 @@ def test_genre_collision_with_artist_is_protected():
     block = frozenset({"love", "soul", "future", "rap"})
     for tag in ["love", "soul", "future", "rap"]:
         assert is_noise_tag(tag, block) is False
+
+
+@pytest.mark.parametrize("tag", ["jungle", "Garage", "dub", "bass", "swing"])
+def test_genre_words_that_are_band_names_survive(tag):
+    """#70: the band Jungle in the library dropped every "jungle" genre tag."""
+    tracks = [{"artist": tag.title()}, {"artist": "Kanye West"}]
+    block = build_artist_block(tracks)
+    assert filter_tags([tag, "Kanye West"], block) == [tag]
+
+
+def test_every_genre_map_key_and_mood_is_protected():
+    """Protection is derived, so a new GENRE_TAG_MAP key needs no second edit."""
+    words = [*GENRE_TAG_MAP, *MOOD_CATEGORIES]
+    block = frozenset(normalize_artist(w) for w in words)
+    assert [w for w in words if is_noise_tag(w, block)] == []
 
 
 # ── empties / junk ──

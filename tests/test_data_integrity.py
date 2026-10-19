@@ -11,7 +11,6 @@ somewhere the data has been deliberately removed.
 
 from __future__ import annotations
 
-from pathlib import Path
 
 import pytest
 

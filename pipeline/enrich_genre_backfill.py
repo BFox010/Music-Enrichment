@@ -241,9 +241,9 @@ def enrich(
             via_first_artist = False
             for idx, (cand_artist, cand_norm) in enumerate(candidates):
                 tags = _fetch_lastfm_artist_tags(lastfm, api_key, cand_artist, cand_norm)
-                # Before the mapping, not just before the write: artist.getTopTags
-                # is dense with collaborator names ("jay-z", "Kanye West"), and one
-                # colliding with a GENRE_TAG_MAP key would propagate into genres.
+                # artist.getTopTags is dense with collaborator names ("jay-z",
+                # "Kanye West"). GENRE_TAG_MAP keys are protected in tag_filter, so
+                # this never removes a tag the mapping below could use.
                 tags = filter_tags(tags, artist_block)
                 if idx == 0:
                     la_tags = tags  # keep the full-credit tags for transparency

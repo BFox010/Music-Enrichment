@@ -7,7 +7,6 @@ import json
 import os
 import shutil
 import subprocess
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 

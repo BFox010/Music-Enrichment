@@ -33,12 +33,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from pipeline._http import FORCE_ALL, FORCE_OFF, RateLimitedClient
+from pipeline._http import FORCE_ALL, FORCE_OFF, RateLimitedClient, classify_empty
 from pipeline.config import (
     RECCOBEATS_API_ROOT,
     RECCOBEATS_CACHE,
     RECCOBEATS_RATE_LIMIT,
-    REPO_ROOT,
     TRACKS_RESOLVED_PATH,
     TRACKS_WITH_AVAILABILITY_PATH,
     TRACKS_WITH_FEATURES_PATH,
@@ -80,8 +79,10 @@ def _resolve_track_ids(client: RateLimitedClient, isrcs: list[str]) -> dict[str,
     for i in range(0, len(isrcs), _BATCH_SIZE):
         batch = isrcs[i:i + _BATCH_SIZE]
         cache_key = "resolve:" + ",".join(sorted(batch))
+        # A batch none of whose ISRCs matched expires like any miss (#109).
         response = client.get(
-            f"{RECCOBEATS_API_ROOT}track", {"ids": ",".join(batch)}, cache_key
+            f"{RECCOBEATS_API_ROOT}track", {"ids": ",".join(batch)}, cache_key,
+            classify=classify_empty("content"),
         )
         if not isinstance(response, dict) or response.get("_error"):
             continue

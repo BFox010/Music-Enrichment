@@ -120,9 +120,10 @@
       }
     }
 
-    // Idle means idle — the loop stops rather than spinning at 60fps behind a
-    // static page.
-    if (moving || spotEl) raf = requestAnimationFrame(frame);
+    // Idle means idle: once the magnets settle the loop stops, and the next
+    // pointermove restarts it. Don't keep it alive for a lit card: the
+    // spotlight only moves with the pointer, so a resting cursor spun 60fps.
+    if (moving) raf = requestAnimationFrame(frame);
   }
 
   function kick() {

@@ -1,7 +1,7 @@
-"""Tests for pipeline.enrich_discogs pure helpers.
+"""Tests for pipeline.enrich_discogs.
 
-Note: tests do NOT hit the Discogs API. They only exercise response parsing
-and query-building, mirroring the test_enrich_metadata approach.
+Tests do NOT hit the Discogs API: response parsing, query-building, and
+enrich() against a stubbed client.
 """
 
 from __future__ import annotations
@@ -113,3 +113,66 @@ class TestQueryForTrack:
         params, key = _query_for_track(track, self.TOKEN)
         assert "track" in params
         assert key == "a|track:t"
+
+
+# ── enrich() against a stubbed client (#109) ──
+
+
+class _StubClient:
+    """Returns one canned response for every lookup."""
+
+    def __init__(self, response) -> None:
+        self.response = response
+        self.cache: dict = {}
+        self.stats: dict = {}
+
+    def get(self, url, params, cache_key, **_kw):
+        return self.response
+
+    def flush(self) -> None:
+        pass
+
+    def warn_if_forced(self, n) -> None:
+        pass
+
+    def cache_summary(self) -> str:
+        return "stub"
+
+
+class TestEnrichErrorsLeaveStylesAlone:
+    """A Discogs outage wrote ``[]``, so 4c derived a narrower genre list. An
+    error is unknown, not "no styles"; only a checked miss writes ``[]``."""
+
+    ROW = {"artist": "A", "track": "T", "album": "Al",
+           "artist_normalized": "a", "track_normalized": "t"}
+
+    def _run(self, monkeypatch, tmp_path, response, row):
+        import json
+
+        import pipeline.enrich_discogs as ed
+        monkeypatch.setenv("DISCOGS_TOKEN", "tok")
+        monkeypatch.setattr(ed, "load_dotenv", lambda *_a, **_k: None)
+        monkeypatch.setattr(ed, "RateLimitedClient", lambda *_a, **_k: _StubClient(response))
+        src, out = tmp_path / "in.jsonl", tmp_path / "out.jsonl"
+        src.write_text(json.dumps(row) + "\n", encoding="utf-8")
+        stats = ed.enrich(input_path=src, output_path=out)
+        return stats, json.loads(out.read_text(encoding="utf-8").splitlines()[0])
+
+    def test_a_transient_error_leaves_styles_absent(self, monkeypatch, tmp_path) -> None:
+        stats, row = self._run(monkeypatch, tmp_path,
+                               {"_error": "max_retries", "_cached_at": 1.0}, dict(self.ROW))
+        assert stats["errors"] == 1
+        assert "discogs_styles" not in row
+
+    def test_an_auth_error_keeps_existing_styles(self, monkeypatch, tmp_path) -> None:
+        _, row = self._run(monkeypatch, tmp_path, {"_error": "auth_error"},
+                           {**self.ROW, "discogs_styles": ["Trip Hop"]})
+        assert row["discogs_styles"] == ["Trip Hop"]
+
+    def test_a_checked_miss_writes_empty(self, monkeypatch, tmp_path) -> None:
+        """``classify_empty`` turns ``{"results": []}`` into not_found; it must
+        land exactly where the empty body did."""
+        stats, row = self._run(monkeypatch, tmp_path,
+                               {"_error": "not_found", "_cached_at": 1.0}, dict(self.ROW))
+        assert row["discogs_styles"] == []
+        assert stats["no_styles"] == 1 and stats["errors"] == 0

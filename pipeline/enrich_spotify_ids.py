@@ -47,7 +47,7 @@ from typing import Any
 
 import requests
 
-from pipeline._http import RateLimitedClient
+from pipeline._http import RateLimitedClient, classify_empty
 from pipeline.config import (
     INPUT_SPOTIFY_CREDENTIALS,
     SPOTIFY_API_ROOT,
@@ -138,6 +138,11 @@ def load_credentials() -> tuple[str, str]:
     )
 
 
+# An empty result list becomes an expiring not_found (#109); _best_match
+# already returns None for any error, so the caller's decision is unchanged.
+_classify_spotify_search = classify_empty("tracks", "items")
+
+
 def _best_match(response: Any, artist_norm: str, track_norm: str) -> dict[str, Any] | None:
     """Pick the search result whose normalized artist+track matches exactly.
 
@@ -199,7 +204,9 @@ def _resolve_one(
         client.session.headers["Authorization"] = f"Bearer {auth.token()}"
         term = f"{var_artist} {var_track}".strip()[:250]
         params = {"q": term, "type": "track", "limit": 10}
-        response = client.get(search_url, params, cache_key)
+        response = client.get(
+            search_url, params, cache_key, classify=_classify_spotify_search
+        )
         match = _best_match(
             response, normalize_artist(var_artist), normalize_track(var_track)
         )

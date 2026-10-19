@@ -22,7 +22,7 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
           {entries.map(([kind, val]) => (
             <span className="fchip" key={kind}>
               <span className="fc-kind">{FB_KIND_LABEL[kind] || kind}</span>{fmtVal(kind, val)}
-              <span className="x" onClick={() => onRemove(kind)} title="Remove" aria-label="Remove filter">
+              <span className="x" {...pressable(() => onRemove(kind), { label: "Remove " + (FB_KIND_LABEL[kind] || kind) + " filter" })} title="Remove">
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 6L6 18M6 6l12 12" /></svg>
               </span>
             </span>
@@ -31,7 +31,7 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
         {entries.length > 0 && <button className="fb-clear" onClick={onClear}>Clear all</button>}
         <div className="fb-sort">
           <span className="fb-label">Sort</span>
-          <select value={sort} onChange={(e) => onSort(e.target.value)}>
+          <select value={sort} onChange={(e) => onSort(e.target.value)} aria-label="Sort tracks">
             {/* Every value a header click or Shuffle can set needs an option, or
                 the select falls back to showing "Most played" (#120). */}
             <option value="plays">Most played</option>
@@ -62,12 +62,12 @@ function FilterBar({ filters, onRemove, onClear, sort, onSort, onToggle, onRange
           {yearList.length > 0 && (
             <div className="fb-control">
               <span className="fb-label">First heard</span>
-              <select className="fb-yr" value={filters.firstFrom || ""} onChange={(e) => onRange("firstFrom", e.target.value)}>
+              <select className="fb-yr" value={filters.firstFrom || ""} onChange={(e) => onRange("firstFrom", e.target.value)} aria-label="First heard from">
                 <option value="">From…</option>
                 {yearList.map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
               <span className="fb-dash">–</span>
-              <select className="fb-yr" value={filters.firstTo || ""} onChange={(e) => onRange("firstTo", e.target.value)}>
+              <select className="fb-yr" value={filters.firstTo || ""} onChange={(e) => onRange("firstTo", e.target.value)} aria-label="First heard to">
                 <option value="">To…</option>
                 {yearList.map((y) => <option key={y} value={y}>{y}</option>)}
               </select>
@@ -123,8 +123,11 @@ function TrackTable({ rows, sort, onSort, onPickArtist, playOf, timeframe }) {
 
   const th = (key, label, cls) => {
     const active = sort.startsWith(key);
+    // "plays" is most-first; "artist" and "track" are A–Z. Omitted means none,
+    // and themes.css shows the caret on th[aria-sort], so don't write "none".
+    const dir = (sort === "plays" || sort.endsWith("_desc")) ? "descending" : "ascending";
     return (
-      <th className={cls} aria-sort={active ? "true" : undefined} onClick={() => onSort(key)}>
+      <th className={cls} aria-sort={active ? dir : undefined} {...pressable(() => onSort(key), { role: null })}>
         {label}<span className="sortcaret">{active && sort.endsWith("_asc") ? "▲" : "▼"}</span>
       </th>
     );
@@ -153,7 +156,11 @@ function TrackTable({ rows, sort, onSort, onPickArtist, playOf, timeframe }) {
                 <td className="td-track">{t.track}
                   {t.mood_source && <> <span className={"msrc " + t.mood_source}>{t.mood_source === "claude_batch" ? "claude" : t.mood_source}</span></>}
                 </td>
-                <td className="td-artist" style={{ cursor: "pointer" }} onClick={() => onPickArtist(t.artist)}>{t.artist}</td>
+                {/* The span takes focus so the cell keeps its role. Don't give it an
+                    onClick too: the click bubbles to the cell and toggles twice. */}
+                <td className="td-artist" style={{ cursor: "pointer" }} onClick={() => onPickArtist(t.artist)}>
+                  <span {...pressable(() => onPickArtist(t.artist), { label: "Filter by " + t.artist })} onClick={undefined}>{t.artist}</span>
+                </td>
                 <td>
                   <div className="cellmoods">
                     {(t.moods || []).slice(0, 3).map((m) => <span className="minimood" key={m} style={{ "--mood": moodColor(m) }}>{m}</span>)}

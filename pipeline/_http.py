@@ -5,8 +5,9 @@ Each client instance owns its own rate limit and cache file.
 Cache: a flat JSON dict keyed by ``cache_key``. Successes stored raw as the API
 returned them; failures as ``{"_error": <reason>, "_cached_at": <epoch>}``, whose
 timestamp is what lets the entry expire. An entry without ``_cached_at`` reads
-as expired. Only failures expire: a 200 carrying an empty result (a search miss)
-is a success and is cached permanently until ``--force`` (#109).
+as expired. Only failures expire, so a search API's empty result needs
+``classify_empty`` to store the miss as ``not_found``; a plain success is cached
+permanently until ``--force`` (#109).
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from __future__ import annotations
 import json
 import random
 import time
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlsplit
@@ -21,6 +23,7 @@ from urllib.parse import urlsplit
 import requests
 
 from pipeline.config import (
+    HTTP_AUTH_BREAKER_THRESHOLD,
     HTTP_BACKOFF_BASE,
     HTTP_BACKOFF_MAX,
     HTTP_MAX_RETRIES,
@@ -38,9 +41,11 @@ FORCE_ERRORS = "errors"
 FORCE_ALL = "all"
 FORCE_MODES = (FORCE_OFF, FORCE_ERRORS, FORCE_ALL)
 
-# Error-kind labels used to pick a TTL.
+# Error-kind labels used to pick a TTL. ``classify`` may also return
+# ``KIND_AUTH``, which is transient and counts toward the circuit breaker.
 KIND_NOT_FOUND = "not_found"
 KIND_TRANSIENT = "transient"
+KIND_AUTH = "auth_error"
 
 # ``_error`` values as stable as a 404, sharing its long TTL. Don't add
 # ``auth_error``: it is never retried within a run (see ``get``), but a 30-day
@@ -74,8 +79,8 @@ def _is_expired(
 ) -> bool:
     """True if ``entry`` is a failure whose TTL has elapsed.
 
-    Successes never expire here, an empty search result included (#109) —
-    phases needing freshness must enforce it themselves. A missing ``_cached_at``
+    Successes never expire here; an empty search result expires only if its
+    caller's ``classify`` made it a ``not_found`` (#109). A missing ``_cached_at``
     or one in the future counts as expired, so a skewed clock can't pin an entry.
     """
     kind = _error_kind(entry)
@@ -95,6 +100,9 @@ def _is_expired(
 # no-matches on the 30 d TTL; everything else (key, session, service, rate
 # limit) is transient, so a fixed key or recovered service shows on the next run.
 LASTFM_STABLE_ERROR_CODES = frozenset({2, 3, 5, 6, 7})
+# Bad, failed or suspended API key: transient like any auth_error, and counted
+# by the circuit breaker so a dead key stops the run's requests.
+LASTFM_AUTH_ERROR_CODES = frozenset({4, 10, 26})
 
 
 def classify_lastfm(body: Any) -> str | None:
@@ -104,7 +112,43 @@ def classify_lastfm(body: Any) -> str | None:
     code = body.get("error")
     if code is None:
         return None
-    return KIND_NOT_FOUND if code in LASTFM_STABLE_ERROR_CODES else KIND_TRANSIENT
+    if code in LASTFM_STABLE_ERROR_CODES:
+        return KIND_NOT_FOUND
+    return KIND_AUTH if code in LASTFM_AUTH_ERROR_CODES else KIND_TRANSIENT
+
+
+def classify_empty(*path: str) -> Callable[[Any], str | None]:
+    """``classify`` hook for a search API that answers a miss with a 200 and an
+    empty list at ``path`` (``"results"``; ``"tracks", "items"``).
+
+    The miss is stored as ``not_found`` on the 30 d TTL rather than as a success
+    that never expires (#109). Callers must treat that ``not_found`` exactly as
+    they treated the empty body. Any other shape passes through as a success.
+    """
+    def classify(body: Any) -> str | None:
+        node = body
+        for key in path:
+            if not isinstance(node, dict):
+                return None
+            node = node.get(key)
+        return KIND_NOT_FOUND if isinstance(node, list) and not node else None
+    return classify
+
+
+def _retry_after_seconds(response: Any) -> float | None:
+    """Seconds from a ``Retry-After`` header (delta or HTTP-date), else None."""
+    headers = getattr(response, "headers", None) or {}
+    value = headers.get("Retry-After")
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        pass
+    try:
+        return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 class RateLimitedClient:
@@ -113,6 +157,8 @@ class RateLimitedClient:
     ``user_agent`` is required by MusicBrainz. ``flush_every`` is the minimum
     new entries between disk writes (see ``_next_flush_threshold``). ``force``
     is one of ``FORCE_MODES``. The TTLs are injectable so tests need not sleep.
+    After ``auth_breaker_threshold`` consecutive auth errors the circuit opens:
+    no further requests this run, and uncached keys get an uncached auth_error.
     """
 
     def __init__(
@@ -125,6 +171,7 @@ class RateLimitedClient:
         force: str = FORCE_OFF,
         negative_ttl: float = HTTP_NEGATIVE_TTL_SECONDS,
         transient_ttl: float = HTTP_TRANSIENT_TTL_SECONDS,
+        auth_breaker_threshold: int = HTTP_AUTH_BREAKER_THRESHOLD,
     ) -> None:
         if rate_per_second <= 0:
             raise ValueError("rate_per_second must be greater than 0")
@@ -138,6 +185,9 @@ class RateLimitedClient:
         self.force = force
         self.negative_ttl = negative_ttl
         self.transient_ttl = transient_ttl
+        self.auth_breaker_threshold = auth_breaker_threshold
+        self._consecutive_auth_errors = 0
+        self.circuit_open = False
         self._last_request = 0.0
         self._dirty_count = 0
         # Keys already re-fetched during this run. Under --force a repeated key
@@ -152,6 +202,7 @@ class RateLimitedClient:
             "expired_retries": 0,
             "forced": 0,
             "fetches": 0,
+            "circuit_skipped": 0,
         }
 
     def _load_cache(self) -> dict[str, Any]:
@@ -196,7 +247,7 @@ class RateLimitedClient:
     def cache_summary(self) -> str:
         """One-line cache report for phase logs."""
         errors = self.error_counts()
-        return (
+        summary = (
             "cache %s: %d entries (%d not_found, %d transient) — "
             "%d hits, %d misses, %d expired-retries, %d forced, %d fetched"
             % (
@@ -211,6 +262,9 @@ class RateLimitedClient:
                 self.stats["fetches"],
             )
         )
+        if self.circuit_open:
+            summary += ", CIRCUIT OPEN (%d skipped)" % self.stats["circuit_skipped"]
+        return summary
 
     def warn_if_forced(self, n_requests: int) -> None:
         """Log the estimated wall time when a forced re-fetch is about to run."""
@@ -225,7 +279,7 @@ class RateLimitedClient:
 
     # ── Fetch ──
 
-    def _should_refetch(self, cache_key: str) -> bool:
+    def _should_refetch(self, cache_key: str, refresh: bool = False) -> bool:
         """Decide whether ``cache_key`` must go to the network. Updates stats."""
         if cache_key not in self.cache:
             self.stats["misses"] += 1
@@ -234,6 +288,9 @@ class RateLimitedClient:
         if cache_key in self._refetched:
             self.stats["hits"] += 1
             return False
+        if refresh:
+            self.stats["expired_retries"] += 1
+            return True
         entry = self.cache[cache_key]
         if self.force == FORCE_ALL or (
             self.force == FORCE_ERRORS and _error_kind(entry) is not None
@@ -254,17 +311,22 @@ class RateLimitedClient:
         *,
         timeout: float = 15.0,
         classify: Callable[[Any], str | None] | None = None,
+        refresh: bool = False,
     ) -> Any:
         """GET ``url``, caching the JSON response under ``cache_key``. A failure
         is cached and returned as ``{"_error": "<reason>", "_cached_at": <epoch>}``.
 
-        ``classify`` maps a 200 body to ``"transient"`` (quota/rate, 6 h TTL),
-        ``"not_found"`` (30 d) or ``None`` (success). An API that signals failure
-        in band (Deezer ``{"error": {"code": 4}}``, Last.fm ``{"error": 29}``)
-        needs one, or its failures are cached as successes, which never expire.
+        ``classify`` maps a 200 body to ``"transient"``/``"auth_error"`` (6 h),
+        ``"not_found"`` (30 d) or ``None`` (success); without it an in-band
+        failure is cached as a success and never expires. ``refresh`` skips a
+        cached entry for this call, for a caller whose own freshness gate expired.
         """
-        if not self._should_refetch(cache_key):
+        if not self._should_refetch(cache_key, refresh):
             return self.cache[cache_key]
+        if self.circuit_open:
+            # Don't cache this: it would overwrite whatever the key held.
+            self.stats["circuit_skipped"] += 1
+            return {"_error": KIND_AUTH, "_circuit_open": True}
 
         elapsed = time.monotonic() - self._last_request
         if elapsed < self.min_interval:
@@ -290,18 +352,21 @@ class RateLimitedClient:
                         # expires -- an in-band error cached as a success is
                         # permanent.
                         result = {"_error": kind, "_detail": repr(body)[:200]}
-                        log.debug("in-band %s for %s", kind, cache_key)
+                        if kind == KIND_AUTH:
+                            log.error("in-band auth error for %s — credential "
+                                      "rejected; not retrying", cache_key)
+                        else:
+                            log.debug("in-band %s for %s", kind, cache_key)
                     break
                 if r.status_code == 404:
                     result = {"_error": "not_found"}
                     break
                 if r.status_code in (401, 403):
                     # Deterministic and operator-actionable, so ERROR, not
-                    # DEBUG. Fires once per cache key: there is no circuit
-                    # breaker, so a dead credential still costs every key (#109).
+                    # DEBUG. Once per key until the circuit breaker opens.
                     log.error("HTTP %s for %s — credential rejected; not retrying",
                               r.status_code, cache_key)
-                    result = {"_error": "auth_error", "_status": r.status_code}
+                    result = {"_error": KIND_AUTH, "_status": r.status_code}
                     break
                 if 400 <= r.status_code < 500 and r.status_code not in _RETRYABLE_STATUSES:
                     log.debug("HTTP %s for %s — deterministic; not retrying",
@@ -313,8 +378,12 @@ class RateLimitedClient:
                 # 5xx and the retryable 4xx → backoff and retry
                 if attempt == HTTP_MAX_RETRIES - 1:
                     continue
-                wait = min(HTTP_BACKOFF_BASE * (2 ** attempt) + random.random(),
-                           HTTP_BACKOFF_MAX)
+                wait = HTTP_BACKOFF_BASE * (2 ** attempt) + random.random()
+                if r.status_code in (429, 503):
+                    retry_after = _retry_after_seconds(r)
+                    if retry_after is not None:
+                        wait = retry_after
+                wait = min(wait, HTTP_BACKOFF_MAX)
                 log.debug("HTTP %s on attempt %d/%d for %s — waiting %.1fs",
                           r.status_code, attempt + 1, HTTP_MAX_RETRIES, cache_key, wait)
                 time.sleep(wait)
@@ -333,6 +402,8 @@ class RateLimitedClient:
         else:
             result = {"_error": "max_retries"}
 
+        self._note_auth_outcome(result, cache_key)
+
         # Stamp failures so they expire. A success overwrites the old error
         # entry outright, so entries heal rather than accumulate.
         if _error_kind(result) is not None:
@@ -344,6 +415,20 @@ class RateLimitedClient:
         if self._dirty_count >= self._next_flush_threshold():
             self.flush()
         return result
+
+    def _note_auth_outcome(self, result: Any, cache_key: str) -> None:
+        """Count consecutive auth errors; open the circuit at the threshold."""
+        if not (isinstance(result, dict) and result.get("_error") == KIND_AUTH):
+            self._consecutive_auth_errors = 0
+            return
+        self._consecutive_auth_errors += 1
+        if self._consecutive_auth_errors >= self.auth_breaker_threshold:
+            self.circuit_open = True
+            log.error(
+                "%s: %d consecutive auth errors (last %s) — circuit open; no "
+                "further requests this run. Fix the credential and re-run.",
+                self.cache_path.name, self._consecutive_auth_errors, cache_key,
+            )
 
     def _next_flush_threshold(self) -> int:
         """Dirty-entry count needed to trigger the next flush.

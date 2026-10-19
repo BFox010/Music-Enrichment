@@ -333,3 +333,33 @@ test("picker chips: selected first by play count, then the filter's matches", ()
   assert.deepEqual(capped.chips.map((a) => a.name), ["Beta", "Epsilon", "Alpha"]);
   assert.equal(capped.hidden, 2);
 });
+
+// #120: a season the new timeframe empties is inert on screen, so a selection
+// on it could not be clicked off.
+test("dropEmptySeason clears only a season the window has no plays in", () => {
+  const sel = { hour: 9, dow: null, season: "summer" };
+  assert.deepEqual(dropEmptySeason(sel, { summer: 0, fall: 4 }), { hour: 9, dow: null, season: null });
+  assert.equal(dropEmptySeason(sel, { summer: 3 }), sel, "unchanged object, so React bails out");
+  const none = { hour: null, dow: null, season: null };
+  assert.equal(dropEmptySeason(none, { summer: 0 }), none);
+});
+
+// #120: a scrobble file not named "scrobble…" was loaded as tracks, and a
+// malformed .json threw out of the drop handler with no message.
+test("detectDropKind goes by row shape, not file name", () => {
+  const sc = { artist: "A", track: "T", scrobbled_at: "2024-01-01T00:00:00Z", hour: 0, day_of_week: 0 };
+  const tr = { canonical_track_id: "norm:a|t", artist: "A", track: "T", play_count: 3 };
+  assert.equal(detectDropKind([sc, sc]), "scrobbles");
+  assert.equal(detectDropKind([tr]), "tracks");
+  assert.equal(detectDropKind([{ artist: "A", track: "T" }]), "tracks");
+  assert.equal(detectDropKind([{ hour: 3, day_of_week: 2 }]), "scrobbles");
+  assert.equal(detectDropKind([{ foo: 1 }, 7, null]), null);
+  assert.equal(detectDropKind([]), null);
+});
+
+test("parseDropText reads JSONL or a JSON array and throws on a broken array", () => {
+  assert.deepEqual(parseDropText('{"a":1}\n\n{"a":2}\n'), [{ a: 1 }, { a: 2 }]);
+  assert.deepEqual(parseDropText(' [{"a":1}] '), [{ a: 1 }]);
+  assert.throws(() => parseDropText('[{"a":1},'));
+  assert.deepEqual(parseDropText(""), []);
+});

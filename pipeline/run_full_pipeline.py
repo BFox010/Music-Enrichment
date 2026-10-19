@@ -30,7 +30,6 @@ from pipeline.config import (
     get_logger,
 )
 from pipeline.manifest import (
-    find_phase_index,
     get_phases,
     load_manifest,
 )

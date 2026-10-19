@@ -6,9 +6,10 @@ Queries ``itunes.apple.com/search?entity=song&country=us`` and matches back. Set
   - apple_music_id: str | None    — Apple's trackId, NOT iTunes Persistent ID
   - apple_music_checked_at: str   — ISO date
 
-Cache ``.cache/apple_music.json``, keyed ``artist_norm|track_norm``. Re-checks
-only past ``APPLE_MUSIC_CACHE_DAYS``; ``force`` bypasses both that gate and the
-HTTP cache.
+Cache ``.cache/apple_music.json``, keyed ``artist_norm|track_norm``. A row whose
+``checked_at`` is past ``APPLE_MUSIC_CACHE_DAYS`` re-asks iTunes, bypassing the
+HTTP cache for that call; ``force`` bypasses the gate and the cache everywhere.
+An API error leaves the row's previous answer in place: unknown, not unavailable.
 
 Usage:
     python -m pipeline.check_apple_music
@@ -24,7 +25,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pipeline._http import FORCE_OFF, RateLimitedClient
+from pipeline._http import FORCE_OFF, KIND_NOT_FOUND, RateLimitedClient, classify_empty
 from pipeline.config import (
     APPLE_MUSIC_CACHE,
     APPLE_MUSIC_CACHE_DAYS,
@@ -154,7 +155,8 @@ def check(
         for i, track in enumerate(tracks, start=1):
             # Skip if checked recently — unless forced, in which case the
             # freshness gate would swallow the force before the client sees it.
-            if force == FORCE_OFF and not _is_stale(track.get("apple_music_checked_at")):
+            checked_at = track.get("apple_music_checked_at")
+            if force == FORCE_OFF and not _is_stale(checked_at):
                 stats["skipped_fresh"] += 1
                 enriched.append(track)
                 continue
@@ -163,15 +165,19 @@ def check(
             # Build search term — limit to 200 chars per iTunes API guidance
             term = f"{track['artist']} {track['track']}"[:200]
             params = {"term": term, "entity": "song", "country": "us", "limit": 25}
-            response = client.get(ITUNES_SEARCH_API, params, cache_key)
+            # A dated row past the gate must reach the network, or the cached
+            # body answers forever. An undated row (never checked) may use it.
+            response = client.get(
+                ITUNES_SEARCH_API, params, cache_key,
+                classify=classify_empty("results"), refresh=bool(checked_at),
+            )
 
-            if isinstance(response, dict) and response.get("_error"):
+            # not_found is a checked miss and falls through to "unavailable".
+            # Don't write False here: a blip would read as unavailable, and the
+            # gate would then protect it for APPLE_MUSIC_CACHE_DAYS.
+            if (isinstance(response, dict) and response.get("_error")
+                    and response["_error"] != KIND_NOT_FOUND):
                 stats["errors"] += 1
-                track.update({
-                    "apple_music_available": False,
-                    "apple_music_id": None,
-                    "apple_music_checked_at": today,
-                })
                 enriched.append(track)
                 continue
 

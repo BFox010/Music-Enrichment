@@ -70,7 +70,7 @@ class TestManifestStructure:
 
     def test_validate_manifest_returns_no_errors(self, manifest):
         errors = validate_manifest(manifest)
-        assert errors == [], f"Manifest validation errors:\n" + "\n".join(errors)
+        assert errors == [], "Manifest validation errors:\n" + "\n".join(errors)
 
     def test_phase_ids_are_unique(self, phases):
         ids = [str(p["id"]) for p in phases]

@@ -16,6 +16,7 @@ import requests
 
 from pipeline._http import (
     FORCE_ALL,
+    KIND_AUTH,
     KIND_NOT_FOUND,
     KIND_TRANSIENT,
     FORCE_ERRORS,
@@ -23,6 +24,8 @@ from pipeline._http import (
     RateLimitedClient,
     _error_kind,
     _is_expired,
+    _retry_after_seconds,
+    classify_empty,
     classify_lastfm,
 )
 
@@ -148,10 +151,11 @@ class TestIsExpired:
 
 
 class _FakeResponse:
-    def __init__(self, status_code: int, payload=None, text: str = "") -> None:
+    def __init__(self, status_code: int, payload=None, text: str = "", headers=None) -> None:
         self.status_code = status_code
         self._payload = payload
         self.text = text
+        self.headers = headers or {}
 
     def json(self):
         if self._payload is None:
@@ -543,7 +547,13 @@ class TestLastfmClassifier:
     def test_key_and_session_errors_are_transient_so_a_fix_takes_effect(self, code) -> None:
         """The operator fixes the key; the next run must see that rather than a
         month-old refusal."""
-        assert classify_lastfm({"error": code}) == KIND_TRANSIENT
+        kind = classify_lastfm({"error": code})
+        assert kind in (KIND_TRANSIENT, KIND_AUTH)
+        assert _error_kind({"_error": kind}) == KIND_TRANSIENT
+
+    @pytest.mark.parametrize("code", [4, 10, 26])
+    def test_key_errors_feed_the_circuit_breaker(self, code) -> None:
+        assert classify_lastfm({"error": code}) == KIND_AUTH
 
     def test_a_good_body_is_not_an_error(self) -> None:
         assert classify_lastfm(OK_BODY) is None
@@ -579,3 +589,153 @@ class TestNetworkErrorsNeverLogTheQueryString:
         assert result["_error"] == "max_retries"
         assert any("ConnectionError" in r.getMessage() for r in caplog.records)
         assert all(self.SENTINEL not in r.getMessage() for r in caplog.records)
+
+
+class TestEmptyResultsExpire:
+    """#109: a search API answering a miss with a 200 and an empty list was
+    cached as a success, which never expires. ``classify_empty`` stores it as a
+    stable negative on the 30-day TTL instead."""
+
+    EMPTY = {"results": []}
+
+    def test_empty_list_is_not_found(self) -> None:
+        assert classify_empty("results")(self.EMPTY) == KIND_NOT_FOUND
+        assert classify_empty("tracks", "items")({"tracks": {"items": []}}) == KIND_NOT_FOUND
+
+    def test_non_empty_or_unexpected_shapes_stay_successes(self) -> None:
+        classify = classify_empty("tracks", "items")
+        assert classify({"tracks": {"items": [{"id": "x"}]}}) is None
+        assert classify({"tracks": None}) is None
+        assert classify({"other": 1}) is None
+        assert classify("not a dict") is None
+
+    def test_an_empty_result_expires_and_is_re_asked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(200, self.EMPTY)])
+            out = c.get(URL, {}, "k", classify=classify_empty("results"))
+            assert out["_error"] == KIND_NOT_FOUND
+            assert _error_kind(c.cache["k"]) == KIND_NOT_FOUND
+            c.cache["k"]["_cached_at"] = time.time() - 101.0   # negative_ttl is 100
+            c.flush()
+            later = _client(tmp, responses=[_FakeResponse(200, {"results": [1]})])
+            assert later.get(URL, {}, "k", classify=classify_empty("results")) == {"results": [1]}
+            assert later.session.calls == 1
+
+    def test_a_fresh_empty_result_is_served_from_cache(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[_FakeResponse(200, self.EMPTY)])
+            c.get(URL, {}, "k", classify=classify_empty("results"))
+            c.flush()
+            later = _client(tmp, responses=[])
+            out = later.get(URL, {}, "k", classify=classify_empty("results"))
+            assert out["_error"] == KIND_NOT_FOUND
+            assert later.session.calls == 0
+
+
+class TestPerCallRefresh:
+    def test_refresh_refetches_a_cached_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            new_body = {"track": {"name": "Glory Box"}}
+            c = _client(tmp, cache={"k": OK_BODY}, responses=[_FakeResponse(200, new_body)])
+            assert c.get(URL, {}, "k", refresh=True) == new_body
+            assert c.session.calls == 1
+
+    def test_refresh_does_not_refetch_a_key_twice_in_one_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, cache={"k": OK_BODY}, responses=[_FakeResponse(200, OK_BODY)])
+            c.get(URL, {}, "k", refresh=True)
+            c.get(URL, {}, "k", refresh=True)
+            assert c.session.calls == 1
+
+    def test_without_refresh_the_cache_answers(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, cache={"k": OK_BODY}, responses=[])
+            assert c.get(URL, {}, "k") == OK_BODY
+            assert c.session.calls == 0
+
+
+class TestAuthCircuitBreaker:
+    """A dead credential cost one request and one ERROR line per cache key.
+    After N consecutive auth errors the client stops sending requests."""
+
+    def test_dead_credential_stops_after_n_keys(self, caplog) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, auth_breaker_threshold=3,
+                        responses=[_FakeResponse(401, {}) for _ in range(3)])
+            with caplog.at_level("ERROR", logger="pipeline._http"):
+                results = [c.get(URL, {}, f"k{i}") for i in range(10)]
+            assert c.session.calls == 3
+            assert c.circuit_open
+            assert all(r["_error"] == KIND_AUTH for r in results)
+            # Only the keys actually refused are cached; the rest stay uncached
+            # so a fixed credential re-asks them next run.
+            assert set(c.cache) == {"k0", "k1", "k2"}
+            assert c.stats["circuit_skipped"] == 7
+            trips = [r for r in caplog.records if "circuit open" in r.getMessage()]
+            assert len(trips) == 1
+            assert "CIRCUIT OPEN" in c.cache_summary()
+
+    def test_an_open_circuit_still_serves_cached_entries(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, cache={"good": OK_BODY}, auth_breaker_threshold=1,
+                        responses=[_FakeResponse(403, {})])
+            c.get(URL, {}, "k")
+            assert c.circuit_open
+            assert c.get(URL, {}, "good") == OK_BODY
+
+    def test_an_open_circuit_does_not_overwrite_a_cached_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            stale = {"_error": "not_found", "_cached_at": time.time() - 500}
+            c = _client(tmp, cache={"old": stale}, auth_breaker_threshold=1,
+                        responses=[_FakeResponse(401, {})])
+            c.get(URL, {}, "k")
+            assert c.get(URL, {}, "old")["_error"] == KIND_AUTH
+            assert c.cache["old"] == stale
+
+    def test_a_success_resets_the_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, auth_breaker_threshold=2, responses=[
+                _FakeResponse(401, {}), _FakeResponse(200, OK_BODY),
+                _FakeResponse(401, {}), _FakeResponse(200, OK_BODY),
+            ])
+            for i in range(4):
+                c.get(URL, {}, f"k{i}")
+            assert not c.circuit_open
+            assert c.session.calls == 4
+
+    def test_in_band_auth_errors_count(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, auth_breaker_threshold=2,
+                        responses=[_FakeResponse(200, {"error": 10}) for _ in range(2)])
+            for i in range(5):
+                c.get(URL, {}, f"k{i}", classify=classify_lastfm)
+            assert c.session.calls == 2
+            assert c.circuit_open
+
+
+class TestRetryAfter:
+    def test_delta_seconds(self) -> None:
+        assert _retry_after_seconds(_FakeResponse(429, headers={"Retry-After": "7"})) == 7.0
+
+    def test_http_date(self) -> None:
+        from email.utils import formatdate
+        r = _FakeResponse(503, headers={"Retry-After": formatdate(time.time() + 20, usegmt=True)})
+        assert 15 <= _retry_after_seconds(r) <= 21
+
+    def test_absent_or_garbage(self) -> None:
+        assert _retry_after_seconds(_FakeResponse(429)) is None
+        assert _retry_after_seconds(_FakeResponse(429, headers={"Retry-After": "soon"})) is None
+
+    @pytest.mark.parametrize("status", [429, 503])
+    def test_the_wait_honours_the_header_under_the_cap(self, status, monkeypatch) -> None:
+        from pipeline.config import HTTP_BACKOFF_MAX
+        sleeps: list[float] = []
+        monkeypatch.setattr("pipeline._http.time.sleep", sleeps.append)
+        with tempfile.TemporaryDirectory() as tmp:
+            c = _client(tmp, responses=[
+                _FakeResponse(status, {}, headers={"Retry-After": "12"}),
+                _FakeResponse(status, {}, headers={"Retry-After": "9999"}),
+                _FakeResponse(200, OK_BODY),
+            ])
+            assert c.get(URL, {}, "k") == OK_BODY
+        assert sleeps[-2:] == [12.0, HTTP_BACKOFF_MAX]

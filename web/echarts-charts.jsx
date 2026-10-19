@@ -9,7 +9,7 @@ function themeVars() {
     accent: v("--accent") || "#a78bfa",
     text:   v("--text")   || "#f4f4f7",
     text2:  v("--text-2") || "#b9b9c6",
-    muted:  v("--faint")  || "#55555f",
+    muted:  v("--faint")  || "#82828c",
     panel:  v("--panel-2")|| "#1a1a22",
     line:   v("--line")   || "#272732",
   };
@@ -198,7 +198,7 @@ function TimelineChart({ active, refreshVersion = 0 }) {
             <span className="card-meta">scrobbles over time</span>
           </div>
         </div>
-        <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        <div className="echart-wrap" ref={elRef} role="img" aria-label="Scrobbles over time" style={{ display: loading ? "none" : "block" }} />
         {loading && <ChartLoading />}
       </div>
     </section>
@@ -382,7 +382,7 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
         <div className="artist-picker">
           <div className="ap-search">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>
-            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter artists…" />
+            <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter artists…" aria-label="Filter artists" />
             <span className="ap-count">{selCount} shown</span>
             <button className="ap-reset" onClick={shuffleArtists} title={`Pick ${TRAJECTORY_SEED} at random from all ${artists.length} artists`}>Shuffle</button>
             <button className="ap-reset" onClick={resetTop} title={`Reset to the ${TRAJECTORY_SEED} most-played`}>Top {TRAJECTORY_SEED}</button>
@@ -403,7 +403,7 @@ function ArtistTrajectory({ active, refreshVersion = 0 }) {
             <p className="ap-more">{hiddenCount} more — type to narrow the list.</p>
           )}
         </div>
-        <div className="echart-wrap tall" ref={elRef} style={{ display: loading ? "none" : "block" }} />
+        <div className="echart-wrap tall" ref={elRef} role="img" aria-label="Monthly plays for the selected artists" style={{ display: loading ? "none" : "block" }} />
         {loading && <ChartLoading height={560} />}
       </div>
     </section>
@@ -449,15 +449,20 @@ function TrajectoryPage({ active, refreshVersion = 0 }) {
 }
 
 /* ── Listening Map: calendar heatmap (per year) + hour×day grid ── */
-function ListeningMap({ active, refreshVersion = 0 }) {
+function ListeningMap({ active, refreshVersion = 0, knownYears = null }) {
   const calRef  = useRef(null);
   const hwRef   = useRef(null);
   const calChart = useEChart(calRef);
   const hwChart  = useEChart(hwRef);
   const [years, setYears] = useState([]);
-  const [year, setYear] = useState(null);
+  const [picked, setYear] = useState(null);
   const [loading, setLoading] = useState(true);
   const [mapData, setMapData] = useState(null);
+  // Default to the latest year the dashboard already knows of; only without
+  // that list does the first request go out year-less to learn it.
+  const latestKnown = knownYears && knownYears.length ? knownYears[knownYears.length - 1] : null;
+  const year = picked != null ? picked : latestKnown;
+  const yearList = years.length ? years : (knownYears || []);
 
   useEffect(() => {
     if (!active) return;
@@ -470,8 +475,8 @@ function ListeningMap({ active, refreshVersion = 0 }) {
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
       .then((data) => {
         if (stale) return;
-        // First pass: learn the available years, default to the most recent, and
-        // let the effect re-run with that filter.
+        // No year known: this pass only learns the list and picks the latest,
+        // and the effect re-runs with that filter.
         if (year == null) {
           if (data.years && data.years.length) { setYears(data.years); setYear(data.years[data.years.length - 1]); }
           else setLoading(false);
@@ -549,9 +554,9 @@ function ListeningMap({ active, refreshVersion = 0 }) {
           <div className="card-head">
             <h3 className="card-title">Listening calendar</h3>
             <div style={cardTools}>
-              {years.length > 1 && (
+              {yearList.length > 1 && (
                 <div className="seg seg-sm" role="group" aria-label="Calendar year">
-                  {years.map((y) => (
+                  {yearList.map((y) => (
                     <button key={y} aria-pressed={year === y} onClick={() => setYear(y)}>{y}</button>
                   ))}
                 </div>
@@ -560,12 +565,12 @@ function ListeningMap({ active, refreshVersion = 0 }) {
             </div>
           </div>
           {loading && <ChartLoading height={220} />}
-          <div ref={calRef} className="echart-wrap cal" style={{ display: loading ? "none" : "block" }} />
+          <div ref={calRef} className="echart-wrap cal" role="img" aria-label={`Plays per day${year ? " in " + year : ""}`} style={{ display: loading ? "none" : "block" }} />
         </div>
         <div className="card">
           <div className="card-head norule"><h3 className="card-title">Hour × weekday</h3><span className="card-meta">play density · all time</span></div>
           {loading && <ChartLoading height={320} />}
-          <div ref={hwRef} style={{ width: "100%", height: 360, display: loading ? "none" : "block" }} />
+          <div ref={hwRef} role="img" aria-label="Play density by hour and weekday, all time" style={{ width: "100%", height: 360, display: loading ? "none" : "block" }} />
         </div>
       </div>
     </section>
@@ -702,7 +707,7 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
         <div className="card">
           <div className="card-head norule">
             <h3 className="card-title">{fx.label} × {fy.label}</h3>
-            <div style={cardTools}>
+            <div style={{ ...cardTools, flexShrink: 1 }}>
               {[["X", xKey, setXKey, yKey], ["Y", yKey, setYKey, xKey]].map(([axisName, value, set, other]) => (
                 <label className="fb-sort af-pick" key={axisName}>
                   <span className="af-pick-label">{axisName}</span>
@@ -718,12 +723,12 @@ function AudioFeaturesChart({ active, refreshVersion = 0 }) {
           </div>
           <p style={cardDesc}>Each bubble is a track, placed by the two features you pick — bigger bubbles are the ones you play most. Tracks missing either feature are left out.</p>
           {loading && <ChartLoading />}
-          <div ref={scRef} className="echart-wrap" style={{ display: loading ? "none" : "block" }} />
+          <div ref={scRef} className="echart-wrap" role="img" aria-label={`Tracks plotted by ${fx.label.toLowerCase()} against ${fy.label.toLowerCase()}`} style={{ display: loading ? "none" : "block" }} />
         </div>
         <div className="card">
           <div className="card-head norule"><h3 className="card-title">Feature distributions</h3><span className="card-meta">tracks per bin</span></div>
           {loading && <ChartLoading height={240} />}
-          <div ref={histRef} style={{ width: "100%", height: 240, display: loading ? "none" : "block" }} />
+          <div ref={histRef} role="img" aria-label="Distribution of tracks across each audio feature" style={{ width: "100%", height: 240, display: loading ? "none" : "block" }} />
         </div>
       </div>
     </section>
@@ -790,7 +795,7 @@ function SaturationChart({ active, refreshVersion = 0 }) {
         <span className="card-meta">tracks by the tier you assigned their artist</span>
       </div>
       <p style={cardDesc}>Your own rotation judgement, from <code>taste_profile.md</code> — not a data-quality measure. <b>Tier 1</b> = heavy rotation · <b>Tier 2</b> = moderate · <b>Tier 3</b> = special-context only · <b>Unranked</b> = artist not tiered. Tiers were written to stop generated playlists over-using favourite artists; here they simply show how much of your library you have opinions about.</p>
-      <div className="echart-wrap" ref={elRef} style={{ display: loading ? "none" : "block", height: 320 }} />
+      <div className="echart-wrap" ref={elRef} role="img" aria-label="Tracks per rotation tier" style={{ display: loading ? "none" : "block", height: 320 }} />
       {loading && <ChartLoading height={320} />}
     </div>
   );
@@ -1086,25 +1091,32 @@ function TagConstellation({ active, refreshVersion = 0 }) {
 }
 
 /* ── Forgotten Favorites sparkline (pure SVG, no ECharts) ── */
-function FfSparkline({ sparkline, peakYear, recentStart }) {
+// Silent years are padded in as zero bars through the window's end, so the gap shows.
+function FfSparkline({ sparkline, peakYear, recentStart, recentEnd }) {
   if (!sparkline || !sparkline.length) return null;
+  const byYear = new Map(sparkline);
+  const first = sparkline[0][0];
+  const last = Math.max(recentEnd || 0, sparkline[sparkline.length - 1][0]);
+  const series = [];
+  for (let y = first; y <= last; y++) series.push([y, byYear.get(y) || 0]);
   const W = 120, H = 38, GAP = 2;
-  const n = sparkline.length;
+  const n = series.length;
   const bw = Math.max(3, Math.floor((W - GAP * (n - 1)) / n));
   const totalW = n * bw + (n - 1) * GAP;
-  const max = Math.max(...sparkline.map(([, v]) => v), 1);
+  const max = Math.max(...series.map(([, v]) => v), 1);
 
   return (
-    <svg width={totalW} height={H} style={{ display: "block", overflow: "visible" }}>
-      {sparkline.map(([yr, plays], i) => {
-        const bh = Math.max(3, (plays / max) * (H - 4));
+    <svg width={totalW} height={H} role="img" aria-label={`Plays per year${peakYear ? ", peak " + peakYear : ""}`} style={{ display: "block", overflow: "visible" }}>
+      {series.map(([yr, plays], i) => {
+        const bh = plays ? Math.max(3, (plays / max) * (H - 4)) : 1.5;
         const x = i * (bw + GAP);
         const isPeak  = yr === peakYear;
         const isRecent = yr >= recentStart;
-        const fill    = isPeak ? "var(--accent)" : isRecent ? "var(--faint)" : "var(--muted-s)";
-        const opacity = isRecent && !isPeak ? 0.5 : 1;
+        const fill    = isPeak ? "var(--accent)" : isRecent || !plays ? "var(--faint-line)" : "var(--muted-s)";
+        const opacity = (isRecent || !plays) && !isPeak ? 0.5 : 1;
         return (
           <g key={yr}>
+            <title>{`${yr}: ${plays} play${plays === 1 ? "" : "s"}`}</title>
             <rect x={x} y={H - bh} width={bw} height={bh} fill={fill} rx={1.5} opacity={opacity} />
             {isPeak && (
               <rect x={x} y={H - bh - 4} width={bw} height={3}
@@ -1119,110 +1131,170 @@ function FfSparkline({ sparkline, peakYear, recentStart }) {
 }
 
 /* ── Forgotten Favorites page ── */
+const FF_TOP = 100;
+const FF_PEAK_OPTS = [3, 5, 10, 20];   // server accepts 1..100
+const FF_WINDOW_OPTS = [1, 2, 3, 5];   // server accepts 1..5
+const FF_MON = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const ffDay = (iso) => `${+iso.slice(8, 10)} ${FF_MON[+iso.slice(5, 7) - 1]} ${iso.slice(0, 4)}`;
+const ffMonth = (iso) => `${FF_MON[+iso.slice(5, 7) - 1]} ${iso.slice(0, 4)}`;
+function ffSilence(days) {
+  if (days < 45) return `${days} day${days === 1 ? "" : "s"}`;
+  if (days < 365) return `${Math.round(days / 30.44)} mo`;
+  return `${(days / 365.25).toFixed(1).replace(/\.0$/, "")} yr`;
+}
+const ffSpan = (a, b) => (a === b ? String(b) : `${a}–${b}`);
+
 function ForgottenFavoritesPage({ active, refreshVersion = 0 }) {
+  const [minPeak, setMinPeak] = useState(5);
+  const [recentYears, setRecentYears] = useState(2);
   const [items, setItems] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [shown, setShown] = useState(25);
-  const loadedVer = useRef(-1);
+  // Don't key this on refreshVersion alone: a threshold change must refetch too.
+  const loadedKey = useRef(null);
 
   useEffect(() => {
     if (!active) return;
-    if (loadedVer.current === refreshVersion) return;  // already loaded for this version
-    loadedVer.current = refreshVersion;                // claim up-front to avoid double-fetch
+    const key = `${refreshVersion}|${minPeak}|${recentYears}`;
+    if (loadedKey.current === key) return;  // already loaded for this version + thresholds
+    loadedKey.current = key;                // claim up-front to avoid double-fetch
     setLoading(true);
     setError(null);
-    fetch("/api/forgotten-favorites?top=100")
+    setShown(25);
+    fetch(`/api/forgotten-favorites?top=${FF_TOP}&min_peak=${minPeak}&recent_years=${recentYears}`)
       .then((r) => r.ok ? r.json() : Promise.reject(r.statusText))
-      .then((d) => { setItems(d); setLoading(false); })
-      .catch((e) => { loadedVer.current = -1; setError(String(e)); setLoading(false); });
-  }, [active, refreshVersion]);
+      .then((d) => { if (loadedKey.current !== key) return; setItems(d); setLoading(false); })
+      .catch((e) => { if (loadedKey.current !== key) return; loadedKey.current = null; setError(String(e)); setLoading(false); });
+  }, [active, refreshVersion, minPeak, recentYears]);
 
   if (!active) return null;
 
-  if (loading) return (
-    <section className="block"><ChartLoading height={400} /></section>
-  );
-  if (error) return (
-    <section className="block">
-      <div className="card">
-        <div className="empty"><div className="big">Could not load</div><div>{error}</div></div>
-      </div>
-    </section>
-  );
-  if (!items) return null;
-  if (!items.length) return (
-    <section className="block">
-      <div className="card">
-        <div className="empty">
-          <div className="big">No forgotten favorites found</div>
-          <div>Your recent listening covers your full history, or scrobble data isn't loaded yet.</div>
-        </div>
-      </div>
-    </section>
-  );
+  const head    = items && items.length ? items[0] : null;
+  const window_ = head ? ffSpan(head.recent_start, head.recent_end)
+                       : `the last ${recentYears === 1 ? "calendar year" : recentYears + " calendar years"} of your data`;
+  const asOf    = head && head.as_of ? ffDay(head.as_of) : null;
+  const meta    = !items || loading ? "by fade"
+                : items.length >= FF_TOP ? `by fade · top ${FF_TOP}`
+                : `by fade · ${items.length} ${items.length === 1 ? "qualifies" : "qualify"}`;
+  const visible = (items || []).slice(0, shown);
 
-  const maxYear     = Math.max(...items.flatMap((d) => d.sparkline.map(([y]) => y)));
-  const recentStart = maxYear - 1; // 2 years: maxYear-1 .. maxYear
-  const visible     = items.slice(0, shown);
+  let body;
+  if (loading) body = <ChartLoading height={400} />;
+  else if (error) body = <div className="empty"><div className="big">Could not load</div><div>{error}</div></div>;
+  else if (!items) body = null;
+  else if (!items.length) body = (
+    <div className="empty">
+      <div className="big">Nothing qualifies at these settings</div>
+      <div>No track had a year of {minPeak}+ plays before {window_} and then fell to under half that within it. Lower the peak or shorten the window to widen the net. With no scrobble history loaded, nothing can qualify.</div>
+    </div>
+  );
+  else body = (
+    <>
+      <div className="ff-list">
+        {visible.map((item, i) => {
+          const hue     = ((item.artist.charCodeAt(0) || 50) * 37 + (item.track.charCodeAt(0) || 50) * 13) % 360;
+          const initial = (item.artist || "?").slice(0, 2).toUpperCase();
+          const scoreStr = item.score >= 10 ? Math.round(item.score) + "×" : item.score.toFixed(1) + "×";
+          const win     = ffSpan(item.recent_start, item.recent_end);
+          return (
+            <div className="ff-row" key={item.artist + "|" + item.track}>
+              <span className="ff-rank num">{i + 1}</span>
+              <div
+                className="ff-art"
+                style={{ background: `linear-gradient(135deg, oklch(0.38 0.14 ${hue}), oklch(0.24 0.08 ${(hue + 55) % 360}))` }}
+              >
+                <span>{initial}</span>
+              </div>
+              <div className="ff-info">
+                <div className="ff-track">{item.track}</div>
+                <div className="ff-artist">{item.artist}</div>
+                <div className="ff-tags">
+                  <span className="ff-badge">Peak {item.peak_year} · {item.peak_plays} plays</span>
+                  <span className="ff-badge ff-badge-muted" title={item.last_played ? ffDay(item.last_played) : undefined}>
+                    Last played {item.last_played ? ffMonth(item.last_played) : item.last_heard}
+                  </span>
+                  {item.silence_days != null && (
+                    <span className="ff-badge ff-badge-muted" title={`From the last play to your latest scrobble${asOf ? ` (${asOf})` : ""}`}>
+                      Silent {ffSilence(item.silence_days)}
+                    </span>
+                  )}
+                  {item.genres.slice(0, 1).map((g) => <span className="ff-tag" key={g}>{g}</span>)}
+                  {item.moods.slice(0, 1).map((m) => <span className="ff-tag ff-tag-mood" key={m} style={{ "--mood": moodColor(m) }}>{m}</span>)}
+                </div>
+              </div>
+              <div className="ff-spark-wrap">
+                <FfSparkline sparkline={item.sparkline} peakYear={item.peak_year}
+                  recentStart={item.recent_start} recentEnd={item.recent_end} />
+                <div className="ff-spark-legend">
+                  <span className="num">{item.peak_plays} at peak</span>
+                  <span className="num">{item.recent_plays} in {win}</span>
+                </div>
+              </div>
+              <div className="ff-score" title={`${item.peak_plays} plays in ${item.peak_year} ÷ ${Math.max(item.recent_plays, 1)} in ${win}`}>
+                <span className="ff-score-val num">{scoreStr}</span>
+                <span className="ff-score-lab">fade</span>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {items.length > shown && (
+        <div className="tablefoot">
+          <span>Showing {shown} of {items.length}</span>
+          <button className="linkbtn" onClick={() => setShown((s) => s + 25)}>Show more ↓</button>
+        </div>
+      )}
+      {items.length < 10 && (
+        <div className="tablefoot">
+          <span>Only {items.length} {items.length === 1 ? "track clears" : "tracks clear"} these thresholds. Lower the peak or shorten the window to see more.</span>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <div>
       <div className="page-intro">
         <h2 className="page-title">Forgotten favorites</h2>
         <p className="page-lede">
-          Tracks you once played constantly — then quietly set aside. Each sparkline shows
-          yearly play counts; the <span style={{ color: "var(--accent)", fontWeight: 600 }}>accent bar</span> marks
-          your peak year. Ranked by how sharply listening dropped off.
+          Tracks you once played heavily and have since set aside. A track qualifies when its best
+          calendar year had at least <b>{minPeak} plays</b>, that year came before the recent
+          window ({window_}), and it played at least <b>twice</b> as often that year as in the whole
+          window. Not a list of tracks you went off: one you still play now and then can qualify,
+          as long as it has fallen well below its own high.
         </p>
       </div>
       <section className="block">
         <div className="card">
-          <div className="ff-list">
-            {visible.map((item, i) => {
-              const hue     = ((item.artist.charCodeAt(0) || 50) * 37 + (item.track.charCodeAt(0) || 50) * 13) % 360;
-              const initial = (item.artist || "?").slice(0, 2).toUpperCase();
-              const scoreStr = item.score >= 10 ? Math.round(item.score) + "×" : item.score.toFixed(1) + "×";
-              return (
-                <div className="ff-row" key={i}>
-                  <span className="ff-rank num">{i + 1}</span>
-                  <div
-                    className="ff-art"
-                    style={{ background: `linear-gradient(135deg, oklch(0.38 0.14 ${hue}), oklch(0.24 0.08 ${(hue + 55) % 360}))` }}
-                  >
-                    <span>{initial}</span>
-                  </div>
-                  <div className="ff-info">
-                    <div className="ff-track">{item.track}</div>
-                    <div className="ff-artist">{item.artist}</div>
-                    <div className="ff-tags">
-                      <span className="ff-badge">Peak {item.peak_year}</span>
-                      <span className="ff-badge ff-badge-muted">Last {item.last_heard}</span>
-                      {item.genres.slice(0, 1).map((g) => <span className="ff-tag" key={g}>{g}</span>)}
-                      {item.moods.slice(0, 1).map((m) => <span className="ff-tag ff-tag-mood" key={m} style={{ "--mood": moodColor(m) }}>{m}</span>)}
-                    </div>
-                  </div>
-                  <div className="ff-spark-wrap">
-                    <FfSparkline sparkline={item.sparkline} peakYear={item.peak_year} recentStart={recentStart} />
-                    <div className="ff-spark-legend">
-                      <span className="num">{item.peak_plays} at peak</span>
-                      <span className="num">{item.recent_plays} recent</span>
-                    </div>
-                  </div>
-                  <div className="ff-score">
-                    <span className="ff-score-val num">{scoreStr}</span>
-                    <span className="ff-score-lab">fade</span>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-          {items.length > shown && (
-            <div className="tablefoot">
-              <span>Showing {shown} of {items.length}</span>
-              <button className="linkbtn" onClick={() => setShown((s) => s + 25)}>Show more ↓</button>
+          <div className="card-head">
+            <h3 className="card-title">Faded from rotation</h3>
+            <div style={{ ...cardTools, flexShrink: 1 }}>
+              <label className="fb-sort af-pick">
+                <span className="af-pick-label">Peak ≥</span>
+                <select value={minPeak} onChange={(e) => setMinPeak(+e.target.value)} aria-label="Minimum plays in the peak year">
+                  {FF_PEAK_OPTS.map((n) => <option key={n} value={n}>{n} plays</option>)}
+                </select>
+              </label>
+              <label className="fb-sort af-pick">
+                <span className="af-pick-label">Window</span>
+                <select value={recentYears} onChange={(e) => setRecentYears(+e.target.value)} aria-label="Recent window in calendar years">
+                  {FF_WINDOW_OPTS.map((n) => <option key={n} value={n}>{n === 1 ? "1 year" : `${n} years`}</option>)}
+                </select>
+              </label>
+              <span className="card-meta">{meta}</span>
             </div>
-          )}
+          </div>
+          <p style={cardDesc}>
+            <b>Fade</b> = plays in the peak year ÷ plays in the window, where a silent window counts
+            as one play, so fade then equals the peak. Sorted by fade, ties by peak plays. The window
+            is whole calendar years counted back from your latest scrobble{asOf ? ` (${asOf})` : ""},
+            not from today, so its last year is usually partial. <b>Silent</b> is the gap from a
+            track's last play to that same date. In each sparkline
+            the <span style={{ color: "var(--accent)", fontWeight: 600 }}>accent bar</span> is the
+            peak year and the dimmed bars are the window or years with no plays.
+          </p>
+          {body}
         </div>
       </section>
     </div>

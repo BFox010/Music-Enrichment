@@ -13,7 +13,6 @@ from pipeline.enrich_audio_features import (
     _fetch_audio_features,
     _parse_features,
     _resolve_track_ids,
-    enrich,
 )
 
 
@@ -80,6 +79,20 @@ class TestResolveTrackIds:
     def test_error_response_yields_nothing(self) -> None:
         client = _StubResolveClient({})
         assert _resolve_track_ids(client, ["USNOPE00001"]) == {}
+
+    def test_an_empty_batch_is_classified_as_an_expiring_miss(self) -> None:
+        """#109: the batch request passes classify_empty("content"), and the
+        not_found it yields resolves nothing, exactly as the empty body did."""
+        seen: list = []
+
+        class _Recording(_StubResolveClient):
+            def get(self, url, params, cache_key, **kw):
+                seen.append(kw.get("classify"))
+                return {"_error": "not_found"}
+
+        assert _resolve_track_ids(_Recording({}), ["USNOPE00001"]) == {}
+        assert seen[0]({"content": []}) == "not_found"
+        assert seen[0]({"content": [{"id": "rb1"}]}) is None
 
     def test_batches_large_input(self) -> None:
         isrcs = [f"US{i:011d}" for i in range(85)]  # > 2x _BATCH_SIZE

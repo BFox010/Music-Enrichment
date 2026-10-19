@@ -19,7 +19,6 @@ from pipeline.resolve_isrcs import (
     _isrc_from_musicbrainz_response,
     _resolve_deezer,
     _resolve_musicbrainz,
-    enrich,
 )
 
 
@@ -321,6 +320,13 @@ class TestDeezerInBandErrors:
         query = 'artist:"Portishead" track:"Roads"'
         client = _StubDeezerClient({query: {"error": {"code": 4}}}, {})
         assert _resolve_deezer(client, "Portishead", "Roads") is None
+
+    def test_an_empty_search_is_an_expiring_miss(self) -> None:
+        """#109: ``{"data": []}`` was a success that never expired."""
+        assert ri._classify_deezer_search(_deezer_search()) == KIND_NOT_FOUND
+        assert ri._classify_deezer_search({"error": {"code": 4}}) == KIND_TRANSIENT
+        assert ri._classify_deezer_search(_deezer_search(_deezer_item(1, "Roads", "Portishead"))) is None
+        assert _best_deezer_match({"_error": KIND_NOT_FOUND}, "portishead", "roads") is None
 
 
 class TestLimitCapsWorkNotOutput:

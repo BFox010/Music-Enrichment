@@ -1,0 +1,8 @@
+# Tests, lint and optional script extras, on top of the runtime set.
+# After changing either requirements file, regenerate the lock:
+#   uv pip compile requirements-dev.txt --universal --python-version 3.11 -o requirements.lock
+-r requirements.txt
+pytest>=8.0
+ruff==0.16.8
+pip-audit>=2.7
+openpyxl>=3.1  # scripts/make_view.py only

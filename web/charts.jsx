@@ -44,6 +44,25 @@ function moodColor(name) {
   return `oklch(0.70 0.12 ${h})`;
 }
 
+/* Keyboard parity for a clickable div/span (#119): focusable, Enter or Space
+   activates. Pass `pressed` where the target has a selected state. A table
+   cell passes role: null so it keeps its own role; a cell is not a button. */
+function pressable(onActivate, { pressed, role = "button", label } = {}) {
+  const props = {
+    tabIndex: 0,
+    onClick: onActivate,
+    onKeyDown: (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      e.preventDefault();
+      onActivate(e);
+    },
+  };
+  if (role) props.role = role;
+  if (pressed !== undefined) props["aria-pressed"] = !!pressed;
+  if (label) props["aria-label"] = label;
+  return props;
+}
+
 /* ── FLIP: ranked lists travel to their new order ──
    Rows animate to their new positions instead of blinking into place, which is
    what shows you what the filter did — which rows survived, which collapsed.
@@ -77,7 +96,7 @@ function HBars({ items, max, activeKey, onPick, unit }) {
           key={it.key}
           data-flip-key={it.key}
           className={"hbar" + (activeKey === it.key ? " active" : "")}
-          onClick={() => onPick && onPick(it.key)}
+          {...(onPick ? pressable(() => onPick(it.key), { pressed: activeKey === it.key }) : {})}
           title={`${it.key} — ${it.value.toLocaleString()} ${unit}`}
         >
           <span className="rank num">{i + 1}</span>
@@ -135,7 +154,7 @@ function HourChart({ data, onPick, activeKey }) {
           <div
             className={"hcol" + (h === peak ? " peak" : "") + (activeKey === h ? " sel" : "")}
             key={h}
-            onClick={() => onPick && onPick(h)}
+            {...(onPick ? pressable(() => onPick(h), { pressed: activeKey === h, label: `${fmt12full(h)}, ${v.toLocaleString()} plays` }) : {})}
             title={`${fmt12full(h)} — ${v.toLocaleString()} plays`}
           >
             <div className="hbarv" style={{ height: (v / max) * 100 + "%" }}></div>
@@ -159,7 +178,7 @@ function DowChart({ data, onPick, activeKey }) {
         <div
           className={"dowrow" + (onPick ? " clickable" : "") + (activeKey === i ? " sel" : "")}
           key={i}
-          onClick={() => onPick && onPick(i)}
+          {...(onPick ? pressable(() => onPick(i), { pressed: activeKey === i }) : {})}
         >
           <span className="dlabel">{labels[i]}</span>
           <div className="dtrack"><div className="dfill" style={{ width: (v / max) * 100 + "%" }}></div></div>
@@ -178,15 +197,16 @@ function Seasons({ data, total, onPick, activeKey }) {
     <div className="seasons">
       {order.map(([s, glyph]) => {
         const v = data[s] || 0;
-        // A season outside the chosen timeframe has no plays to show and
-        // nothing to drill into. A bare "0" reads as a real measurement, so
-        // it is dashed out and made inert instead.
+        // A season outside the timeframe has no plays: a bare "0" reads as a
+        // real measurement, so it is dashed out and made inert. A selected one
+        // stays clickable, or the selection couldn't be undone.
         const empty = v === 0;
+        const pickable = onPick && (!empty || activeKey === s);
         return (
           <div
-            className={"season season-" + s + (onPick && !empty ? " clickable" : "") + (empty ? " s-empty" : "") + (activeKey === s ? " sel" : "")}
+            className={"season season-" + s + (pickable ? " clickable" : "") + (empty ? " s-empty" : "") + (activeKey === s ? " sel" : "")}
             key={s}
-            onClick={() => { if (onPick && !empty) onPick(s); }}
+            {...(pickable ? pressable(() => onPick(s), { pressed: activeKey === s }) : {})}
           >
             <div className="s-top">
               <span className="s-name">{s}</span>
@@ -507,7 +527,7 @@ function MoodBars({ items, max, activeKey, onPick }) {
             data-flip-key={m.key}
             className={"moodrow" + (activeKey === m.key ? " active" : "")}
             style={{ "--mood": moodColor(m.key) }}
-            onClick={() => onPick && onPick(m.key)}
+            {...(onPick ? pressable(() => onPick(m.key), { pressed: activeKey === m.key }) : {})}
             title={`${m.key} — ${Math.round(m.value).toLocaleString()} plays`
               + (inferred > 0 ? ` · ${inferredPct}% inferred by classifier` : " · all hand-labelled")}
           >
@@ -548,7 +568,8 @@ function GenreDonut({ items, total, colors, activeKey, onPick, size = 132 }) {
   return (
     <div className="donut-wrap">
       <div className="donut" style={{ width: size, height: size }}>
-        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }}>
+        <svg width={size} height={size} style={{ transform: "rotate(-90deg)" }} role="img"
+             aria-label={"Genre share of plays: " + segs.map((s) => `${s.key} ${Math.round(s.frac * 100)}%`).join(", ")}>
           <circle cx={r} cy={r} r={radius} fill="none" stroke="var(--track-bg)" strokeWidth={stroke} />
           {segs.map((s) => (
             <circle
@@ -570,7 +591,8 @@ function GenreDonut({ items, total, colors, activeKey, onPick, size = 132 }) {
       </div>
       <div className="donut-legend" ref={legendRef}>
         {segs.map((s) => (
-          <div key={s.key} data-flip-key={s.key} className={"glegend" + (activeKey === s.key ? " active" : "")} onClick={() => onPick && onPick(s.key)}>
+          <div key={s.key} data-flip-key={s.key} className={"glegend" + (activeKey === s.key ? " active" : "")}
+               {...(onPick ? pressable(() => onPick(s.key), { pressed: activeKey === s.key }) : {})}>
             <span className="sw" style={{ background: colors[s.key] }}></span>
             <span className="gname">{s.key}</span>
             <span className="gval num">{Math.round(s.frac * 100)}%</span>
@@ -587,7 +609,8 @@ function TagCloud({ items, activeKey, onPick }) {
   return (
     <div className="tagcloud" ref={ref}>
       {items.map((t) => (
-        <div key={t.key} data-flip-key={t.key} className={"tagchip" + (activeKey === t.key ? " active" : "")} onClick={() => onPick && onPick(t.key)}>
+        <div key={t.key} data-flip-key={t.key} className={"tagchip" + (activeKey === t.key ? " active" : "")}
+             {...(onPick ? pressable(() => onPick(t.key), { pressed: activeKey === t.key }) : {})}>
           {t.key}<span className="tc-n num">{Math.round(t.value).toLocaleString()}</span>
         </div>
       ))}
@@ -616,4 +639,4 @@ function CoverageBars({ rows, total }) {
   );
 }
 
-Object.assign(window, { MOOD_COLORS, moodColor, HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, DrillPanel, SeasonalFavorites });
+Object.assign(window, { MOOD_COLORS, moodColor, pressable, HBars, TrackList, HourChart, DowChart, Seasons, MoodBars, GenreDonut, TagCloud, CoverageBars, DrillPanel, SeasonalFavorites });

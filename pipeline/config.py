@@ -134,15 +134,20 @@ DEEZER_RATE_LIMIT: float = 5.0
 RECCOBEATS_RATE_LIMIT: float = 2.0    # conservative; no published limit
 
 # Backoff: up to HTTP_MAX_RETRIES tries, sleeping base × 2^attempt (+ jitter),
-# capped at HTTP_BACKOFF_MAX.
+# capped at HTTP_BACKOFF_MAX. A 429/503 Retry-After replaces the computed wait,
+# under the same cap.
 HTTP_MAX_RETRIES: int = 5
 HTTP_BACKOFF_BASE: float = 0.5
 HTTP_BACKOFF_MAX: float = 30.0
 
+# Consecutive auth errors after which a client stops sending requests for the
+# rest of the run, so a dead credential costs N requests rather than every key.
+HTTP_AUTH_BREAKER_THRESHOLD: int = 5
+
 # ── Negative-cache expiry ──
 # Cached failures expire so a transient blip can't freeze a track's enrichment.
-# Only classified failures expire: a 200 with an empty result is a success and
-# never does (#109).
+# A search API's empty result is classified not_found (``classify_empty``) so a
+# miss expires too; any other success is permanent until ``--force`` (#109).
 HTTP_NEGATIVE_TTL_SECONDS: float = 30 * 24 * 3600   # not_found / bad_request
 HTTP_TRANSIENT_TTL_SECONDS: float = 6 * 3600        # auth_error / max_retries / invalid_json
 

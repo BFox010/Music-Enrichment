@@ -8,7 +8,6 @@ from pathlib import Path
 
 from pipeline.dedupe import (
     _merge_by_export_mbid,
-    _merge_skeleton_group,
     _most_common_value,
     _peak_year,
     dedupe,

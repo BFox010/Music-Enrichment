@@ -180,6 +180,38 @@ function scrobbleYearRange(byYear) {
   return lo === hi ? String(lo) : `${lo}–${hi}`;
 }
 
+/* The overview selection after a timeframe change: a selected season the new
+   window has no plays in is dropped, or its inert card can't be clicked off. */
+function dropEmptySeason(sel, bySeason) {
+  if (!sel || !sel.season || (bySeason && bySeason[sel.season] > 0)) return sel;
+  return { ...sel, season: null };
+}
+
+/* A dropped file's rows. A JSON array if the text opens with "[", else JSONL.
+   Throws on a malformed array so the drop can say so instead of failing silently. */
+function parseDropText(text) {
+  const t = String(text || "").trim();
+  if (!t.startsWith("[")) return parseJSONL(t);
+  const rows = JSON.parse(t);
+  if (!Array.isArray(rows)) throw new Error("not a JSON array");
+  return rows;
+}
+
+/* "scrobbles", "tracks" or null, by the rows' shape rather than the file name:
+   a scrobble row carries its timestamp (or hour + weekday), a track row its
+   identity or lifetime play count. Majority of the first rows decides. */
+function detectDropKind(rows) {
+  let sc = 0, tr = 0, seen = 0;
+  for (const r of rows || []) {
+    if (!r || typeof r !== "object" || Array.isArray(r)) continue;
+    if (r.scrobbled_at != null || (r.hour != null && r.day_of_week != null)) sc++;
+    else if (r.canonical_track_id != null || r.play_count != null || r.track != null) tr++;
+    if (++seen >= 50) break;
+  }
+  if (sc > tr) return "scrobbles";
+  return tr > 0 ? "tracks" : null;
+}
+
 function aggregateScrobbles(rows) {
   const byHour = Array(24).fill(0), byDow = Array(7).fill(0), bySeason = { winter: 0, spring: 0, summer: 0, fall: 0 }, byYear = {};
   let total = 0;

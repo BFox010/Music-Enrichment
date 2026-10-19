@@ -1,10 +1,9 @@
 """Pytest configuration — fails fast and clearly on an unsupported interpreter.
 
-CI pins Python 3.13 (.github/workflows/ci.yml). Running the suite under an
-older interpreter doesn't fail cleanly: Python 3.9 in particular surfaces a
-cascade of confusing `RuntimeError: There is no current event loop in thread
-'MainThread'` failures in test_refresh.py that have nothing to do with the
-code under test. One clear error here beats nine misleading ones there.
+CI runs 3.13 (.github/workflows/ci.yml); the suite also passes on 3.11 and 3.12.
+Below 3.11 it doesn't fail cleanly: Python 3.9 surfaces a cascade of
+`RuntimeError: There is no current event loop in thread 'MainThread'` failures
+in test_refresh.py unrelated to the code under test. One clear error beats nine.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ import sys
 
 import pytest
 
-_MIN_PYTHON = (3, 13)
+_MIN_PYTHON = (3, 11)
 
 
 def close_run_log_handlers() -> None:
