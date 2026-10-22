@@ -279,3 +279,4 @@ SALVAGE_HANDOFF.md
 # file, so don't commit the generated one.
 web/data/library.js
 
+web/prototypes/data.json
